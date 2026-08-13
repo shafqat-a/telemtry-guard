@@ -4,9 +4,33 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-Pre-implementation, fully planned. No solution, code, or build tooling exists yet — there are no build/lint/test commands until the `.sln` is scaffolded (task FND-01); update this file with real commands once code lands.
+**Phases 0 and 1 (MVP) are implemented and green**: all 44 phase-0/1 tasks from `doc/plan.md` are done — full solution build (0 warnings), 478 unit tests, 123 integration + 8 contract tests passing, SDK bundle under its 30 KB gzip gate. Remaining work: Phase 1.5 (INT-02..05 exclusion sync + Cloudflare signals, RSK-08 first LightGBM model), Phase 2 outlines (P2-01..05), and the backlog in `doc/plan.md`.
 
 **Start here for implementation work:** `doc/plan.md` — 54 tasks across phases 0/1/1.5/2/later with a dependency graph. Each task file in `doc/tasks/` is self-contained (exact paths, signatures, SQL, package names, acceptance criteria): to implement a task, read only that file plus the task files of its `depends_on`. Do not begin a task whose dependencies are incomplete. Contract-bearing tasks (FND-04, ANA-01, RSK-01) are normative for type names.
+
+## Build, test, and run commands
+
+Prereqs: .NET 8 SDK, Node 20+, a Docker-compatible container runtime (podman works; set `DOCKER_HOST` to its socket and `TESTCONTAINERS_RYUK_DISABLED=true`).
+
+```bash
+dotnet build TelemetryGuard.sln                          # full solution
+dotnet test tests/TelemetryGuard.Tests.Unit              # pure unit tests (no containers)
+dotnet test tests/TelemetryGuard.Tests.Integration       # Testcontainers: SQL Server + ClickHouse + Redis
+dotnet test tests/TelemetryGuard.Tests.Contracts         # analytics contract suite (per provider)
+
+cd TelemetryGuard.Sdk
+npm ci && npm run build        # esbuild → dist/tg.js + dist/tg-<version>.js
+npm run size                   # 30 KB gzip gate (D2)
+npm run typecheck              # tsc --noEmit
+npm test                       # Playwright e2e (fixture pages; needs `npx playwright install chromium`)
+
+./scripts/dev-up.sh            # compose stack: mssql, redis, clickhouse, grafana
+./scripts/dev-seed.sh          # migrations + demo tenant/site key/campaign via MigrationRunner `provision`
+dotnet run --project TelemetryGuard.Api                  # API on the host (deliberately not a compose service)
+./scripts/dev-down.sh          # stop the stack (never do this while agents/tests are using it)
+```
+
+Tenant provisioning CLI: `dotnet run --project TelemetryGuard.MigrationRunner -- provision <create-tenant|issue-api-key|register-site|create-campaign> …` (reads `MIGRATIONS_CONNECTIONSTRING`); with no args it runs DbUp migrations.
 
 ## What this is
 
@@ -40,7 +64,7 @@ The full decision record — including every technology choice and the rationale
 - **Redis**: sliding-window velocity counters, HyperLogLogs, dedupe, challenge tokens, per-tenant quotas — accessed only via the Redis protocol (no provider abstraction; switching Redis/Garnet/Azure Cache is a connection-string change, D5). Keys are prefixed `t:{tenantId}:…`.
 - PostgreSQL was evaluated and explicitly dropped (D23) — do not reintroduce it as a "simpler" alternative without revisiting that decision.
 
-## Planned solution shape (from `doc/spec.md` §8 — not yet created)
+## Solution shape
 
 ```
 TelemetryGuard.sln
@@ -59,9 +83,9 @@ TelemetryGuard.sln
     └── TelemetryGuard.Tests.Unit
 ```
 
-When this is scaffolded, update this file with the actual build/test/lint commands (e.g. `dotnet build`, `dotnet test --filter`, esbuild scripts for the SDK).
+Also present beyond the spec sketch: `TelemetryGuard.Core` (FND-04 primitives), `TelemetryGuard.MigrationRunner` (DbUp + provisioning CLI), `ops/grafana` provisioning, `scripts/` dev helpers.
 
-## Testing strategy (once code exists)
+## Testing strategy
 
 - **Analytics contract tests**: one shared xUnit suite asserting `IAnalyticsQueries`/`IEventSink` behavior, run against every provider (ClickHouse via Testcontainers now, Kusto emulator later). This is what makes the multi-provider abstraction (D7) safe — a new provider without passing this suite should be treated as incomplete.
 - **Repository integration tests**: Testcontainers SQL Server + DbUp migrations + one execution of every Dapper method, including a deliberate cross-tenant read that must return empty (proves RLS is actually enforcing isolation).
