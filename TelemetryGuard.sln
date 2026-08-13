@@ -1,0 +1,95 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TelemetryGuard.Api", "TelemetryGuard.Api\TelemetryGuard.Api.csproj", "{FAF0388F-B963-4C0B-8652-0E160ADF2D67}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TelemetryGuard.Core", "TelemetryGuard.Core\TelemetryGuard.Core.csproj", "{3BEE1282-BFFF-42C6-A2FB-F6EC72C2723D}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TelemetryGuard.RiskEngine", "TelemetryGuard.RiskEngine\TelemetryGuard.RiskEngine.csproj", "{7B915412-F824-491A-B0E4-C3A2B6FB47C5}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TelemetryGuard.RiskEngine.Contracts", "TelemetryGuard.RiskEngine.Contracts\TelemetryGuard.RiskEngine.Contracts.csproj", "{1BEB5707-745D-45FB-8B6D-F06F3D8EDD0C}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TelemetryGuard.Analytics.Abstractions", "TelemetryGuard.Analytics.Abstractions\TelemetryGuard.Analytics.Abstractions.csproj", "{A6C486F0-2C58-4A0F-A091-7ED0B31579BD}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TelemetryGuard.Analytics.ClickHouse", "TelemetryGuard.Analytics.ClickHouse\TelemetryGuard.Analytics.ClickHouse.csproj", "{DBFBA35C-FCB7-40B0-B281-12FEC77AE938}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TelemetryGuard.Data", "TelemetryGuard.Data\TelemetryGuard.Data.csproj", "{49E00D6D-685F-4C8D-A254-9D48C23C862E}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TelemetryGuard.Integrations", "TelemetryGuard.Integrations\TelemetryGuard.Integrations.csproj", "{8D831D56-D0C9-4AE0-BBB1-AFFE95515B1F}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{47914DC2-25CD-497E-B8E5-7FB8BD02A4DA}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TelemetryGuard.Tests.Unit", "tests\TelemetryGuard.Tests.Unit\TelemetryGuard.Tests.Unit.csproj", "{C045E385-1725-4F6A-866D-16E0EC96E039}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TelemetryGuard.Tests.Integration", "tests\TelemetryGuard.Tests.Integration\TelemetryGuard.Tests.Integration.csproj", "{D6D0D2EC-21FA-400D-9977-B8965A910998}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TelemetryGuard.Tests.Contracts", "tests\TelemetryGuard.Tests.Contracts\TelemetryGuard.Tests.Contracts.csproj", "{1577BF99-E5AC-4B9D-B06E-4AF5F080FBB6}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TelemetryGuard.MigrationRunner", "TelemetryGuard.MigrationRunner\TelemetryGuard.MigrationRunner.csproj", "{8AE263F4-3E9D-40B9-A809-3631EA706C74}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{FAF0388F-B963-4C0B-8652-0E160ADF2D67}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{FAF0388F-B963-4C0B-8652-0E160ADF2D67}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{FAF0388F-B963-4C0B-8652-0E160ADF2D67}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{FAF0388F-B963-4C0B-8652-0E160ADF2D67}.Release|Any CPU.Build.0 = Release|Any CPU
+		{3BEE1282-BFFF-42C6-A2FB-F6EC72C2723D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{3BEE1282-BFFF-42C6-A2FB-F6EC72C2723D}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{3BEE1282-BFFF-42C6-A2FB-F6EC72C2723D}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{3BEE1282-BFFF-42C6-A2FB-F6EC72C2723D}.Release|Any CPU.Build.0 = Release|Any CPU
+		{7B915412-F824-491A-B0E4-C3A2B6FB47C5}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{7B915412-F824-491A-B0E4-C3A2B6FB47C5}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{7B915412-F824-491A-B0E4-C3A2B6FB47C5}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{7B915412-F824-491A-B0E4-C3A2B6FB47C5}.Release|Any CPU.Build.0 = Release|Any CPU
+		{1BEB5707-745D-45FB-8B6D-F06F3D8EDD0C}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{1BEB5707-745D-45FB-8B6D-F06F3D8EDD0C}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{1BEB5707-745D-45FB-8B6D-F06F3D8EDD0C}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{1BEB5707-745D-45FB-8B6D-F06F3D8EDD0C}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A6C486F0-2C58-4A0F-A091-7ED0B31579BD}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A6C486F0-2C58-4A0F-A091-7ED0B31579BD}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A6C486F0-2C58-4A0F-A091-7ED0B31579BD}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A6C486F0-2C58-4A0F-A091-7ED0B31579BD}.Release|Any CPU.Build.0 = Release|Any CPU
+		{DBFBA35C-FCB7-40B0-B281-12FEC77AE938}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{DBFBA35C-FCB7-40B0-B281-12FEC77AE938}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{DBFBA35C-FCB7-40B0-B281-12FEC77AE938}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{DBFBA35C-FCB7-40B0-B281-12FEC77AE938}.Release|Any CPU.Build.0 = Release|Any CPU
+		{49E00D6D-685F-4C8D-A254-9D48C23C862E}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{49E00D6D-685F-4C8D-A254-9D48C23C862E}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{49E00D6D-685F-4C8D-A254-9D48C23C862E}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{49E00D6D-685F-4C8D-A254-9D48C23C862E}.Release|Any CPU.Build.0 = Release|Any CPU
+		{8D831D56-D0C9-4AE0-BBB1-AFFE95515B1F}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{8D831D56-D0C9-4AE0-BBB1-AFFE95515B1F}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{8D831D56-D0C9-4AE0-BBB1-AFFE95515B1F}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{8D831D56-D0C9-4AE0-BBB1-AFFE95515B1F}.Release|Any CPU.Build.0 = Release|Any CPU
+		{C045E385-1725-4F6A-866D-16E0EC96E039}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{C045E385-1725-4F6A-866D-16E0EC96E039}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{C045E385-1725-4F6A-866D-16E0EC96E039}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{C045E385-1725-4F6A-866D-16E0EC96E039}.Release|Any CPU.Build.0 = Release|Any CPU
+		{D6D0D2EC-21FA-400D-9977-B8965A910998}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D6D0D2EC-21FA-400D-9977-B8965A910998}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D6D0D2EC-21FA-400D-9977-B8965A910998}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D6D0D2EC-21FA-400D-9977-B8965A910998}.Release|Any CPU.Build.0 = Release|Any CPU
+		{1577BF99-E5AC-4B9D-B06E-4AF5F080FBB6}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{1577BF99-E5AC-4B9D-B06E-4AF5F080FBB6}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{1577BF99-E5AC-4B9D-B06E-4AF5F080FBB6}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{1577BF99-E5AC-4B9D-B06E-4AF5F080FBB6}.Release|Any CPU.Build.0 = Release|Any CPU
+		{8AE263F4-3E9D-40B9-A809-3631EA706C74}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{8AE263F4-3E9D-40B9-A809-3631EA706C74}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{8AE263F4-3E9D-40B9-A809-3631EA706C74}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{8AE263F4-3E9D-40B9-A809-3631EA706C74}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{C045E385-1725-4F6A-866D-16E0EC96E039} = {47914DC2-25CD-497E-B8E5-7FB8BD02A4DA}
+		{D6D0D2EC-21FA-400D-9977-B8965A910998} = {47914DC2-25CD-497E-B8E5-7FB8BD02A4DA}
+		{1577BF99-E5AC-4B9D-B06E-4AF5F080FBB6} = {47914DC2-25CD-497E-B8E5-7FB8BD02A4DA}
+	EndGlobalSection
+EndGlobal

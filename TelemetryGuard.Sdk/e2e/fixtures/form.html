@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>TG e2e — form fixture</title>
+    <style>
+      body { font-family: sans-serif; margin: 2rem; }
+      label { display: block; margin: 0.5rem 0; }
+    </style>
+  </head>
+  <body>
+    <h1>Lead form fixture</h1>
+    <form id="lead-form" action="/submitted" method="post">
+      <label>Name <input name="name" type="text" /></label>
+      <label>Email <input name="email" type="email" /></label>
+      <label>Phone <input name="phone" type="tel" /></label>
+      <label>Password <input name="password" type="password" /></label>
+      <label>Comments <textarea name="comments"></textarea></label>
+      <button type="submit">Send</button>
+    </form>
+    <script
+      src="/dist/tg.js"
+      data-site-key="e2e-site"
+      data-endpoint="http://localhost:4599"
+    ></script>
+    <script>
+      // Fixture-only: keep tests on-page. The SDK's own capture-phase document
+      // submit listener still observes the submit before this handler runs.
+      document.getElementById('lead-form').addEventListener('submit', function (e) {
+        e.preventDefault();
+      });
+    </script>
+  </body>
+</html>

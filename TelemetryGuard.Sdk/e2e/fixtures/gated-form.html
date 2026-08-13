@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>TG e2e — gated form fixture</title>
+    <style>
+      body { font-family: sans-serif; margin: 2rem; }
+      label { display: block; margin: 0.5rem 0; }
+    </style>
+  </head>
+  <body>
+    <h1>Gated lead form fixture</h1>
+    <!-- data-tg-gate opts this form into SDK-07 gating. No fixture-JS
+         preventDefault: the SDK's gate holds/releases the submit; on release
+         the form posts natively to the mock's /__submitted (204, stays on
+         page). -->
+    <form id="lead-form" action="/__submitted" method="post" data-tg-gate>
+      <label>Name <input name="name" type="text" /></label>
+      <label>Email <input name="email" type="email" /></label>
+      <label>Phone <input name="phone" type="tel" /></label>
+      <label>Password <input name="password" type="password" /></label>
+      <label>Comments <textarea name="comments"></textarea></label>
+      <button type="submit">Send</button>
+    </form>
+    <script
+      src="/dist/tg.js"
+      data-site-key="e2e-site"
+      data-endpoint="http://localhost:4599"
+    ></script>
+    <script>
+      // Fixture-only: record bubbling tg:decision events so tests can assert
+      // the page was notified (the SDK renders no text and never says "fraud").
+      window.__tgDecisions = [];
+      document.addEventListener('tg:decision', function (e) {
+        window.__tgDecisions.push(e.detail);
+      });
+    </script>
+  </body>
+</html>

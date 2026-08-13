@@ -1,0 +1,191 @@
+using System.Diagnostics;
+using System.Diagnostics.Metrics;
+using Dapper;
+using Microsoft.Extensions.Options;
+using TelemetryGuard.Analytics.Abstractions;
+using TelemetryGuard.Core.Tenancy;
+using TelemetryGuard.Core.Time;
+using TelemetryGuard.Data;
+using TelemetryGuard.Data.Models;
+using TelemetryGuard.Data.Repositories;
+
+namespace TelemetryGuard.Api.Workers;
+
+/// <summary>
+/// D23 rollup: ClickHouse aggregates -> SQL summary tables, every 15 min.
+/// The ONLY bridge between the event store and the relational tier — portals and
+/// APIs read the small RLS-protected SQL aggregates and never query ClickHouse.
+/// Windows re-cover recent days each run, and DAT-06's absolute-value MERGE
+/// upserts make replays convergent (never double-counting).
+/// </summary>
+public sealed class RollupService(
+    IServiceScopeFactory scopeFactory,
+    ISystemConnectionFactory systemConnections, // DAT-03: tenant enumeration ONLY
+    IOptions<RollupOptions> options,
+    IClock clock,
+    ILogger<RollupService> log) : BackgroundService
+{
+    private static readonly Meter Meter = new("TelemetryGuard.Rollup");
+    private static readonly Counter<long> Runs           = Meter.CreateCounter<long>("tg.rollup.runs");
+    private static readonly Counter<long> TenantsOk      = Meter.CreateCounter<long>("tg.rollup.tenants_processed");
+    private static readonly Counter<long> TenantFailures = Meter.CreateCounter<long>("tg.rollup.tenant_failures");
+    private static readonly Counter<long> RowsUpserted   = Meter.CreateCounter<long>("tg.rollup.rows_upserted");
+    private static readonly Histogram<double> RunSeconds = Meter.CreateHistogram<double>("tg.rollup.run_seconds");
+
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromMinutes(options.Value.IntervalMinutes));
+        do { await RunOnceAsync(stoppingToken); }
+        while (await timer.WaitForNextTickAsync(stoppingToken));
+    }
+
+    /// <summary>
+    /// One full rollup pass over every active tenant. Public for tests. Never
+    /// throws except on shutdown cancellation — a failed run must not kill the
+    /// host loop; the next tick retries the same window idempotently.
+    /// </summary>
+    public async Task RunOnceAsync(CancellationToken ct)
+    {
+        Runs.Add(1);
+        var sw = Stopwatch.StartNew();
+        try
+        {
+            // Enumerate active tenants under the SYSTEM sentinel — the only
+            // sanctioned cross-tenant read path (D11). The DAT-03 factories are
+            // the only way this class ever obtains a connection.
+            IReadOnlyList<Guid> tenantIds;
+            await using (var sys = await systemConnections.OpenSystemAsync(ct))
+            {
+                tenantIds = (await sys.QueryAsync<Guid>(
+                    "SELECT TenantId FROM dbo.Tenants WHERE Status = 0")).AsList(); // 0 = Active (DAT-02)
+            }
+
+            // Per-tenant loop with failure isolation: a failed tenant keeps its old
+            // watermark (its window re-covers next run) and never stops the rest.
+            foreach (var tid in tenantIds)
+            {
+                ct.ThrowIfCancellationRequested();
+                try { await ProcessTenantAsync(tid, ct); TenantsOk.Add(1); }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+                catch (Exception ex)
+                {
+                    TenantFailures.Add(1);
+                    log.LogError(ex, "Rollup failed for tenant {TenantId}; continuing with remaining tenants", tid);
+                }
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw; // shutdown — propagate so the host loop stops cleanly
+        }
+        catch (Exception ex)
+        {
+            log.LogError(ex, "Rollup run failed; the next tick retries the same window");
+        }
+        finally
+        {
+            RunSeconds.Record(sw.Elapsed.TotalSeconds);
+        }
+    }
+
+    private async Task ProcessTenantAsync(Guid tid, CancellationToken ct)
+    {
+        // A DI scope resolved to this tenant: DAT-06's repositories and ANA-05's
+        // scoped IAnalyticsQueries work unchanged (DAT-06's preferred job pattern).
+        using var scope = scopeFactory.CreateScope();
+        var sp = scope.ServiceProvider;
+
+        // FND-04's set-once scoped TenantContext — same call DAT-04's middleware makes per request.
+        sp.GetRequiredService<TenantContext>().Resolve(new TenantId(tid));
+
+        var queries     = sp.GetRequiredService<IAnalyticsQueries>();          // ANA-05, scoped
+        var summaries   = sp.GetRequiredService<IVerdictSummaryRepository>();  // DAT-06, scoped
+        var watermarks  = sp.GetRequiredService<IRollupWatermarkRepository>(); // DAT-06, scoped
+        var connFactory = sp.GetRequiredService<ITenantConnectionFactory>();   // DAT-03, campaigns query
+
+        var now = clock.UtcNow.UtcDateTime;
+        var rollupName = options.Value.RollupName;
+        var watermark = await watermarks.GetAsync(rollupName, ct);   // null on first run
+        var (fromDay, range) = ComputeWindow(watermark, now, options.Value.LookbackDays);
+
+        // Enumerate this tenant's campaigns on an RLS-scoped stamped connection.
+        // Explicit @TenantId stays in the statement for index seeks; correctness
+        // comes from RLS (D11).
+        IReadOnlyList<Guid> campaignIds;
+        await using (var conn = await connFactory.OpenAsync(ct))
+        {
+            campaignIds = (await conn.QueryAsync<Guid>(
+                "SELECT CampaignId FROM dbo.Campaigns WHERE TenantId = @TenantId",
+                new { TenantId = tid })).AsList();
+        }
+
+        long rows = 0;
+        foreach (var campaignId in campaignIds)
+        {
+            // ClickHouse stores campaign_id as the Guid in "D" format (lowercase,
+            // hyphenated) — the same string API-02 stamps onto ClickEvent.CampaignId
+            // from the /c?cid= parameter.
+            var report = await queries.GetCampaignReportAsync(campaignId.ToString("D"), range, ct);
+            foreach (var d in report.Days)
+            {
+                await summaries.UpsertDailySummaryAsync(MapDay(tid, campaignId, d), ct);
+                rows++;
+            }
+        }
+
+        for (var day = fromDay; day <= now.Date; day = day.AddDays(1))
+        {
+            var dayEnd = day.AddDays(1) < now ? day.AddDays(1) : now;
+            var dayRange = new DateRange(
+                DateTime.SpecifyKind(day, DateTimeKind.Utc),
+                DateTime.SpecifyKind(dayEnd, DateTimeKind.Utc));
+            var sources = await queries.GetTopFlaggedSourcesAsync(dayRange, options.Value.TopFlaggedLimit, ct);
+            foreach (var s in sources)
+            {
+                await summaries.UpsertFlaggedSourceAsync(new FlaggedSourceDailyRow(
+                    TenantId: tid, Date: DateOnly.FromDateTime(day),
+                    SourceType: s.SourceType,                  // "ip" — allowed by the DAT-06 CHECK constraint
+                    Value: s.SourceValue,
+                    FlaggedCount: checked((int)s.FlaggedEvents),
+                    BlockedCount: checked((int)s.BlockedEvents),
+                    ScoreSum: s.ScoreSum), ct);
+                rows++;
+            }
+        }
+
+        await watermarks.SetAsync(rollupName, now, ct);  // advance ONLY after all upserts succeeded
+        RowsUpserted.Add(rows);
+    }
+
+    /// <summary>
+    /// Absolute-value mapping into DAT-06's summary row: stores ScoreSum + Events
+    /// (mergeable), never an average. A zero-verdict day carries Events = 0 and
+    /// ScoreSum = 0 so readers get "no data", not a fabricated 0 average (§7 —
+    /// missing ≠ zero; AvgScore, NaN included, is deliberately never consumed here).
+    /// </summary>
+    internal static VerdictDailySummaryRow MapDay(Guid tenantId, Guid campaignId, CampaignDailyCounts d) =>
+        new(TenantId: tenantId, CampaignId: campaignId, Date: d.Day,
+            Allowed: checked((int)d.Allowed), Challenged: checked((int)d.Challenged),
+            Blocked: checked((int)d.Blocked), ScoreSum: d.ScoreSum,
+            Events: checked((int)d.ScoredEvents)); // Events = scored (verdict) events; avg = ScoreSum/Events
+
+    /// <summary>
+    /// Pure window math, all UTC. First run (no watermark) backfills LookbackDays;
+    /// otherwise re-cover from the day BEFORE the watermark so late-arriving events
+    /// and grace-period verdicts fold in idempotently.
+    /// </summary>
+    internal static (DateTime fromDay, DateRange range) ComputeWindow(
+        DateTime? watermarkUtc, DateTime nowUtc, int lookbackDays)
+    {
+        // A SQL-read watermark arrives with Kind = Unspecified — normalize every
+        // bound to DateTimeKind.Utc (DateRange requires it).
+        var fromDay = DateTime.SpecifyKind(
+            watermarkUtc is null
+                ? nowUtc.Date.AddDays(-lookbackDays)
+                : watermarkUtc.Value.Date.AddDays(-1), // re-cover the last closed day for late arrivals
+            DateTimeKind.Utc);
+        return (fromDay, new DateRange(
+            fromDay,
+            DateTime.SpecifyKind(nowUtc, DateTimeKind.Utc)));
+    }
+}

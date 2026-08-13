@@ -1,0 +1,182 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOTNET_NOLOGO: "true"
+  DOTNET_CLI_TELEMETRY_OPTOUT: "true"
+
+jobs:
+  build-test:
+    name: Build & unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', 'Directory.Build.props') }}
+          restore-keys: |
+            nuget-${{ runner.os }}-
+
+      - name: Restore
+        run: dotnet restore TelemetryGuard.sln
+
+      - name: Build (Release, warnings are errors)
+        run: dotnet build TelemetryGuard.sln -c Release --no-restore
+
+      - name: Unit tests
+        run: >
+          dotnet test tests/TelemetryGuard.Tests.Unit/TelemetryGuard.Tests.Unit.csproj
+          -c Release --no-build
+          --logger "trx;LogFileName=unit.trx"
+          --results-directory TestResults
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-results
+          path: TestResults/*.trx
+          if-no-files-found: ignore
+
+  integration:
+    name: Integration & contract tests (Testcontainers)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: build-test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', 'Directory.Build.props') }}
+          restore-keys: |
+            nuget-${{ runner.os }}-
+
+      - name: Restore
+        run: dotnet restore TelemetryGuard.sln
+
+      - name: Build (Release)
+        run: dotnet build TelemetryGuard.sln -c Release --no-restore
+
+      - name: Integration tests (SQL Server + Redis + ClickHouse via Testcontainers)
+        run: >
+          dotnet test tests/TelemetryGuard.Tests.Integration/TelemetryGuard.Tests.Integration.csproj
+          -c Release --no-build
+          --logger "trx;LogFileName=integration.trx"
+          --results-directory TestResults
+
+      - name: Analytics contract tests (per-provider suite)
+        run: >
+          dotnet test tests/TelemetryGuard.Tests.Contracts/TelemetryGuard.Tests.Contracts.csproj
+          -c Release --no-build
+          --logger "trx;LogFileName=contracts.trx"
+          --results-directory TestResults
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-test-results
+          path: TestResults/*.trx
+          if-no-files-found: ignore
+
+  sdk:
+    name: SDK build & size gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check whether the SDK project exists yet
+        id: gate
+        run: |
+          if [ -f TelemetryGuard.Sdk/package.json ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "TelemetryGuard.Sdk/package.json not found — SDK job is a no-op until task SDK-01 lands."
+          fi
+
+      - name: Setup Node 20
+        if: steps.gate.outputs.exists == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: TelemetryGuard.Sdk/package-lock.json
+
+      - name: Install dependencies
+        if: steps.gate.outputs.exists == 'true'
+        working-directory: TelemetryGuard.Sdk
+        run: npm ci
+
+      - name: Build bundle
+        if: steps.gate.outputs.exists == 'true'
+        working-directory: TelemetryGuard.Sdk
+        run: npm run build
+
+      - name: Install Playwright chromium (SDK e2e — SDK-06)
+        if: steps.gate.outputs.exists == 'true'
+        working-directory: TelemetryGuard.Sdk
+        run: npx playwright install chromium --with-deps
+
+      - name: SDK tests (if present)
+        if: steps.gate.outputs.exists == 'true'
+        working-directory: TelemetryGuard.Sdk
+        run: |
+          if node -e "process.exit(require('./package.json').scripts?.test ? 0 : 1)"; then
+            npm test
+          else
+            echo "No test script defined yet — skipping."
+          fi
+
+      - name: Gzip size gate (30 KB hard ceiling — spec D2)
+        if: steps.gate.outputs.exists == 'true'
+        run: |
+          BUNDLE="TelemetryGuard.Sdk/dist/tg.js"
+          if [ ! -f "$BUNDLE" ]; then
+            echo "::error::Expected bundle at $BUNDLE after npm run build"
+            exit 1
+          fi
+          RAW=$(wc -c < "$BUNDLE")
+          GZ=$(gzip -9 -c "$BUNDLE" | wc -c)
+          LIMIT=30720
+          echo "Bundle: ${RAW} bytes raw, ${GZ} bytes gzipped (limit ${LIMIT})"
+          if [ "$GZ" -gt "$LIMIT" ]; then
+            echo "::error::SDK bundle is ${GZ} bytes gzipped — exceeds the ${LIMIT}-byte (30 KB) budget from spec D2"
+            exit 1
+          fi
+
+      # SDK-08: expose the built bundle (tg.js, tg-<version>.js, maps, meta.json) to
+      # downstream consumers. No download step is needed yet — CI does not build a
+      # deployable API image; P2-04 (containerize) must copy wwwroot/sdk into the image.
+      - name: Upload SDK dist artifact
+        if: steps.gate.outputs.exists == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdk-dist
+          path: TelemetryGuard.Sdk/dist/

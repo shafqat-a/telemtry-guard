@@ -1,0 +1,46 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.SqlClient" Version="7.0.2" />
+    <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.17.0" />
+    <PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.17.0" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.17.0" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.Http" Version="1.17.0" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.Runtime" Version="1.17.0" />
+    <PackageReference Include="StackExchange.Redis" Version="3.1.13" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\TelemetryGuard.Core\TelemetryGuard.Core.csproj" />
+    <ProjectReference Include="..\TelemetryGuard.Data\TelemetryGuard.Data.csproj" />
+    <ProjectReference Include="..\TelemetryGuard.RiskEngine\TelemetryGuard.RiskEngine.csproj" />
+    <ProjectReference Include="..\TelemetryGuard.RiskEngine.Contracts\TelemetryGuard.RiskEngine.Contracts.csproj" />
+    <ProjectReference Include="..\TelemetryGuard.Analytics.Abstractions\TelemetryGuard.Analytics.Abstractions.csproj" />
+    <ProjectReference Include="..\TelemetryGuard.Analytics.ClickHouse\TelemetryGuard.Analytics.ClickHouse.csproj" />
+    <ProjectReference Include="..\TelemetryGuard.Integrations\TelemetryGuard.Integrations.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- ANA-07 unit tests exercise RollupService's internal ComputeWindow/MapDay helpers. -->
+    <InternalsVisibleTo Include="TelemetryGuard.Tests.Unit" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <!-- SDK-08: hand the esbuild artifacts (SDK-01) to the API so it can origin-serve
+       /sdk/tg.js and /sdk/tg-<version>.js (D22). The condition keeps backend-only
+       builds green when the SDK has never been built — /sdk/* then 404s, honest and
+       harmless in dev. wwwroot/sdk is git-ignored (built artifact, same rule as dist/);
+       P2-04's container image must copy wwwroot/sdk into the image. -->
+  <ItemGroup>
+    <SdkBundle Include="..\TelemetryGuard.Sdk\dist\tg*.js;..\TelemetryGuard.Sdk\dist\tg*.js.map" />
+  </ItemGroup>
+  <Target Name="CopySdkBundle" BeforeTargets="Build" Condition="@(SdkBundle) != ''">
+    <Copy SourceFiles="@(SdkBundle)" DestinationFolder="$(MSBuildProjectDirectory)\wwwroot\sdk" SkipUnchangedFiles="true" />
+  </Target>
+
+</Project>

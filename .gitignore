@@ -1,0 +1,36 @@
+# .NET
+bin/
+obj/
+artifacts/
+TestResults/
+*.user
+*.suo
+.vs/
+.vscode/
+!.vscode/extensions.json
+.idea/
+*.DotSettings.user
+*.trx
+coverage/
+*.coverage
+BenchmarkDotNet.Artifacts/
+
+# Local secrets / env
+.env
+appsettings.*.local.json
+*.pfx
+
+# Node / SDK
+node_modules/
+TelemetryGuard.Sdk/dist/
+# SDK-08: built bundle copied into the API by the CopySdkBundle MSBuild target — never committed
+TelemetryGuard.Api/wwwroot/sdk/
+npm-debug.log*
+.npm/
+
+# GeoIP / proxy databases (licensed downloads via scripts/update-geoip.sh — never committed)
+data/geo/
+
+# OS
+.DS_Store
+Thumbs.db

@@ -1,0 +1,119 @@
+{
+  "uid": "tg-traffic-verdicts",
+  "title": "Traffic & Verdicts",
+  "tags": ["telemetryguard"],
+  "timezone": "utc",
+  "editable": true,
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "1m",
+  "time": { "from": "now-24h", "to": "now" },
+  "annotations": { "list": [] },
+  "templating": {
+    "list": [
+      {
+        "name": "tenant",
+        "label": "Tenant",
+        "type": "query",
+        "datasource": { "type": "grafana-clickhouse-datasource", "uid": "tg-clickhouse" },
+        "query": "SELECT DISTINCT toString(tenant_id) FROM telemetry_guard.tg_events ORDER BY 1",
+        "refresh": 2,
+        "multi": true,
+        "includeAll": true,
+        "current": { "selected": true, "text": ["All"], "value": ["$__all"] }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Clicks by verdict band",
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 0 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "tg-clickhouse" },
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "drawStyle": "line", "fillOpacity": 30, "stacking": { "mode": "normal" } },
+          "unit": "short"
+        },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "allow" },     "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "green" } } ] },
+          { "matcher": { "id": "byName", "options": "challenge" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "yellow" } } ] },
+          { "matcher": { "id": "byName", "options": "block" },     "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } } ] },
+          { "matcher": { "id": "byName", "options": "pending" },   "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "gray" } } ] }
+        ]
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "grafana-clickhouse-datasource", "uid": "tg-clickhouse" },
+          "editorType": "sql",
+          "queryType": "timeseries",
+          "format": 0,
+          "rawSql": "SELECT $__timeInterval(timestamp) AS time, coalesce(band, 'pending') AS verdict_band, count() AS clicks FROM telemetry_guard.tg_events WHERE $__timeFilter(timestamp) AND kind = 'verdict' AND toString(tenant_id) IN (${tenant:singlequote}) GROUP BY time, verdict_band ORDER BY time"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "barchart",
+      "title": "Score distribution (0–100, 10-pt buckets)",
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 9 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "tg-clickhouse" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "options": { "xTickLabelRotation": 0, "showValue": "auto" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "grafana-clickhouse-datasource", "uid": "tg-clickhouse" },
+          "editorType": "sql",
+          "queryType": "table",
+          "format": 1,
+          "rawSql": "SELECT toString(intDiv(toUInt16(assumeNotNull(score)), 10) * 10) AS bucket, count() AS clicks FROM telemetry_guard.tg_events WHERE $__timeFilter(timestamp) AND kind = 'verdict' AND isNotNull(score) AND toString(tenant_id) IN (${tenant:singlequote}) GROUP BY bucket ORDER BY toUInt16(bucket)"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "JS beacon coverage",
+      "gridPos": { "h": 9, "w": 6, "x": 12, "y": 9 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "tg-clickhouse" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "yellow", "value": 40 }, { "color": "green", "value": 70 } ] }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "grafana-clickhouse-datasource", "uid": "tg-clickhouse" },
+          "editorType": "sql",
+          "queryType": "table",
+          "format": 1,
+          "rawSql": "SELECT round(100 * countIf(has_js_beacon = 1) / count(), 1) AS js_beacon_pct FROM telemetry_guard.tg_events WHERE $__timeFilter(timestamp) AND kind = 'verdict' AND toString(tenant_id) IN (${tenant:singlequote})"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Raw capture hits (tracker + pixel)",
+      "gridPos": { "h": 9, "w": 6, "x": 18, "y": 9 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "tg-clickhouse" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "grafana-clickhouse-datasource", "uid": "tg-clickhouse" },
+          "editorType": "sql",
+          "queryType": "table",
+          "format": 1,
+          "rawSql": "SELECT count() AS hits FROM telemetry_guard.tg_events WHERE $__timeFilter(timestamp) AND kind IN ('tracker', 'pixel') AND toString(tenant_id) IN (${tenant:singlequote})"
+        }
+      ]
+    }
+  ]
+}

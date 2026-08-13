@@ -1,0 +1,11 @@
+{
+  "_comment": "JA3 MD5 / JA4 -> client family. Seed list; extend during listen-only. Sources: public JA3 corpora (e.g. salesforce/ja3, ja4db). Non-browser families fire tls_ua_mismatch when the UA claims a browser; browser families fire when they contradict the UA browser family. Keys are compared case-insensitively.",
+  "473cd7cb9faa642487833865d516e578": "go-http",
+  "3faa4ad39f690c4ef1c3160caa375465": "go-http",
+  "8d9f7747675e24454cd9b7ed35c58707": "python",
+  "b32309a26951912be7dba376398abc3b": "python",
+  "e7d705a3286e19ea42f587b344ee6865": "curl",
+  "3e860202fc555b939e83e7a7ab518c38": "okhttp",
+  "2c9e5e39d0fac6e63c308443c38fca28": "java",
+  "cd08e31494f9531f560d64c695473da9": "chrome"
+}

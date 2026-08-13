@@ -1,0 +1,91 @@
+{
+  "uid": "tg-fraud-sources",
+  "title": "Fraud Sources",
+  "tags": ["telemetryguard"],
+  "timezone": "utc",
+  "editable": true,
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "5m",
+  "time": { "from": "now-7d", "to": "now" },
+  "annotations": { "list": [] },
+  "templating": {
+    "list": [
+      {
+        "name": "tenant",
+        "label": "Tenant",
+        "type": "query",
+        "datasource": { "type": "grafana-clickhouse-datasource", "uid": "tg-clickhouse" },
+        "query": "SELECT DISTINCT toString(tenant_id) FROM telemetry_guard.tg_events ORDER BY 1",
+        "refresh": 2,
+        "multi": true,
+        "includeAll": true,
+        "current": { "selected": true, "text": ["All"], "value": ["$__all"] }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "table",
+      "title": "Top blocked IPs",
+      "gridPos": { "h": 12, "w": 8, "x": 0, "y": 0 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "tg-clickhouse" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "grafana-clickhouse-datasource", "uid": "tg-clickhouse" },
+          "editorType": "sql",
+          "queryType": "table",
+          "format": 1,
+          "rawSql": "SELECT replaceOne(toString(ip), '::ffff:', '') AS ip, count() AS blocked_clicks, uniqExact(session_id) AS sessions FROM telemetry_guard.tg_events WHERE $__timeFilter(timestamp) AND kind = 'verdict' AND band = 'block' AND toString(tenant_id) IN (${tenant:singlequote}) GROUP BY ip ORDER BY blocked_clicks DESC LIMIT 20"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "table",
+      "title": "Top blocked ASNs",
+      "gridPos": { "h": 12, "w": 8, "x": 8, "y": 0 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "tg-clickhouse" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "grafana-clickhouse-datasource", "uid": "tg-clickhouse" },
+          "editorType": "sql",
+          "queryType": "table",
+          "format": 1,
+          "rawSql": "SELECT assumeNotNull(asn) AS asn, any(coalesce(asn_org, '')) AS organisation, count() AS blocked_clicks, uniqExact(ip) AS distinct_ips FROM telemetry_guard.tg_events WHERE $__timeFilter(timestamp) AND kind = 'verdict' AND band = 'block' AND isNotNull(asn) AND toString(tenant_id) IN (${tenant:singlequote}) GROUP BY asn ORDER BY blocked_clicks DESC LIMIT 20"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "table",
+      "title": "Campaigns by blocked clicks",
+      "gridPos": { "h": 12, "w": 8, "x": 16, "y": 0 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "tg-clickhouse" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": { "align": "auto" }
+        },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "block_pct" }, "properties": [ { "id": "unit", "value": "percent" } ] }
+        ]
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "grafana-clickhouse-datasource", "uid": "tg-clickhouse" },
+          "editorType": "sql",
+          "queryType": "table",
+          "format": 1,
+          "rawSql": "SELECT campaign_id, countIf(band = 'block') AS blocked_clicks, count() AS scored_clicks, round(100 * blocked_clicks / scored_clicks, 1) AS block_pct FROM telemetry_guard.tg_events WHERE $__timeFilter(timestamp) AND kind = 'verdict' AND campaign_id != '' AND toString(tenant_id) IN (${tenant:singlequote}) GROUP BY campaign_id ORDER BY blocked_clicks DESC LIMIT 20"
+        }
+      ]
+    }
+  ]
+}

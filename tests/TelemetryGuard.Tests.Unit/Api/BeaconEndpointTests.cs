@@ -1,0 +1,637 @@
+using System.Net;
+using System.Text;
+using System.Text.Json;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using NSubstitute;
+using StackExchange.Redis;
+using TelemetryGuard.Analytics.Abstractions;
+using TelemetryGuard.Api.Services;
+using TelemetryGuard.Core.Tenancy;
+using TelemetryGuard.Core.Time;
+using TelemetryGuard.Data.Models;
+using TelemetryGuard.Data.Repositories;
+using TelemetryGuard.Data.Tenancy;
+using TelemetryGuard.RiskEngine.Velocity;
+
+namespace TelemetryGuard.Tests.Unit.Api;
+
+/// <summary>
+/// API-04 beacon ingestion tests over the real Program composition via
+/// WebApplicationFactory: /i/init contract (nonce + signed storage ts, ACAO *,
+/// NO Set-Cookie), both content types and both sid shapes on POST /i, the
+/// 64 KB cap, seq-0 acceptance + replay/gap handling across sequential POSTs,
+/// nonce round-trip through a real /i/init call, site-liveness key, sink
+/// cadence (1st / fp-bearing / every 10th), velocity capture semantics, and
+/// the X-TG-Synthetic × Synthetic:Enabled matrix. Redis is an in-memory
+/// NSubstitute IDatabase fake; sinks/repos are capturing fakes.
+/// </summary>
+public sealed class BeaconEndpointTests
+{
+    private static readonly Guid TenantGuid = Guid.Parse("6f9619ff-8b86-d011-b42d-00cf4fc964ff");
+    private static readonly string Tid = TenantGuid.ToString("D");
+    private const string SiteKey = "site-1";
+    private const string HexSid = "9f8e7d6c5b4a39281706f5e4d3c2b1a0";       // tracker shape
+    private const string UuidSid = "e58ed763-928c-4155-bee9-fdbaaadc15f3";  // randomUUID shape
+    private const string Secret = "test-secret-0123456789abcdef-0123456789";
+    private static readonly IPAddress RemoteIp = IPAddress.Parse("203.0.113.10");
+    private static readonly DateTimeOffset FixedNow = new(2026, 8, 12, 10, 0, 0, TimeSpan.Zero);
+    private static readonly long NowMs = FixedNow.ToUnixTimeMilliseconds();
+
+    // ---------------------------------------------------------------- fakes --
+
+    private sealed class FakeResolver : ITenantResolver
+    {
+        public Task<ResolvedTenant?> ResolveApiKeyAsync(string apiKey, CancellationToken ct)
+            => Task.FromResult<ResolvedTenant?>(null);
+
+        public Task<ResolvedTenant?> ResolveSiteKeyAsync(string siteKey, CancellationToken ct)
+            => Task.FromResult(siteKey == SiteKey
+                ? new ResolvedTenant(TenantGuid, [], SiteKey, "js")
+                : (ResolvedTenant?)null);
+    }
+
+    private sealed class FakeClock : IClock
+    {
+        public DateTimeOffset UtcNow { get; set; } = FixedNow;
+    }
+
+    private sealed class FakeTenantRepository : ITenantRepository
+    {
+        public Task<TenantRecord?> GetCurrentAsync(CancellationToken ct)
+            => Task.FromResult<TenantRecord?>(
+                new TenantRecord(TenantGuid, "Acme", 0, 45, 0, FixedNow.UtcDateTime));
+
+        public Task<bool> UpdateRetentionDaysAsync(int retentionDays, CancellationToken ct) => throw new NotSupportedException();
+        public Task<bool> UpdateEnforcementModeAsync(byte enforcementMode, CancellationToken ct) => throw new NotSupportedException();
+    }
+
+    private sealed class CapturingVelocityStore : IVelocityStore
+    {
+        public readonly List<(string Ip, string? Ua, string? VisitorId, string SessionId, bool StorageAgeZero)> Sessions = [];
+
+        public Task RecordSessionAsync(string ip, string? userAgent, string? visitorId, string sessionId,
+                                       bool storageAgeZero, CancellationToken ct)
+        {
+            lock (Sessions)
+                Sessions.Add((ip, userAgent, visitorId, sessionId, storageAgeZero));
+            return Task.CompletedTask;
+        }
+
+        public Task<bool?> RecordClickAsync(string ip, string? userAgent, string? clickId, CancellationToken ct)
+            => throw new NotSupportedException();
+
+        public Task<VelocitySnapshot> ReadAsync(string ip, string? visitorId, CancellationToken ct)
+            => throw new NotSupportedException();
+    }
+
+    private sealed class CapturingEventSink : IEventSink
+    {
+        public readonly List<ClickEvent> Events = [];
+
+        public ValueTask WriteBatchAsync(ReadOnlyMemory<ClickEvent> events, CancellationToken ct)
+        {
+            lock (Events)
+                Events.AddRange(events.ToArray());
+            return ValueTask.CompletedTask;
+        }
+    }
+
+    private sealed class CapturingLabelSink : ILabelSink
+    {
+        public readonly List<LabelEvent> Labels = [];
+
+        public ValueTask WriteAsync(LabelEvent label, CancellationToken ct)
+        {
+            lock (Labels)
+                Labels.Add(label);
+            return ValueTask.CompletedTask;
+        }
+    }
+
+    /// <summary>In-memory Redis over NSubstitute: strings (with NX + TTL) and
+    /// hashes — everything the beacon pair touches.</summary>
+    private sealed class RedisHarness
+    {
+        public readonly IConnectionMultiplexer Mux;
+        public readonly Dictionary<string, string> Strings = [];
+        public readonly Dictionary<string, TimeSpan?> StringTtls = [];
+        public readonly Dictionary<string, Dictionary<string, string>> Hashes = [];
+        public readonly List<(string Key, TimeSpan? Ttl)> Expires = [];
+        private readonly object _gate = new();
+
+        public RedisHarness()
+        {
+            Mux = Substitute.For<IConnectionMultiplexer>();
+            var db = Substitute.For<IDatabase>();
+            Mux.GetDatabase(Arg.Any<int>(), Arg.Any<object?>()).Returns(db);
+
+            // Both overloads production code compiles against: the 3-arg call
+            // (key, value, ttl) binds the keepTtl overload; the 4-arg call with
+            // When.NotExists binds the (expiry, when) overload.
+            db.StringSetAsync(Arg.Any<RedisKey>(), Arg.Any<RedisValue>(), Arg.Any<TimeSpan?>(), Arg.Any<When>())
+              .Returns(ci => SetString(
+                  ci.ArgAt<RedisKey>(0).ToString(), ci.ArgAt<RedisValue>(1).ToString(),
+                  ci.ArgAt<TimeSpan?>(2), ci.ArgAt<When>(3)));
+            db.StringSetAsync(Arg.Any<RedisKey>(), Arg.Any<RedisValue>(), Arg.Any<TimeSpan?>(),
+                    Arg.Any<bool>(), Arg.Any<When>(), Arg.Any<CommandFlags>())
+              .Returns(ci => SetString(
+                  ci.ArgAt<RedisKey>(0).ToString(), ci.ArgAt<RedisValue>(1).ToString(),
+                  ci.ArgAt<TimeSpan?>(2), ci.ArgAt<When>(4)));
+
+            db.StringGetAsync(Arg.Any<RedisKey>(), Arg.Any<CommandFlags>())
+              .Returns(ci =>
+              {
+                  lock (_gate)
+                      return Strings.TryGetValue(ci.ArgAt<RedisKey>(0).ToString(), out var v)
+                          ? (RedisValue)v
+                          : RedisValue.Null;
+              });
+
+            db.HashGetAllAsync(Arg.Any<RedisKey>(), Arg.Any<CommandFlags>())
+              .Returns(ci =>
+              {
+                  lock (_gate)
+                      return Hashes.TryGetValue(ci.ArgAt<RedisKey>(0).ToString(), out var h)
+                          ? h.Select(kv => new HashEntry(kv.Key, kv.Value)).ToArray()
+                          : Array.Empty<HashEntry>();
+              });
+
+            db.When(d => d.HashSetAsync(Arg.Any<RedisKey>(), Arg.Any<HashEntry[]>()))
+              .Do(ci =>
+              {
+                  var key = ci.ArgAt<RedisKey>(0).ToString();
+                  lock (_gate)
+                  {
+                      if (!Hashes.TryGetValue(key, out var h))
+                          Hashes[key] = h = [];
+                      foreach (var entry in ci.ArgAt<HashEntry[]>(1))
+                          h[entry.Name.ToString()] = entry.Value.ToString();
+                  }
+              });
+
+            db.KeyExpireAsync(Arg.Any<RedisKey>(), Arg.Any<TimeSpan?>())
+              .Returns(true)
+              .AndDoes(ci =>
+              {
+                  lock (_gate)
+                      Expires.Add((ci.ArgAt<RedisKey>(0).ToString(), ci.ArgAt<TimeSpan?>(1)));
+              });
+        }
+
+        private bool SetString(string key, string value, TimeSpan? ttl, When when)
+        {
+            lock (_gate)
+            {
+                if (when == When.NotExists && Strings.ContainsKey(key))
+                    return false;
+                Strings[key] = value;
+                StringTtls[key] = ttl;
+                return true;
+            }
+        }
+
+        public Dictionary<string, string> SessionHash(string sid)
+        {
+            lock (_gate)
+                return Hashes.TryGetValue($"t:{Tid}:sess:{sid}", out var h)
+                    ? new Dictionary<string, string>(h)
+                    : [];
+        }
+    }
+
+    private sealed class RemoteIpStartupFilter(IPAddress ip) : IStartupFilter
+    {
+        public Action<IApplicationBuilder> Configure(Action<IApplicationBuilder> next) => app =>
+        {
+            app.Use((ctx, nxt) =>
+            {
+                ctx.Connection.RemoteIpAddress = ip;
+                return nxt(ctx);
+            });
+            next(app);
+        };
+    }
+
+    // ------------------------------------------------------------- harness --
+
+    private sealed class BeaconApp : IDisposable
+    {
+        public readonly WebApplicationFactory<Program> Factory;
+        public readonly RedisHarness Redis = new();
+        public readonly CapturingVelocityStore Velocity = new();
+        public readonly CapturingEventSink Sink = new();
+        public readonly CapturingLabelSink Labels = new();
+        public readonly FakeClock Clock = new();
+
+        public BeaconApp(Dictionary<string, string?>? settings = null)
+        {
+            Factory = new WebApplicationFactory<Program>().WithWebHostBuilder(b =>
+            {
+                var overrides = new Dictionary<string, string?>
+                {
+                    ["ConnectionStrings:Main"] =
+                        "Server=localhost,1;Database=TelemetryGuard;User Id=sa;Password=x;" +
+                        "TrustServerCertificate=true;Connect Timeout=1;ConnectRetryCount=0",
+                    ["ConnectionStrings:Redis"] = "localhost:1,connectTimeout=250,abortConnect=false",
+                    ["Analytics:ClickHouse:ConnectionString"] = "Host=localhost;Port=1;Database=telemetry_guard",
+                    ["Beacon:HmacSecret"] = Secret,
+                    ["RateLimiting:TokensPerSecond"] = "10000",
+                    ["RateLimiting:BucketSize"] = "10000",
+                };
+                if (settings is not null)
+                    foreach (var (k, v) in settings) overrides[k] = v;
+                foreach (var (k, v) in overrides)
+                    b.UseSetting(k, v);
+                b.ConfigureTestServices(services =>
+                {
+                    services.RemoveAll<ITenantResolver>();
+                    services.AddSingleton<ITenantResolver>(new FakeResolver());
+                    services.RemoveAll<ITenantRepository>();
+                    services.AddSingleton<ITenantRepository>(new FakeTenantRepository());
+                    services.RemoveAll<IVelocityStore>();
+                    services.AddSingleton<IVelocityStore>(Velocity);
+                    services.RemoveAll<IEventSink>();
+                    services.AddSingleton<IEventSink>(Sink);
+                    services.RemoveAll<ILabelSink>();
+                    services.AddSingleton<ILabelSink>(Labels);
+                    services.RemoveAll<IConnectionMultiplexer>();
+                    services.AddSingleton(Redis.Mux);
+                    services.RemoveAll<IClock>();
+                    services.AddSingleton<IClock>(Clock);
+                    services.AddSingleton<IStartupFilter>(new RemoteIpStartupFilter(RemoteIp));
+                });
+            });
+        }
+
+        public HttpClient Client() => Factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            AllowAutoRedirect = false,
+            HandleCookies = false,
+        });
+
+        public void Dispose() => Factory.Dispose();
+    }
+
+    private static string Envelope(
+        long seq, string eventsJson, string nonce = "", string sid = HexSid,
+        string k = SiteKey, long? sentAt = null)
+        => $"{{\"k\":\"{k}\",\"sid\":\"{sid}\",\"seq\":{seq},\"nonce\":\"{nonce}\"," +
+           $"\"sent_at\":{sentAt ?? NowMs},\"events\":{eventsJson}}}";
+
+    private static HttpRequestMessage Post(
+        string body, string contentType = "text/plain", string k = SiteKey,
+        params (string Name, string Value)[] headers)
+    {
+        var req = new HttpRequestMessage(HttpMethod.Post, $"/i?k={Uri.EscapeDataString(k)}")
+        {
+            Content = new StringContent(body, Encoding.UTF8, contentType),
+        };
+        req.Headers.TryAddWithoutValidation("User-Agent", "TestUA/1.0");
+        foreach (var (name, value) in headers) req.Headers.TryAddWithoutValidation(name, value);
+        return req;
+    }
+
+    private static string FpEvents(long ts, string sig, string vid = "v-1")
+        => "[{\"e\":\"fp\",\"t\":700,\"vid\":\"" + vid + "\",\"conf\":0.9,\"scr\":[1920,1080,24,2]," +
+           "\"tz\":\"UTC\",\"langs\":[\"en-US\"],\"canvasBlocked\":false,\"touch\":false,\"mob\":false," +
+           "\"wd\":false,\"botd\":{\"bot\":false},\"storage\":{\"ck\":{\"present\":true,\"ts\":" + ts +
+           ",\"sig\":\"" + sig + "\"},\"ls\":{\"present\":false},\"fresh\":true,\"cookiesDisabled\":false}}]";
+
+    // ------------------------------------------------------------- /i/init --
+
+    [Fact]
+    public async Task Init_ReturnsNonceAndSignedStorageTs_WithWildcardCors_AndNoCookies()
+    {
+        using var app = new BeaconApp();
+        using var client = app.Client();
+
+        var resp = await client.GetAsync($"/i/init?k={SiteKey}&sid={HexSid}");
+
+        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+        Assert.Equal("*", Assert.Single(resp.Headers.GetValues("Access-Control-Allow-Origin")));
+        Assert.False(resp.Headers.Contains("Set-Cookie"));                    // credentials:'omit' — pointless AND forbidden
+        Assert.False(resp.Headers.Contains("Access-Control-Allow-Credentials"));
+
+        var body = JsonSerializer.Deserialize<JsonElement>(await resp.Content.ReadAsStringAsync());
+        var nonce = body.GetProperty("nonce").GetString()!;
+        var storageTs = body.GetProperty("storageTs").GetInt64();
+        var storageSig = body.GetProperty("storageSig").GetString()!;
+
+        Assert.Matches("^[0-9a-f]{32}$", nonce);
+        Assert.Equal(NowMs, storageTs);
+        Assert.Matches("^[0-9a-f]{64}$", storageSig);
+        Assert.Equal(SessionAggregator.ComputeStorageSig(Secret, Tid, storageTs), storageSig);
+
+        // Nonce persisted under t:{tid}:nonce:{sid} with the configured TTL.
+        Assert.Equal(nonce, app.Redis.Strings[$"t:{Tid}:nonce:{HexSid}"]);
+        Assert.Equal(TimeSpan.FromSeconds(900), app.Redis.StringTtls[$"t:{Tid}:nonce:{HexSid}"]);
+    }
+
+    [Theory]
+    [InlineData(HexSid)]
+    [InlineData(UuidSid)]
+    public async Task Init_AcceptsBothSidShapes(string sid)
+    {
+        using var app = new BeaconApp();
+        using var client = app.Client();
+
+        var resp = await client.GetAsync($"/i/init?k={SiteKey}&sid={sid}");
+
+        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+    }
+
+    [Theory]
+    [InlineData("ab")]                                       // too short
+    [InlineData("abc%25def12345")]                           // contains %
+    [InlineData("abcd.efgh.1234")]                           // contains .
+    public async Task Init_MalformedSid_IsDroppedWith204(string sid)
+    {
+        using var app = new BeaconApp();
+        using var client = app.Client();
+
+        var resp = await client.GetAsync($"/i/init?k={SiteKey}&sid={sid}");
+
+        Assert.Equal(HttpStatusCode.NoContent, resp.StatusCode);
+        Assert.Empty(app.Redis.Strings);   // no nonce minted
+    }
+
+    [Fact]
+    public async Task Init_UnknownSiteKey_GetsSuccessShaped204()
+    {
+        using var app = new BeaconApp();
+        using var client = app.Client();
+
+        var resp = await client.GetAsync($"/i/init?k=who-dis&sid={HexSid}");
+
+        Assert.Equal(HttpStatusCode.NoContent, resp.StatusCode);
+        Assert.Empty(app.Redis.Strings);
+    }
+
+    // ------------------------------------------------------------------ /i --
+
+    [Theory]
+    [InlineData("text/plain")]
+    [InlineData("application/json")]
+    public async Task Post_EitherContentType_AggregatesIntoTheSessionHash(string contentType)
+    {
+        using var app = new BeaconApp();
+        using var client = app.Client();
+
+        var resp = await client.SendAsync(Post(Envelope(0,
+            """[{"e":"pv","t":12},{"e":"pm","t":300,"s":[[0,0,0],[100,3,4],[300,6,8]]}]"""),
+            contentType));
+
+        Assert.Equal(HttpStatusCode.NoContent, resp.StatusCode);
+        var hash = app.Redis.SessionHash(HexSid);
+        Assert.Equal("1", hash["n_pv"]);
+        Assert.Equal("2", hash["mm_n"]);
+        Assert.Equal(150, double.Parse(hash["mm_mean_ms"]));
+        Assert.Equal(5000, double.Parse(hash["mm_m2"]));
+        Assert.Equal(10, double.Parse(hash["mm_path_len"]));
+        Assert.Equal("0", hash["last_seq"]);
+        Assert.Equal("2", hash["n_events_total"]);
+
+        // TTL ~ Beacon:SessionTtlSeconds on the session hash.
+        Assert.Contains(($"t:{Tid}:sess:{HexSid}", (TimeSpan?)TimeSpan.FromSeconds(1800)), app.Redis.Expires);
+
+        // Site liveness for D22 / API-07.
+        Assert.Equal(FixedNow.ToUnixTimeSeconds().ToString(), app.Redis.Strings[$"t:{Tid}:site:{SiteKey}:lastbeacon"]);
+        Assert.Equal(TimeSpan.FromSeconds(604800), app.Redis.StringTtls[$"t:{Tid}:site:{SiteKey}:lastbeacon"]);
+    }
+
+    [Fact]
+    public async Task Post_UuidSidShape_IsAccepted()
+    {
+        using var app = new BeaconApp();
+        using var client = app.Client();
+
+        var resp = await client.SendAsync(Post(Envelope(0, """[{"e":"pv","t":1}]""", sid: UuidSid)));
+
+        Assert.Equal(HttpStatusCode.NoContent, resp.StatusCode);
+        Assert.Equal("1", app.Redis.SessionHash(UuidSid)["n_pv"]);
+    }
+
+    [Fact]
+    public async Task Post_BodyOverCap_413_UnderCap_Accepted()
+    {
+        using var app = new BeaconApp();
+        using var client = app.Client();
+
+        var big = Envelope(0, "[]")[..^1] + ",\"pad\":\"" + new string('x', 70_000) + "\"}";
+        var over = await client.SendAsync(Post(big));
+        Assert.Equal(HttpStatusCode.RequestEntityTooLarge, over.StatusCode);
+        Assert.Empty(app.Redis.SessionHash(HexSid));   // nothing aggregated
+
+        var medium = Envelope(0, "[]")[..^1] + ",\"pad\":\"" + new string('x', 59_000) + "\"}";
+        var under = await client.SendAsync(Post(medium));
+        Assert.Equal(HttpStatusCode.NoContent, under.StatusCode);
+        Assert.Equal("1", app.Redis.SessionHash(HexSid)["n_beacons"]);
+    }
+
+    [Fact]
+    public async Task Post_SeqZeroAccepted_ReplayDropped_GapCounted_AcrossSequentialPosts()
+    {
+        using var app = new BeaconApp();
+        using var client = app.Client();
+
+        // seq 0 on a fresh session MUST be accepted (last_seq absent => -1).
+        var first = await client.SendAsync(Post(Envelope(0, """[{"e":"pv","t":1}]""")));
+        Assert.Equal(HttpStatusCode.NoContent, first.StatusCode);
+        Assert.Equal("1", app.Redis.SessionHash(HexSid)["n_pv"]);
+
+        // Replay of seq 0: events dropped, replay counted, still 204.
+        var replay = await client.SendAsync(Post(Envelope(0, """[{"e":"pv","t":2}]""")));
+        Assert.Equal(HttpStatusCode.NoContent, replay.StatusCode);
+        var afterReplay = app.Redis.SessionHash(HexSid);
+        Assert.Equal("1", afterReplay["n_pv"]);
+        Assert.Equal("1", afterReplay["seq_replays"]);
+
+        // Gap 0 -> 3: two missing envelopes recorded.
+        var gap = await client.SendAsync(Post(Envelope(3, """[{"e":"pv","t":3}]""")));
+        Assert.Equal(HttpStatusCode.NoContent, gap.StatusCode);
+        var afterGap = app.Redis.SessionHash(HexSid);
+        Assert.Equal("2", afterGap["n_pv"]);
+        Assert.Equal("2", afterGap["seq_gaps"]);
+        Assert.Equal("3", afterGap["last_seq"]);
+    }
+
+    [Fact]
+    public async Task Post_NonceRoundTrip_ThroughARealInitCall()
+    {
+        using var app = new BeaconApp();
+        using var client = app.Client();
+
+        var init = await client.GetAsync($"/i/init?k={SiteKey}&sid={HexSid}");
+        var nonce = JsonSerializer.Deserialize<JsonElement>(await init.Content.ReadAsStringAsync())
+            .GetProperty("nonce").GetString()!;
+
+        await client.SendAsync(Post(Envelope(0, """[{"e":"pv","t":1}]""", nonce: nonce)));
+        var hash = app.Redis.SessionHash(HexSid);
+        Assert.Equal("1", hash["nonce_ok"]);
+        Assert.DoesNotContain("integrity_fails", hash.Keys);
+
+        // Wrong nonce on the next envelope: recorded, never rejected.
+        await client.SendAsync(Post(Envelope(1, """[{"e":"pv","t":2}]""",
+            nonce: "ffffffffffffffffffffffffffffffff")));
+        hash = app.Redis.SessionHash(HexSid);
+        Assert.Equal("0", hash["nonce_ok"]);
+        Assert.Equal("1", hash["integrity_fails"]);
+        Assert.Equal("2", hash["n_pv"]);   // events still aggregated
+    }
+
+    [Fact]
+    public async Task Post_SinkCadence_FirstEveryTenth_AndFpBearing()
+    {
+        using var app = new BeaconApp();
+        using var client = app.Client();
+
+        for (var seq = 0; seq < 10; seq++)
+            await client.SendAsync(Post(Envelope(seq, """[{"e":"pv","t":1}]""")));
+
+        // 10 accepted beacons without fp/fs => snapshots at #1 and #10 only.
+        Assert.Equal(2, app.Sink.Events.Count);
+        Assert.All(app.Sink.Events, e =>
+        {
+            Assert.Equal(EventKind.Beacon, e.Kind);
+            Assert.Equal(new TenantId(TenantGuid), e.TenantId);
+            Assert.Equal(SiteKey, e.SiteKey);
+            Assert.Equal(HexSid, e.SessionId);
+            Assert.True(e.HasJsBeacon);
+            Assert.Equal("203.0.113.10", e.Ip);
+            Assert.Equal((ushort)45, e.RetentionDays);   // tenant config, cached (D20)
+        });
+        Assert.True(float.IsNaN(app.Sink.Events[0].StorageAgeSec));   // missing != zero
+
+        // An fp-bearing batch triggers an immediate snapshot (#11).
+        var sig = SessionAggregator.ComputeStorageSig(Secret, Tid, NowMs);
+        await client.SendAsync(Post(Envelope(10, FpEvents(NowMs, sig))));
+        Assert.Equal(3, app.Sink.Events.Count);
+        var fpEvent = app.Sink.Events[^1];
+        Assert.Equal("v-1", fpEvent.FingerprintVisitorId);
+        Assert.Equal(0f, fpEvent.StorageAgeSec);
+        Assert.Equal(1920f, fpEvent.ScreenWidth);
+        Assert.Equal(false, fpEvent.WebdriverFlag);
+        Assert.Equal(10f, fpEvent.PagesViewed);
+    }
+
+    [Fact]
+    public async Task Post_VelocityCapture_OncePerAcceptedBatch_StorageAgeZeroOnlyWhenVerified()
+    {
+        using var app = new BeaconApp();
+        using var client = app.Client();
+
+        // 1: no fp yet -> visitorId null, storageAgeZero false.
+        await client.SendAsync(Post(Envelope(0, """[{"e":"pv","t":1}]""")));
+        // 2: fp with VERIFIED zero-age storage pair -> storageAgeZero true.
+        var sig = SessionAggregator.ComputeStorageSig(Secret, Tid, NowMs);
+        await client.SendAsync(Post(Envelope(1, FpEvents(NowMs, sig))));
+        // 3: replay -> dropped batch, NO velocity capture.
+        await client.SendAsync(Post(Envelope(1, """[{"e":"pv","t":9}]""")));
+
+        Assert.Equal(2, app.Velocity.Sessions.Count);
+        var (ip1, ua1, vid1, sid1, zero1) = app.Velocity.Sessions[0];
+        Assert.Equal(("203.0.113.10", "TestUA/1.0", null, HexSid, false), (ip1, ua1, vid1, sid1, zero1));
+        var (_, _, vid2, _, zero2) = app.Velocity.Sessions[1];
+        Assert.Equal("v-1", vid2);
+        Assert.True(zero2);
+    }
+
+    [Fact]
+    public async Task Post_TamperedStorageSig_NeverCountsAsZeroAge()
+    {
+        using var app = new BeaconApp();
+        using var client = app.Client();
+
+        await client.SendAsync(Post(Envelope(0, FpEvents(NowMs,
+            "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"))));
+
+        var (_, _, _, _, storageAgeZero) = Assert.Single(app.Velocity.Sessions);
+        Assert.False(storageAgeZero);
+        var hash = app.Redis.SessionHash(HexSid);
+        Assert.Equal("0", hash["storage_sig_ok"]);
+        Assert.DoesNotContain("storage_age_sec", hash.Keys);
+    }
+
+    [Theory]
+    [InlineData("not json at all")]
+    [InlineData("""{"k":"site-1","sid":"ab","seq":0,"nonce":"","sent_at":1,"events":[]}""")]     // bad sid
+    [InlineData("""{"k":"other-site","sid":"9f8e7d6c5b4a39281706f5e4d3c2b1a0","seq":0,"nonce":"","sent_at":1,"events":[]}""")] // body k != query k
+    [InlineData("""{"k":"site-1","sid":"9f8e7d6c5b4a39281706f5e4d3c2b1a0","seq":-1,"nonce":"","sent_at":1,"events":[]}""")]    // negative seq
+    [InlineData("""{"k":"site-1","sid":"9f8e7d6c5b4a39281706f5e4d3c2b1a0","seq":0,"nonce":"","sent_at":1,"events":"nope"}""")] // events not an array
+    public async Task Post_InvalidEnvelope_SilentDrop204_NothingWritten(string body)
+    {
+        using var app = new BeaconApp();
+        using var client = app.Client();
+
+        var resp = await client.SendAsync(Post(body));
+
+        Assert.Equal(HttpStatusCode.NoContent, resp.StatusCode);
+        Assert.Empty(app.Redis.Hashes);
+        Assert.Empty(app.Sink.Events);
+        Assert.Empty(app.Velocity.Sessions);
+    }
+
+    [Fact]
+    public async Task Post_UnknownSiteKey_SuccessShaped204_IndistinguishableFromAccepted()
+    {
+        using var app = new BeaconApp();
+        using var client = app.Client();
+
+        var resp = await client.SendAsync(Post(
+            Envelope(0, """[{"e":"pv","t":1}]""", k: "who-dis"), k: "who-dis"));
+
+        Assert.Equal(HttpStatusCode.NoContent, resp.StatusCode);
+        Assert.Empty(app.Redis.Hashes);
+        Assert.Empty(app.Sink.Events);
+    }
+
+    // ---------------------------------------------------- synthetic labels --
+
+    [Fact]
+    public async Task Synthetic_FlagOnAndHeader_WritesExactlyOneFraudLabelPerSession()
+    {
+        using var app = new BeaconApp(settings: new() { ["Synthetic:Enabled"] = "true" });
+        using var client = app.Client();
+
+        await client.SendAsync(Post(Envelope(0, """[{"e":"pv","t":1}]"""),
+            "text/plain", SiteKey, ("X-TG-Synthetic", "run-42")));
+        await client.SendAsync(Post(Envelope(1, """[{"e":"pv","t":2}]"""),
+            "text/plain", SiteKey, ("X-TG-Synthetic", "run-42")));
+
+        var label = Assert.Single(app.Labels.Labels);   // SETNX guard: once per session
+        Assert.Equal(new TenantId(TenantGuid), label.TenantId);
+        Assert.Equal(HexSid, label.SessionId);
+        Assert.Equal(LabelValues.Fraud, label.Label);
+        Assert.Equal(LabelSources.SyntheticBot, label.LabelSource);
+    }
+
+    [Fact]
+    public async Task Synthetic_FlagOnWithoutHeader_NoLabel()
+    {
+        using var app = new BeaconApp(settings: new() { ["Synthetic:Enabled"] = "true" });
+        using var client = app.Client();
+
+        await client.SendAsync(Post(Envelope(0, """[{"e":"pv","t":1}]""")));
+
+        Assert.Empty(app.Labels.Labels);
+    }
+
+    [Fact]
+    public async Task Synthetic_FlagOff_HeaderIsIgnored()
+    {
+        using var app = new BeaconApp();   // Synthetic:Enabled defaults to false
+        using var client = app.Client();
+
+        var resp = await client.SendAsync(Post(Envelope(0, """[{"e":"pv","t":1}]"""),
+            "text/plain", SiteKey, ("X-TG-Synthetic", "run-42")));
+
+        Assert.Equal(HttpStatusCode.NoContent, resp.StatusCode);   // identical either way
+        Assert.Empty(app.Labels.Labels);
+    }
+}

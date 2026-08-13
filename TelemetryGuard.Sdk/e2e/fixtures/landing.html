@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>TG e2e — landing fixture</title>
+    <style>
+      body { font-family: sans-serif; margin: 2rem; }
+      section { height: 120vh; border-top: 1px solid #ccc; padding-top: 1rem; }
+    </style>
+  </head>
+  <body>
+    <h1>Landing fixture</h1>
+    <p>Scrollable content spanning roughly three viewport heights.</p>
+    <button id="cta" type="button">Learn more</button>
+    <section><h2>Block one</h2><p>Filler content.</p></section>
+    <section><h2>Block two</h2><p>More filler content.</p></section>
+    <section><h2>Block three</h2><p>Even more filler content.</p></section>
+    <script
+      src="/dist/tg.js"
+      data-site-key="e2e-site"
+      data-endpoint="http://localhost:4599"
+    ></script>
+  </body>
+</html>
