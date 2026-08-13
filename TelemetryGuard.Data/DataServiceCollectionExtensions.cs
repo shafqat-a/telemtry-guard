@@ -29,6 +29,10 @@ public static class DataServiceCollectionExtensions
         services.TryAddScoped<Repositories.IVerdictSummaryRepository, Repositories.VerdictSummaryRepository>();
         services.TryAddScoped<Repositories.IRollupWatermarkRepository, Repositories.RollupWatermarkRepository>();
 
+        // API-06 exclusion-queue writer — DAT-06 ships the dbo.ExclusionQueue table
+        // only ("API-06 (writer) owns its access path"); scoped like the repositories above.
+        services.TryAddScoped<Repositories.IExclusionQueueRepository, Repositories.ExclusionQueueRepository>();
+
         // DAT-07 whitelist repository — scoped (scoped ITenantContext). Redis multiplexer:
         // registered only if the host has not already added one (RSK-03's AddVelocityStore
         // also TryAdds it — first registration wins, one multiplexer per process).

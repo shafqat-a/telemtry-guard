@@ -54,6 +54,44 @@ internal sealed class VerdictSummaryRepository(ITenantConnectionFactory connecti
             cancellationToken: ct));
     }
 
+    /// <summary>Live-path per-verdict increment (API-06). See the interface doc for why
+    /// this is a separate method from the rollup's absolute-value upsert.</summary>
+    public async Task IncrementDailySummaryAsync(VerdictDailySummaryRow delta, CancellationToken ct)
+    {
+        if (delta.TenantId != tenant.TenantId.Value)
+        {
+            throw new InvalidOperationException(
+                "VerdictDailySummaryRow.TenantId does not match the ambient tenant; refusing to increment.");
+        }
+
+        await using var conn = await connections.OpenAsync(ct);
+        await conn.ExecuteAsync(new CommandDefinition(
+            """
+            MERGE dbo.VerdictDailySummaries WITH (HOLDLOCK) AS t
+            USING (SELECT @TenantId AS TenantId, @CampaignId AS CampaignId, @Date AS [Date]) AS s
+                ON t.TenantId = s.TenantId AND t.CampaignId = s.CampaignId AND t.[Date] = s.[Date]
+            WHEN MATCHED THEN UPDATE SET
+                Allowed = t.Allowed + @Allowed, Challenged = t.Challenged + @Challenged,
+                Blocked = t.Blocked + @Blocked, ScoreSum = t.ScoreSum + @ScoreSum,
+                Events = t.Events + @Events, UpdatedUtc = SYSUTCDATETIME()
+            WHEN NOT MATCHED THEN INSERT
+                (TenantId, CampaignId, [Date], Allowed, Challenged, Blocked, ScoreSum, Events)
+                VALUES (@TenantId, @CampaignId, @Date, @Allowed, @Challenged, @Blocked, @ScoreSum, @Events);
+            """,
+            new
+            {
+                TenantId = tenant.TenantId.Value,
+                delta.CampaignId,
+                Date = delta.Date.ToDateTime(TimeOnly.MinValue),
+                delta.Allowed,
+                delta.Challenged,
+                delta.Blocked,
+                delta.ScoreSum,
+                delta.Events,
+            },
+            cancellationToken: ct));
+    }
+
     public async Task UpsertFlaggedSourceAsync(FlaggedSourceDailyRow row, CancellationToken ct)
     {
         if (row.TenantId != tenant.TenantId.Value)

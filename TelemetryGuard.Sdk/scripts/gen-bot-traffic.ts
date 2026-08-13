@@ -136,13 +136,18 @@ async function resolveSdkSrc(target: string): Promise<string> {
         `(docker compose up -d)? Beacons must land on the real API for labels to exist.`
     );
   }
-  if (res.ok) return probeUrl;
+  // A bare 200 is not enough: an SPA catch-all on the target port answers 200
+  // text/html for ANY path. Only trust the route when it actually serves JS.
+  const ct = res.headers.get('content-type') ?? '';
+  if (res.ok && /javascript|ecmascript/i.test(ct)) return probeUrl;
   if (!existsSync(DIST_BUNDLE)) {
     throw new Error(
-      `${probeUrl} returned ${res.status} and no local bundle exists at ${DIST_BUNDLE} — run 'npm run build' first.`
+      `${probeUrl} returned ${res.status} (content-type '${ct}') and no local bundle exists at ${DIST_BUNDLE} — run 'npm run build' first.`
     );
   }
-  console.log(`note: ${probeUrl} returned ${res.status}; serving local dist/tg.js instead.`);
+  console.log(
+    `note: ${probeUrl} returned ${res.status} (content-type '${ct}'); serving local dist/tg.js instead.`
+  );
   return '/tg.js';
 }
 
@@ -251,9 +256,17 @@ async function main(): Promise<void> {
     for (let run = 1; run <= args.runs; run++) {
       const runId = randomUUID();
       // The header rides EVERY request from this context: /i/init, /i beacons,
-      // the SDK script fetch and the optional tracker hit.
-      const context = await browser.newContext({
-        extraHTTPHeaders: { 'X-TG-Synthetic': runId },
+      // the SDK script fetch and the optional tracker hit. Injected via
+      // context.route rather than extraHTTPHeaders: CDP-level extraHTTPHeaders
+      // make the page's cross-origin /i/init fetch non-simple, triggering a
+      // CORS preflight that kills the init bootstrap (empirically verified);
+      // route.continue rewrites headers at the network layer without
+      // re-evaluating CORS, so the full init -> beacon flow stays intact.
+      const context = await browser.newContext();
+      await context.route('**/*', (route) => {
+        void route.continue({
+          headers: { ...route.request().headers(), 'x-tg-synthetic': runId },
+        });
       });
       const page = await context.newPage();
 

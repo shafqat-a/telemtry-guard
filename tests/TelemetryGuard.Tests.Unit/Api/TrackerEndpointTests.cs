@@ -605,7 +605,10 @@ public sealed class TrackerEndpointTests
     [Fact]
     public async Task SyntheticHeader_WithFlagDisabled_IsIgnored()
     {
-        using var app = new TrackerApp();   // Synthetic:Enabled defaults to false
+        // The test host runs in the Development environment, whose appsettings
+        // ships Synthetic:Enabled=true (API-04 step 10); force it false here to
+        // simulate every non-Development config, where the flag stays false.
+        using var app = new TrackerApp(settings: new() { ["Synthetic:Enabled"] = "false" });
         using var client = app.Client();
 
         var resp = await client.SendAsync(Get(

@@ -11,6 +11,10 @@ namespace TelemetryGuard.Api.Tenancy;
 /// Beacon routes (/i, /i/init) carry their key in the JSON body which middleware must
 /// not buffer — their endpoints (API-04) resolve via ITenantResolver themselves and
 /// drop unknown keys with a 204; this middleware passes them through unresolved.
+/// /decide (API-05) is passed through the same way: its key may ride the body
+/// alongside ?k=, and it resolves via ITenantResolver itself (unknown key -> 404,
+/// not a success-shaped drop, since it's called by first-party SDK code that reads
+/// the response).
 /// </summary>
 public sealed class TenantResolutionMiddleware(RequestDelegate next)
 {
@@ -27,10 +31,10 @@ public sealed class TenantResolutionMiddleware(RequestDelegate next)
 
         if (IsExempt(path)) { await next(context); return; }
 
-        // /i and /i/init: site key is in the JSON body; middleware must not buffer the
-        // body. API-04's endpoints resolve via ITenantResolver themselves and return 204
-        // for unknown keys (success-shaped drop). Pass through with unresolved context.
-        if (IsBeaconRoute(path)) { await next(context); return; }
+        // /i, /i/init, /decide: site key may ride the JSON body; middleware must not
+        // buffer the body. Their own endpoints (API-04/API-05) resolve via
+        // ITenantResolver themselves. Pass through with unresolved context.
+        if (IsBeaconRoute(path) || IsDecisionRoute(path)) { await next(context); return; }
 
         // Priority 1: X-Api-Key header (dashboard/admin/API traffic).
         if (context.Request.Headers.TryGetValue(ApiKeyHeader, out var apiKeyValues))
@@ -80,6 +84,7 @@ public sealed class TenantResolutionMiddleware(RequestDelegate next)
     private static bool IsClickRoute(PathString p) => p.StartsWithSegments("/c");
     private static bool IsPixelRoute(PathString p) => p.Equals("/p.gif", StringComparison.OrdinalIgnoreCase);
     private static bool IsBeaconRoute(PathString p) => p.StartsWithSegments("/i");
+    private static bool IsDecisionRoute(PathString p) => p.StartsWithSegments("/decide"); // API-05
 
     private static async Task WriteGifAsync(HttpContext context)
     {

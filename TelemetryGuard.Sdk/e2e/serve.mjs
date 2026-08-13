@@ -89,6 +89,19 @@ const server = http.createServer(async (req, res) => {
     const url = new URL(req.url ?? '/', `http://localhost:${PORT}`);
     const p = url.pathname;
 
+    if (req.method === 'OPTIONS') {
+      // CORS preflight (e.g. cross-origin requests carrying custom headers
+      // such as X-TG-Synthetic from the bot-traffic generator).
+      res.writeHead(204, {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+        'Access-Control-Allow-Headers': '*',
+        'Access-Control-Max-Age': '600',
+      });
+      res.end();
+      return;
+    }
+
     if (req.method === 'GET' && p.startsWith('/dist/')) {
       await serveStatic(res, path.join(SDK_ROOT, 'dist'), p.slice('/dist/'.length));
       return;
@@ -107,7 +120,7 @@ const server = http.createServer(async (req, res) => {
       const nonce = 'e2e-nonce-' + randomBytes(8).toString('hex');
       const storageTs = (lastTs = Math.max(Date.now(), lastTs + 1));
       const storageSig = 'e2e-sig-' + randomBytes(8).toString('hex');
-      inits.push({ sid, k, nonce, storageTs, storageSig, at: Date.now() });
+      inits.push({ sid, k, nonce, storageTs, storageSig, at: Date.now(), headers: req.headers });
       json(res, 200, { nonce, storageTs, storageSig });
       return;
     }

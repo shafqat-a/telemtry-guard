@@ -108,6 +108,51 @@ public sealed class VerdictSummaryRepositoryTests(SqlServerFixture fx)
     }
 
     [Fact]
+    public async Task IncrementDailySummaryAsync_accumulates_across_calls_unlike_the_absolute_upsert()
+    {
+        // API-06 step 3b: the live per-verdict increment is a DIFFERENT method from
+        // UpsertDailySummaryAsync's absolute-value MERGE (reserved for the ANA-07
+        // rollup) — two finalizations for the same tenant/campaign/day must leave a
+        // row with SUMMED counts, proving the incremental MERGE semantics.
+        await using var provider = RepositoryFactory.BuildServices(fx, SqlServerFixture.TenantA);
+        using var scope = provider.CreateScope();
+        var repo = scope.ServiceProvider.GetRequiredService<IVerdictSummaryRepository>();
+
+        var campaignId = Guid.NewGuid();
+        var date = new DateOnly(2024, 9, 1);
+
+        await repo.IncrementDailySummaryAsync(new VerdictDailySummaryRow(
+            SqlServerFixture.TenantA, campaignId, date,
+            Allowed: 1, Challenged: 0, Blocked: 0, ScoreSum: 20, Events: 1), CancellationToken.None);
+        await repo.IncrementDailySummaryAsync(new VerdictDailySummaryRow(
+            SqlServerFixture.TenantA, campaignId, date,
+            Allowed: 0, Challenged: 0, Blocked: 1, ScoreSum: 90, Events: 1), CancellationToken.None);
+
+        var stored = await repo.GetDailySummariesAsync(campaignId, date, date, CancellationToken.None);
+        var single = Assert.Single(stored);
+        Assert.Equal(1, single.Allowed);
+        Assert.Equal(0, single.Challenged);
+        Assert.Equal(1, single.Blocked);
+        Assert.Equal(110, single.ScoreSum); // 20 + 90 — summed, not overwritten
+        Assert.Equal(2, single.Events);
+    }
+
+    [Fact]
+    public async Task IncrementDailySummaryAsync_rejects_foreign_tenant_row()
+    {
+        await using var provider = RepositoryFactory.BuildServices(fx, SqlServerFixture.TenantA);
+        using var scope = provider.CreateScope();
+        var repo = scope.ServiceProvider.GetRequiredService<IVerdictSummaryRepository>();
+
+        var foreign = new VerdictDailySummaryRow(
+            SqlServerFixture.TenantB, Guid.NewGuid(), new DateOnly(2024, 9, 2),
+            Allowed: 1, Challenged: 0, Blocked: 0, ScoreSum: 5, Events: 1);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => repo.IncrementDailySummaryAsync(foreign, CancellationToken.None));
+    }
+
+    [Fact]
     public async Task GetTopFlaggedSourcesAsync_orders_by_blocked_then_flagged_and_limits()
     {
         await using var provider = RepositoryFactory.BuildServices(fx, SqlServerFixture.TenantA);

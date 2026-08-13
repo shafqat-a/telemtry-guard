@@ -21,9 +21,12 @@ using TelemetryGuard.Api.Endpoints;
 using TelemetryGuard.Api.Health;
 using TelemetryGuard.Api.Middleware;
 using TelemetryGuard.Api.Options;
+using TelemetryGuard.Api.Services;
 using TelemetryGuard.Core.Tenancy;
 using TelemetryGuard.Core.Time;
 using TelemetryGuard.Data;
+using TelemetryGuard.Integrations.Turnstile;
+using TelemetryGuard.RiskEngine.Pipeline;
 using TelemetryGuard.RiskEngine.Velocity;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -92,6 +95,30 @@ builder.Services.AddOptions<BeaconOptions>()
         o => !string.IsNullOrEmpty(o.HmacSecret) && o.HmacSecret.Length >= 32,
         "Beacon:HmacSecret must be set and at least 32 characters (API-04).")
     .ValidateOnStart();
+
+// RSK-07: in-process scoring pipeline (whitelist short-circuit -> prefetch ->
+// extract -> rules -> scorer -> Math.Max floor fold -> band). API-05's /decide
+// is the first API-host consumer.
+builder.Services.AddScoringPipeline(builder.Configuration);
+
+// INT-01: Cloudflare Turnstile server-side verification, consumed only by
+// API-05's /decide challenge round-trip (never the scoring hot path).
+builder.Services.AddTurnstileVerification(builder.Configuration);
+
+// API-05: score-to-band thresholds (spec §6.3) — never hardcode AllowMax/ChallengeMax.
+builder.Services.Configure<ScoringBandOptions>(
+    builder.Configuration.GetSection(ScoringBandOptions.SectionName));
+
+// API-06: real verdict finalizer (verdict persistence, exclusion-queue writes,
+// EnforcementMode handling, summary MERGEs) — replaces API-05's build-order
+// stub. Scoped: it consumes scoped tenant-bound repositories and must be
+// resolved from a scope (API-05's per-request scope or the grace worker's
+// manual scope below both satisfy this).
+builder.Services.AddScoped<IVerdictFinalizer, VerdictFinalizer>();
+
+// API-06: grace-period worker — every second, finalizes sessions whose ~10 s
+// beacon grace period (API-02/API-03) expired with no beacon ever arriving.
+builder.Services.AddHostedService<VerdictFinalizerService>();
 
 // ---------- OpenTelemetry (OTLP endpoint/headers come from standard env vars) ----------
 builder.Services.AddOpenTelemetry()
@@ -255,8 +282,8 @@ if (app.Configuration.GetValue("TestHost:EnableDiagnostics", false))
 app.MapTrackerEndpoints();       // API-02  GET /c
 app.MapPixelEndpoints();         // API-03  GET /p.gif
 app.MapBeaconEndpoints();        // API-04  GET /i/init, POST /i
-// app.MapDecisionEndpoints();   // API-05  POST /decide
-// app.MapAdminEndpoints();      // API-07  /admin/*
+app.MapDecisionEndpoints();      // API-05  POST /decide
+app.MapAdminEndpoints();         // API-07  /admin/*
 app.Run();
 
 public partial class Program // exposes Program to WebApplicationFactory tests

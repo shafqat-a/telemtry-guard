@@ -625,7 +625,10 @@ public sealed class BeaconEndpointTests
     [Fact]
     public async Task Synthetic_FlagOff_HeaderIsIgnored()
     {
-        using var app = new BeaconApp();   // Synthetic:Enabled defaults to false
+        // The test host runs in the Development environment, whose appsettings
+        // ships Synthetic:Enabled=true (API-04 step 10); force it false here to
+        // simulate every non-Development config, where the flag stays false.
+        using var app = new BeaconApp(settings: new() { ["Synthetic:Enabled"] = "false" });
         using var client = app.Client();
 
         var resp = await client.SendAsync(Post(Envelope(0, """[{"e":"pv","t":1}]"""),
