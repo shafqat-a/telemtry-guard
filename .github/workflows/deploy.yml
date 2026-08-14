@@ -250,10 +250,16 @@ jobs:
           az containerapp revision list -n "$APP" -g "$RG" \
             --query "[?properties.active].{n:name,h:properties.healthState,p:properties.provisioningState}" -o table
 
+      # The `secrets` context is not available in ANY `if` expression (job- or
+      # step-level) — GitHub rejects the whole workflow file at validation. Gate
+      # inside the script via env instead.
       - name: Through-Cloudflare smoke (optional — only if TG_SMOKE_BASE_URL is set)
-        if: ${{ secrets.TG_SMOKE_BASE_URL != '' }}
         env:
           TG_SMOKE_BASE_URL: ${{ secrets.TG_SMOKE_BASE_URL }}
         run: |
+          if [ -z "$TG_SMOKE_BASE_URL" ]; then
+            echo "TG_SMOKE_BASE_URL not configured — skipping through-Cloudflare smoke."
+            exit 0
+          fi
           curl -fsS "$TG_SMOKE_BASE_URL/healthz"
           curl -fsSI "$TG_SMOKE_BASE_URL/sdk/tg.js"

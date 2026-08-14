@@ -72,9 +72,13 @@ public sealed class KustoProviderFixture : IAnalyticsProviderFixture
         await Task.Delay(TimeSpan.FromSeconds(5));
 
         var port = _container.GetMappedPublicPort(EnginePort);
+        // 127.0.0.1, NOT localhost: on Linux `localhost` resolves to ::1 first, and a
+        // failed IPv6 connect trips the Kusto SDK's socket reuse into .NET's
+        // "Sockets ... invalid for use after a failed connection attempt" — the exact
+        // failure mode seen on GitHub runners.
         _opts = new KustoAnalyticsOptions
         {
-            ConnectionString = $"Data Source=http://localhost:{port};Federated Security=False",
+            ConnectionString = $"Data Source=http://127.0.0.1:{port};Federated Security=False",
             Database = Database,
             IngestMode = KustoAnalyticsOptions.StreamingMode,
             EventMaxBatchSize = 100, EventMaxBatchAgeSeconds = 0.3,
@@ -154,7 +158,7 @@ internal sealed class KustoEngineReady(int port) : IWaitUntil
         {
             var mappedPort = container.GetMappedPublicPort(port);
             var resp = await Http.PostAsJsonAsync(
-                $"http://localhost:{mappedPort}/v1/rest/mgmt",
+                $"http://127.0.0.1:{mappedPort}/v1/rest/mgmt",
                 new { csl = ".show version" });
             if (!resp.IsSuccessStatusCode) return false;
             using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
