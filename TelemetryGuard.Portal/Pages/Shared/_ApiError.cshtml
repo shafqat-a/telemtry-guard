@@ -1,0 +1,7 @@
+@model string
+@* Renders one AdminApiResult error box. Callers pass result.Error (nullable) —
+   e.g. @await Html.PartialAsync("_ApiError", Model.SummaryResult.Error) *@
+@if (!string.IsNullOrEmpty(Model))
+{
+    <div class="panel-error" role="alert">@Model</div>
+}

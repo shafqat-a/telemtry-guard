@@ -1,0 +1,108 @@
+@page "/whitelist"
+@model TelemetryGuard.Portal.Pages.WhitelistModel
+@{
+    ViewData["Title"] = "Whitelist";
+}
+
+<h1>Whitelist</h1>
+
+@if (Model.Message is not null)
+{
+    <div class="panel-message">@Model.Message</div>
+}
+@if (Model.Error is not null)
+{
+    <div class="panel-error" role="alert">@Model.Error</div>
+}
+
+<section class="panel">
+    <form method="get" action="/whitelist" class="tg-filter-form">
+        <label>
+            Type
+            <select name="Type">
+                <option value="" selected="@(Model.Type is null ? "selected" : null)">(any)</option>
+                <option value="ip" selected="@(Model.Type == "ip" ? "selected" : null)">ip</option>
+                <option value="device_id" selected="@(Model.Type == "device_id" ? "selected" : null)">device_id</option>
+                <option value="fingerprint" selected="@(Model.Type == "fingerprint" ? "selected" : null)">fingerprint</option>
+            </select>
+        </label>
+        <button type="submit">Filter</button>
+    </form>
+
+    @if (Model.EntriesResult?.Error is not null)
+    {
+        <div class="panel-error" role="alert">@Model.EntriesResult.Error</div>
+    }
+    else if (Model.EntriesResult?.Value is { } entries)
+    {
+        <table>
+            <thead>
+                <tr>
+                    <th>Id</th><th>Type</th><th>Value</th><th>Reason</th><th>Source</th>
+                    <th>Created</th><th>Expires</th><th></th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var e in entries)
+                {
+                    <tr>
+                        <td>@e.Id</td>
+                        <td>@e.Type</td>
+                        <td>@e.Value</td>
+                        <td>@e.Reason</td>
+                        <td>@e.Source</td>
+                        <td>@e.CreatedUtc.ToString("u")</td>
+                        <td>@(e.ExpiresUtc?.ToString("u") ?? "never")</td>
+                        <td>
+                            <form method="post" asp-page-handler="Delete">
+                                @Html.AntiForgeryToken()
+                                <input type="hidden" name="id" value="@e.Id" />
+                                <button type="submit" class="secondary">Delete</button>
+                            </form>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+        <p class="tg-filter-form">
+            @if (Model.Offset > 0)
+            {
+                <a href="/whitelist?type=@Model.Type&amp;offset=@Math.Max(0, Model.Offset.Value - 50)">Prev</a>
+            }
+            @if (Model.ShowNext)
+            {
+                <a href="/whitelist?type=@Model.Type&amp;offset=@(Model.Offset + 50)">Next</a>
+            }
+        </p>
+    }
+</section>
+
+<section class="panel">
+    <h2>Add entry</h2>
+    <form method="post" asp-page-handler="Add" class="tg-add-form">
+        @Html.AntiForgeryToken()
+        <label>
+            Type
+            <select name="type">
+                <option value="ip">ip</option>
+                <option value="device_id">device_id</option>
+                <option value="fingerprint">fingerprint</option>
+            </select>
+        </label>
+        <label>
+            Value
+            <input type="text" name="value" required />
+        </label>
+        <label>
+            Reason
+            <input type="text" name="reason" />
+        </label>
+        <label>
+            Session id (optional)
+            <input type="text" name="sessionId" placeholder="turns this into a review_screen add" />
+        </label>
+        <button type="submit">Add</button>
+    </form>
+    <p class="tg-note">Adding an entry that already exists updates its reason and returns the same
+        id — re-submitting is safe.</p>
+</section>

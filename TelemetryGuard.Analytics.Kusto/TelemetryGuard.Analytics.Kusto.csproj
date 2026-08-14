@@ -1,0 +1,42 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\TelemetryGuard.Core\TelemetryGuard.Core.csproj" />
+    <ProjectReference Include="..\TelemetryGuard.Analytics.Abstractions\TelemetryGuard.Analytics.Abstractions.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Azure Data Explorer / Fabric Eventhouse SDK (D6: one provider, two targets). -->
+    <PackageReference Include="Microsoft.Azure.Kusto.Data" Version="14.2.1" />
+    <PackageReference Include="Microsoft.Azure.Kusto.Ingest" Version="14.2.1" />
+    <!-- Microsoft.Extensions.* bumped past the repo's usual 8.0.x pin (ClickHouse
+         project style): the Kusto SDK resolved to 14.2.1 (the version `dotnet add
+         package` picked), whose Azure.Core 1.57.0 transitive dependency requires
+         >= 10.0.3 of Hosting/Logging.Abstractions, which in turn drags in matching
+         DependencyInjection.Abstractions/Options versions (NU1605 package-downgrade
+         otherwise, and TreatWarningsAsErrors=true turns that into a build failure).
+         Documented drift from the task's suggested 8.0.x pins — see README.md. -->
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.3" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.3" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.3" />
+    <PackageReference Include="Microsoft.Extensions.Options" Version="10.0.3" />
+    <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" Version="8.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="schema/**/*.kql" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Unit tests exercise KustoSchemaMigrator.SplitCommands, KustoEventSink.MapRow/WriteRow
+         and the mapping-vs-ColumnNames invariant. -->
+    <InternalsVisibleTo Include="TelemetryGuard.Tests.Unit" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+</Project>

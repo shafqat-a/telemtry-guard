@@ -16,5 +16,6 @@
   <ItemGroup>
     <ProjectReference Include="..\TelemetryGuard.Data\TelemetryGuard.Data.csproj" />
     <ProjectReference Include="..\TelemetryGuard.Analytics.ClickHouse\TelemetryGuard.Analytics.ClickHouse.csproj" />
+    <ProjectReference Include="..\TelemetryGuard.Analytics.Kusto\TelemetryGuard.Analytics.Kusto.csproj" />
   </ItemGroup>
 </Project>

@@ -4,19 +4,27 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using TelemetryGuard.Analytics.Abstractions;
 using TelemetryGuard.Analytics.ClickHouse;
+using TelemetryGuard.Analytics.Kusto;
+using TelemetryGuard.Api.Analytics;
 using TelemetryGuard.Core.Tenancy;
 using TelemetryGuard.Core.Time;
 
 namespace TelemetryGuard.Tests.Unit.Analytics;
 
 /// <summary>
-/// ANA-05: the D7 provider switch (<see cref="AnalyticsServiceCollectionExtensions"/>)
-/// against a real ServiceCollection + in-memory configuration.
+/// The D7 provider switch (<see cref="AnalyticsServiceCollectionExtensions"/>,
+/// moved to the composition root by P2-05) against a real ServiceCollection +
+/// in-memory configuration. Covers both providers now that Kusto is implemented.
 /// </summary>
 public class AnalyticsRegistrationTests
 {
     private const string ValidConnectionString =
         "Host=localhost;Port=8123;Database=telemetry_guard;Username=tg;Password=tg-dev-password";
+
+    // Deliberately never dialed: KustoQueryExecutor/ingest transports build lazily,
+    // so registration/resolution of the sinks must perform NO network I/O — these
+    // tests would hang/throw immediately if that ever regressed.
+    private const string KustoConnectionString = "Data Source=http://localhost:1;Federated Security=False";
 
     private sealed class StubTenantContext : ITenantContext
     {
@@ -105,14 +113,64 @@ public class AnalyticsRegistrationTests
     }
 
     [Fact]
-    public void KustoProvider_ThrowsNotSupported_AtRegistration()
+    public void KustoProvider_RegistersSingletonSinks_ForwardedAsHostedServices()
     {
-        var cfg = BuildConfig(("Analytics:Provider", "Kusto"));
+        var cfg = BuildConfig(
+            ("Analytics:Provider", "Kusto"),
+            ("Analytics:Kusto:ConnectionString", KustoConnectionString),
+            ("Analytics:Kusto:IngestMode", "Streaming"));
         var services = NewServices();
 
-        var ex = Assert.Throws<NotSupportedException>(
-            () => services.AddTelemetryGuardAnalytics(cfg));
-        Assert.Contains("Kusto", ex.Message);
+        services.AddTelemetryGuardAnalytics(cfg);
+
+        using var root = services.BuildServiceProvider(
+            new ServiceProviderOptions { ValidateScopes = true });
+
+        // No network I/O may occur here — KustoQueryExecutor/ingest transports are
+        // Lazy<T>, so mere resolution of the sinks must never dial the (unreachable)
+        // connection string above.
+        var eventSink = root.GetRequiredService<IEventSink>();
+        var labelSink = root.GetRequiredService<ILabelSink>();
+        Assert.IsType<KustoEventSink>(eventSink);
+        Assert.IsType<KustoLabelSink>(labelSink);
+
+        Assert.Same(eventSink, root.GetRequiredService<IEventSink>());
+        Assert.Same(labelSink, root.GetRequiredService<ILabelSink>());
+        using (var scope = root.CreateScope())
+        {
+            Assert.Same(eventSink, scope.ServiceProvider.GetRequiredService<IEventSink>());
+            Assert.Same(labelSink, scope.ServiceProvider.GetRequiredService<ILabelSink>());
+        }
+
+        var hosted = root.GetServices<IHostedService>().ToList();
+        Assert.Contains(hosted, h => ReferenceEquals(h, eventSink));
+        Assert.Contains(hosted, h => ReferenceEquals(h, labelSink));
+    }
+
+    [Fact]
+    public void KustoProvider_QueriesAreScoped_NotResolvableFromRoot()
+    {
+        var cfg = BuildConfig(
+            ("Analytics:Provider", "Kusto"),
+            ("Analytics:Kusto:ConnectionString", KustoConnectionString),
+            ("Analytics:Kusto:IngestMode", "Streaming"));
+        var services = NewServices();
+
+        services.AddTelemetryGuardAnalytics(cfg);
+
+        var descriptor = Assert.Single(services, d => d.ServiceType == typeof(IAnalyticsQueries));
+        Assert.Equal(ServiceLifetime.Scoped, descriptor.Lifetime);
+
+        using var root = services.BuildServiceProvider(
+            new ServiceProviderOptions { ValidateScopes = true });
+
+        using (var scope = root.CreateScope())
+        {
+            var queries = scope.ServiceProvider.GetRequiredService<IAnalyticsQueries>();
+            Assert.IsType<KustoAnalyticsQueries>(queries);
+        }
+
+        Assert.Throws<InvalidOperationException>(() => root.GetRequiredService<IAnalyticsQueries>());
     }
 
     [Fact]
@@ -152,5 +210,44 @@ public class AnalyticsRegistrationTests
         using var host = builder.Build();
         var ex = await Assert.ThrowsAsync<OptionsValidationException>(() => host.StartAsync());
         Assert.Contains("ConnectionString", ex.Message);
+    }
+
+    [Fact]
+    public async Task KustoProvider_EmptyConnectionString_FailsHostStart_ViaValidateOnStart()
+    {
+        var builder = Host.CreateApplicationBuilder();
+        builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["Analytics:Provider"] = "Kusto",
+            ["Analytics:Kusto:ConnectionString"] = "",
+            ["Analytics:Kusto:IngestMode"] = "Streaming"
+        });
+        builder.Services.AddScoped<ITenantContext, StubTenantContext>();
+        builder.Services.AddSingleton<IClock, StubClock>();
+        builder.Services.AddTelemetryGuardAnalytics(builder.Configuration);
+
+        using var host = builder.Build();
+        var ex = await Assert.ThrowsAsync<OptionsValidationException>(() => host.StartAsync());
+        Assert.Contains("ConnectionString", ex.Message);
+    }
+
+    [Fact]
+    public async Task KustoProvider_QueuedModeWithoutIngestConnectionString_FailsHostStart()
+    {
+        var builder = Host.CreateApplicationBuilder();
+        builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["Analytics:Provider"] = "Kusto",
+            ["Analytics:Kusto:ConnectionString"] = KustoConnectionString,
+            ["Analytics:Kusto:IngestMode"] = "Queued",
+            ["Analytics:Kusto:IngestConnectionString"] = ""
+        });
+        builder.Services.AddScoped<ITenantContext, StubTenantContext>();
+        builder.Services.AddSingleton<IClock, StubClock>();
+        builder.Services.AddTelemetryGuardAnalytics(builder.Configuration);
+
+        using var host = builder.Build();
+        var ex = await Assert.ThrowsAsync<OptionsValidationException>(() => host.StartAsync());
+        Assert.Contains("IngestConnectionString", ex.Message);
     }
 }

@@ -43,6 +43,12 @@
     <ProjectReference Include="..\..\TelemetryGuard.Analytics.ClickHouse\TelemetryGuard.Analytics.ClickHouse.csproj" />
     <ProjectReference Include="..\..\TelemetryGuard.RiskEngine\TelemetryGuard.RiskEngine.csproj" />
     <ProjectReference Include="..\..\TelemetryGuard.Api\TelemetryGuard.Api.csproj" />
+    <!-- P2-03: PortalAdminApiContractTests drives the portal against the real API
+         test host (wire-contract drift guard + cross-tenant isolation proof). -->
+    <ProjectReference Include="..\..\TelemetryGuard.Portal\TelemetryGuard.Portal.csproj" />
+    <!-- P2-02: RetrainCycleTests calls RetrainRunner/ModelRegistryClient/DivergenceReport
+         in-process (never by shelling out to `dotnet run`). -->
+    <ProjectReference Include="..\..\TelemetryGuard.Training\TelemetryGuard.Training.csproj" />
   </ItemGroup>
 
 </Project>

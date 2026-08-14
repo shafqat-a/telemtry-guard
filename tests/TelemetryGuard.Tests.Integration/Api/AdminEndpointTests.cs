@@ -1,4 +1,5 @@
 using System.Net;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Dapper;
@@ -9,6 +10,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using StackExchange.Redis;
 using TelemetryGuard.Analytics.Abstractions;
 using TelemetryGuard.Core.Tenancy;
+using TelemetryGuard.Data;
 using TelemetryGuard.Tests.Integration.Sql;
 
 namespace TelemetryGuard.Tests.Integration.Api;
@@ -253,5 +255,111 @@ public sealed class AdminEndpointTests(SqlServerFixture fx)
             .First(s => s.GetProperty("siteKey").GetString() == SqlServerFixture.SiteKeyA);
         Assert.Equal("js", site.GetProperty("effectiveLevel").GetString());
         Assert.NotEqual(JsonValueKind.Null, site.GetProperty("lastBeaconAt").ValueKind);
+    }
+
+    // ============================================================ P2-01 reports =
+
+    [Fact]
+    public async Task GetPublisherReport_RealRepository_ReturnsSeededTotals_AndIsTenantIsolated()
+    {
+        using var app = new AdminApp(fx);
+
+        var placement = $"pub-{Guid.NewGuid():N}.example";
+        var day = DateTime.UtcNow.Date;
+
+        await using (var conn = await fx.OpenAsync(SqlServerFixture.TenantA))
+        {
+            await conn.ExecuteAsync(
+                """
+                INSERT INTO dbo.PublisherDailySummaries
+                    (TenantId, [Date], Placement, Events, Allowed, Challenged, Blocked, ScoreSum, NoJsBeaconCount)
+                VALUES (@TenantId, @Date, @Placement, @Events, @Allowed, @Challenged, @Blocked, @ScoreSum, @NoJsBeaconCount);
+                """,
+                new
+                {
+                    TenantId = SqlServerFixture.TenantA, Date = day, Placement = placement,
+                    Events = 100, Allowed = 60, Challenged = 15, Blocked = 25, ScoreSum = 4200L, NoJsBeaconCount = 10,
+                });
+        }
+
+        var tenantBApiKey = await SeedAdminApiKeyAsync(SqlServerFixture.TenantB);
+        var today = day.ToString("yyyy-MM-dd");
+
+        using (var clientA = app.Client(SqlServerFixture.ApiKeyA))
+        {
+            var resp = await clientA.GetAsync($"/admin/reports/publishers?from={today}&to={today}");
+            var json = await ReadJson(resp);
+
+            Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+            var row = json.GetProperty("rows").EnumerateArray()
+                .First(r => r.GetProperty("placement").GetString() == placement);
+            Assert.Equal(100, row.GetProperty("events").GetInt32());
+            Assert.Equal(60, row.GetProperty("allowed").GetInt32());
+            Assert.Equal(15, row.GetProperty("challenged").GetInt32());
+            Assert.Equal(25, row.GetProperty("blocked").GetInt32());
+            Assert.Equal(40, row.GetProperty("flagged").GetInt32());
+            Assert.Equal(0.4, row.GetProperty("flaggedRatio").GetDouble());
+            Assert.Equal(42.0, row.GetProperty("avgScore").GetDouble());
+            Assert.False(row.GetProperty("lowVolume").GetBoolean());
+        }
+
+        // A second tenant's key must see NONE of tenant A's placements (RLS + D11).
+        using (var clientB = app.Client(tenantBApiKey))
+        {
+            var resp = await clientB.GetAsync($"/admin/reports/publishers?from={today}&to={today}");
+            var json = await ReadJson(resp);
+
+            Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+            Assert.DoesNotContain(json.GetProperty("rows").EnumerateArray(),
+                r => r.GetProperty("placement").GetString() == placement);
+        }
+    }
+
+    [Fact]
+    public async Task GetSiteReport_RealRepository_ReturnsSeededTotals_WithMissingNeverZeroAvgScore()
+    {
+        using var app = new AdminApp(fx);
+        using var client = app.Client(SqlServerFixture.ApiKeyA);
+
+        var siteKey = $"site-{Guid.NewGuid():N}"[..20];
+        var day = DateTime.UtcNow.Date;
+
+        await using (var conn = await fx.OpenAsync(SqlServerFixture.TenantA))
+        {
+            await conn.ExecuteAsync(
+                """
+                INSERT INTO dbo.SiteDailySummaries
+                    (TenantId, [Date], SiteKey, TotalEvents, Events, Allowed, Challenged, Blocked, ScoreSum, NoJsBeaconCount)
+                VALUES (@TenantId, @Date, @SiteKey, @TotalEvents, @Events, @Allowed, @Challenged, @Blocked, @ScoreSum, @NoJsBeaconCount);
+                """,
+                new
+                {
+                    TenantId = SqlServerFixture.TenantA, Date = day, SiteKey = siteKey,
+                    TotalEvents = 12, Events = 0, Allowed = 0, Challenged = 0, Blocked = 0, ScoreSum = 0L, NoJsBeaconCount = 0,
+                });
+        }
+
+        var today = day.ToString("yyyy-MM-dd");
+        var resp = await client.GetAsync($"/admin/reports/sites?from={today}&to={today}");
+        var json = await ReadJson(resp);
+
+        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+        var row = json.GetProperty("rows").EnumerateArray()
+            .First(r => r.GetProperty("siteKey").GetString() == siteKey);
+        Assert.Equal(12, row.GetProperty("totalEvents").GetInt32()); // pixel/tracker-only traffic still counted
+        Assert.Equal(0, row.GetProperty("events").GetInt32());
+        Assert.Equal(JsonValueKind.Null, row.GetProperty("avgScore").ValueKind); // events==0 -> null, never 0
+    }
+
+    /// <summary>Seeds a fresh admin-scope API key for an arbitrary tenant via the
+    /// SYSTEM sentinel (dbo.ApiKeys is RLS-exempt) and returns the raw key.</summary>
+    private async Task<string> SeedAdminApiKeyAsync(Guid tenantId)
+    {
+        var rawKey = $"test-admin-key-{Guid.NewGuid():N}";
+        await using var sys = await fx.OpenAsync(WellKnownTenants.System);
+        await sys.ExecuteAsync(
+            "INSERT INTO dbo.ApiKeys (KeyHash, TenantId, Scopes) VALUES (@hash, @TenantId, N'admin')",
+            new { hash = SHA256.HashData(Encoding.UTF8.GetBytes(rawKey)), TenantId = tenantId });
+        return rawKey;
     }
 }

@@ -16,7 +16,7 @@ using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 using StackExchange.Redis;
-using TelemetryGuard.Analytics.ClickHouse;
+using TelemetryGuard.Api.Analytics;
 using TelemetryGuard.Api.Edge;
 using TelemetryGuard.Api.Endpoints;
 using TelemetryGuard.Api.Health;
@@ -98,6 +98,33 @@ builder.Services.AddOptions<BeaconOptions>()
         o => !string.IsNullOrEmpty(o.HmacSecret) && o.HmacSecret.Length >= 32,
         "Beacon:HmacSecret must be set and at least 32 characters (API-04).")
     .ValidateOnStart();
+
+// P2-02: registry-driven model selection (D18). When Scoring:ModelSource is
+// "Registry" (the shipped default), the promoted dbo.ModelRegistry row — never
+// appsettings — decides which model this process loads and whether it ENFORCES
+// ('active') or only shadows ('shadow'). Resolution writes the same Scoring:*
+// keys RSK-08's AddScoringPipeline already understands, so the scoring DI switch
+// is untouched. An empty registry, an unreachable SQL Server, or a failed artifact
+// verification all leave the heuristic enforcing — never the other way round.
+var useRegistry = string.Equals(
+    builder.Configuration["Scoring:ModelSource"], "Registry", StringComparison.OrdinalIgnoreCase);
+
+var modelState = useRegistry
+    ? TelemetryGuard.Api.Startup.ModelRegistryBootstrap.Resolve(
+        builder.Configuration, TelemetryGuard.RiskEngine.Contracts.FraudFeatureVector.FeatureSetVersion,
+        TimeSpan.FromSeconds(5))
+    : new TelemetryGuard.Api.Startup.ServingModelState(null, null, null,
+        ["Scoring:ModelSource != Registry — Scoring:ModelPath from configuration is authoritative (RSK-08 pilot mode)."]);
+
+if (useRegistry)
+{
+    builder.Configuration.AddInMemoryCollection(
+        TelemetryGuard.Api.Startup.ModelRegistryBootstrap.ToScoringOverrides(modelState));
+}
+builder.Services.AddSingleton(modelState);   // what THIS process actually loaded — the watcher compares against it
+builder.Services.Configure<ModelRegistryOptions>(
+    builder.Configuration.GetSection(ModelRegistryOptions.SectionName));
+builder.Services.AddHostedService<TelemetryGuard.Api.Workers.ModelRegistryWatcher>();
 
 // RSK-07: in-process scoring pipeline (whitelist short-circuit -> prefetch ->
 // extract -> rules -> scorer -> Math.Max floor fold -> band). API-05's /decide
@@ -229,12 +256,18 @@ builder.Services.AddRateLimiter(o =>
 });
 
 // ---------- Health checks ----------
+// The "clickhouse"/"kusto" readiness check is registered inside the D7 provider
+// switch (AddTelemetryGuardAnalytics, TelemetryGuard.Api/Analytics) — AddHealthChecks()
+// is additive and may be called from both places (P2-05 step 9).
 builder.Services.AddHealthChecks()
     .AddCheck<SqlHealthCheck>("sql", tags: ["ready"])
-    .AddCheck<RedisHealthCheck>("redis", tags: ["ready"])
-    .AddCheck<ClickHouseHealthCheck>("clickhouse", tags: ["ready"]);
+    .AddCheck<RedisHealthCheck>("redis", tags: ["ready"]);
 
 var app = builder.Build();
+
+// P2-02: the model-registry bootstrap ran before logging existed — flush its log
+// lines through the real logger now.
+foreach (var line in modelState.Log) app.Logger.LogInformation("{ModelRegistryBootstrap}", line);
 
 // ================= MIDDLEWARE ORDER — FIXED, DO NOT REORDER =================
 app.UseExceptionHandler();                       // 1. RFC 7807 for unhandled exceptions

@@ -140,6 +140,9 @@ public sealed class AdminEndpointTests
         public (Guid CampaignId, DateOnly From, DateOnly To)? LastCall;
         public IReadOnlyList<VerdictDailySummaryRow> Rows = [];
 
+        public (DateOnly From, DateOnly To, int Limit)? LastFlaggedSourcesCall;
+        public IReadOnlyList<FlaggedSourceDailyRow> FlaggedSourceRows = [];
+
         public Task UpsertDailySummaryAsync(VerdictDailySummaryRow row, CancellationToken ct) => throw new NotSupportedException();
         public Task UpsertFlaggedSourceAsync(FlaggedSourceDailyRow row, CancellationToken ct) => throw new NotSupportedException();
         public Task IncrementDailySummaryAsync(VerdictDailySummaryRow delta, CancellationToken ct) => throw new NotSupportedException();
@@ -153,7 +156,57 @@ public sealed class AdminEndpointTests
 
         public Task<IReadOnlyList<FlaggedSourceDailyRow>> GetTopFlaggedSourcesAsync(
             DateOnly from, DateOnly to, int limit, CancellationToken ct)
-            => throw new NotSupportedException();
+        {
+            LastFlaggedSourcesCall = (from, to, limit);
+            return Task.FromResult(FlaggedSourceRows);
+        }
+    }
+
+    /// <summary>P2-01: fake for IPublisherSummaryRepository, backing GET
+    /// /admin/reports/publishers and GET /admin/reports/sites.</summary>
+    private sealed class FakePublisherSummaryRepository : IPublisherSummaryRepository
+    {
+        public (DateOnly From, DateOnly To, int Limit)? LastTopPlacementsCall;
+        public IReadOnlyList<PlacementRangeTotalsRow> PlacementRows = [];
+
+        public (DateOnly From, DateOnly To)? LastSiteDailyCall;
+        public IReadOnlyList<SiteDailySummaryRow> SiteRows = [];
+
+        public Task UpsertPlacementDailyAsync(PublisherDailySummaryRow row, CancellationToken ct) => throw new NotSupportedException();
+        public Task UpsertSiteDailyAsync(SiteDailySummaryRow row, CancellationToken ct) => throw new NotSupportedException();
+
+        public Task<IReadOnlyList<PlacementRangeTotalsRow>> GetTopPlacementsAsync(
+            DateOnly from, DateOnly to, int limit, CancellationToken ct)
+        {
+            LastTopPlacementsCall = (from, to, limit);
+            return Task.FromResult(PlacementRows);
+        }
+
+        public Task<IReadOnlyList<SiteDailySummaryRow>> GetSiteDailyAsync(
+            DateOnly from, DateOnly to, CancellationToken ct)
+        {
+            LastSiteDailyCall = (from, to);
+            return Task.FromResult(SiteRows);
+        }
+    }
+
+    /// <summary>P2-03: fake for DAT-05's ICampaignRepository, backing GET /admin/campaigns.</summary>
+    private sealed class FakeCampaignRepository : ICampaignRepository
+    {
+        public int ListCallCount;
+        public IReadOnlyList<CampaignRecord> Rows = [];
+
+        public Task CreateAsync(CampaignRecord campaign, CancellationToken ct) => throw new NotSupportedException();
+        public Task<CampaignRecord?> GetAsync(Guid campaignId, CancellationToken ct) => throw new NotSupportedException();
+        public Task<CampaignRedirect?> GetRedirectAsync(Guid campaignId, CancellationToken ct) => throw new NotSupportedException();
+
+        public Task<IReadOnlyList<CampaignRecord>> ListAsync(CancellationToken ct)
+        {
+            ListCallCount++;
+            return Task.FromResult(Rows);
+        }
+
+        public Task<bool> UpdateAsync(CampaignRecord campaign, CancellationToken ct) => throw new NotSupportedException();
     }
 
     private sealed class FakeClock : IClock
@@ -194,6 +247,8 @@ public sealed class AdminEndpointTests
         public readonly CapturingLabelSink Labels = new();
         public readonly FakeSiteRepository Sites = new();
         public readonly FakeVerdictSummaryRepository Summaries = new();
+        public readonly FakeCampaignRepository Campaigns = new();
+        public readonly FakePublisherSummaryRepository Publishers = new();
         public readonly RedisHarness Redis = new();
         public readonly FakeClock Clock = new();
         public readonly FakeWhitelistRepository Whitelist;
@@ -224,6 +279,10 @@ public sealed class AdminEndpointTests
                     services.AddSingleton<ISiteRepository>(Sites);
                     services.RemoveAll<IVerdictSummaryRepository>();
                     services.AddSingleton<IVerdictSummaryRepository>(Summaries);
+                    services.RemoveAll<ICampaignRepository>();
+                    services.AddSingleton<ICampaignRepository>(Campaigns);
+                    services.RemoveAll<IPublisherSummaryRepository>();
+                    services.AddSingleton<IPublisherSummaryRepository>(Publishers);
                     services.RemoveAll<ILabelSink>();
                     services.AddSingleton<ILabelSink>(Labels);
                     services.RemoveAll<IConnectionMultiplexer>();
@@ -711,6 +770,370 @@ public sealed class AdminEndpointTests
                 return site;
         }
         throw new InvalidOperationException($"site {siteKey} not found in response");
+    }
+
+    // =============================================================== campaigns =
+    // P2-03: GET /admin/campaigns.
+
+    [Fact]
+    public async Task GetCampaigns_ReturnsShape_WithCamelCaseFields_AndNoLandingUrlOrGeoTargets()
+    {
+        using var app = new AdminApp();
+        app.Campaigns.Rows = new List<CampaignRecord>
+        {
+            new(TenantGuid, CampaignGuid, "google", "ext-123",
+                "https://example.com/landing", null, 0, DateTime.UtcNow),
+        };
+        using var client = app.Client();
+
+        var resp = await client.GetAsync("/admin/campaigns");
+        var raw = await resp.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+        Assert.Equal(1, app.Campaigns.ListCallCount);
+        Assert.Contains("\"campaignId\"", raw);
+        Assert.Contains("\"platform\":\"google\"", raw);
+        Assert.Contains("\"externalCampaignId\":\"ext-123\"", raw);
+        Assert.Contains("\"status\":0", raw);
+        Assert.DoesNotContain("landingUrl", raw, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("geoTargets", raw, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task GetCampaigns_NoApiKey_Returns401ProblemJson_FromMiddleware()
+    {
+        using var app = new AdminApp();
+        using var client = app.AnonymousClient();
+
+        var resp = await client.GetAsync("/admin/campaigns");
+
+        Assert.Equal(HttpStatusCode.Unauthorized, resp.StatusCode);
+        Assert.Equal("application/problem+json", resp.Content.Headers.ContentType?.MediaType);
+        Assert.Equal(0, app.Campaigns.ListCallCount); // never reached the handler
+    }
+
+    // ===================================================== flagged sources =
+    // P2-03: GET /admin/reports/flagged-sources.
+
+    [Fact]
+    public async Task GetFlaggedSources_ReturnsScoreSum_AndNoAverageField()
+    {
+        using var app = new AdminApp();
+        app.Summaries.FlaggedSourceRows = new List<FlaggedSourceDailyRow>
+        {
+            new(TenantGuid, new DateOnly(2026, 8, 1), "ip", "203.0.113.9", 5, 2, 410),
+        };
+        using var client = app.Client();
+
+        var resp = await client.GetAsync("/admin/reports/flagged-sources?from=2026-08-01&to=2026-08-07");
+        var raw = await resp.Content.ReadAsStringAsync();
+        var json = JsonSerializer.Deserialize<JsonElement>(raw);
+
+        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+        Assert.Equal("2026-08-01", json.GetProperty("from").GetString());
+        Assert.Equal("2026-08-07", json.GetProperty("to").GetString());
+
+        var row = json.GetProperty("sources")[0];
+        Assert.Equal("ip", row.GetProperty("sourceType").GetString());
+        Assert.Equal("203.0.113.9", row.GetProperty("value").GetString());
+        Assert.Equal(5, row.GetProperty("flaggedCount").GetInt32());
+        Assert.Equal(2, row.GetProperty("blockedCount").GetInt32());
+        Assert.Equal(410, row.GetProperty("scoreSum").GetInt64());
+        Assert.False(row.TryGetProperty("avgScore", out _), "no average field must be computed for flagged sources");
+        Assert.DoesNotContain("avgScore", raw, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData(0, 1)]      // below the DAT-06 minimum -> clamped up to 1
+    [InlineData(5000, 1000)] // above the DAT-06 maximum -> clamped down to 1000
+    public async Task GetFlaggedSources_LimitIsClamped(int requested, int expected)
+    {
+        using var app = new AdminApp();
+        using var client = app.Client();
+
+        var resp = await client.GetAsync(
+            $"/admin/reports/flagged-sources?from=2026-08-01&to=2026-08-07&limit={requested}");
+
+        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+        Assert.NotNull(app.Summaries.LastFlaggedSourcesCall);
+        Assert.Equal(expected, app.Summaries.LastFlaggedSourcesCall!.Value.Limit);
+    }
+
+    [Fact]
+    public async Task GetFlaggedSources_MissingFrom_Returns400ValidationProblem()
+    {
+        using var app = new AdminApp();
+        using var client = app.Client();
+
+        var resp = await client.GetAsync("/admin/reports/flagged-sources?to=2026-08-07");
+
+        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+        Assert.Equal("application/problem+json", resp.Content.Headers.ContentType?.MediaType);
+    }
+
+    [Fact]
+    public async Task GetFlaggedSources_MissingTo_Returns400ValidationProblem()
+    {
+        using var app = new AdminApp();
+        using var client = app.Client();
+
+        var resp = await client.GetAsync("/admin/reports/flagged-sources?from=2026-08-01");
+
+        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetFlaggedSources_FromAfterTo_Returns400()
+    {
+        using var app = new AdminApp();
+        using var client = app.Client();
+
+        var resp = await client.GetAsync("/admin/reports/flagged-sources?from=2026-08-07&to=2026-08-01");
+
+        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetFlaggedSources_RangeExceeds366Days_Returns400()
+    {
+        using var app = new AdminApp();
+        using var client = app.Client();
+
+        var resp = await client.GetAsync(
+            "/admin/reports/flagged-sources?from=2025-01-01&to=2026-06-01");
+
+        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetFlaggedSources_NoApiKey_Returns401ProblemJson()
+    {
+        using var app = new AdminApp();
+        using var client = app.AnonymousClient();
+
+        var resp = await client.GetAsync("/admin/reports/flagged-sources?from=2026-08-01&to=2026-08-07");
+
+        Assert.Equal(HttpStatusCode.Unauthorized, resp.StatusCode);
+    }
+
+    // ===================================================== P2-01: publishers =
+    // GET /admin/reports/publishers. AdminScopeFilter is route-agnostic (it only
+    // inspects ITenantContext, never the endpoint) — its 403 backstop is proven
+    // once, in isolation, by Filter_SiteKeyResolvedContext_Returns403Problem
+    // above; that single proof covers every route in the group, these included.
+
+    [Fact]
+    public async Task GetPublisherReport_ComputesFlaggedRatioAndAvgScore()
+    {
+        using var app = new AdminApp();
+        app.Publishers.PlacementRows = new List<PlacementRangeTotalsRow>
+        {
+            new("ad-net.example", 100, 45, 15, 25, 4200, 8,
+                new DateOnly(2026, 8, 1), new DateOnly(2026, 8, 10)),
+        };
+        using var client = app.Client();
+
+        var resp = await client.GetAsync("/admin/reports/publishers?from=2026-08-01&to=2026-08-10");
+        var json = await ReadJson(resp);
+
+        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+        var row = json.GetProperty("rows")[0];
+        Assert.Equal("ad-net.example", row.GetProperty("placement").GetString());
+        Assert.Equal(100, row.GetProperty("events").GetInt32());
+        Assert.Equal(40, row.GetProperty("flagged").GetInt32());       // 15 + 25
+        Assert.Equal(0.4, row.GetProperty("flaggedRatio").GetDouble());
+        Assert.Equal(42.0, row.GetProperty("avgScore").GetDouble());   // 4200 / 100
+        Assert.Equal(8, row.GetProperty("noJsBeaconCount").GetInt32());
+        Assert.False(row.GetProperty("lowVolume").GetBoolean());      // events >= 30
+        Assert.Equal("2026-08-01", row.GetProperty("firstDay").GetString());
+        Assert.Equal("2026-08-10", row.GetProperty("lastDay").GetString());
+
+        Assert.Equal((new DateOnly(2026, 8, 1), new DateOnly(2026, 8, 10), 50), app.Publishers.LastTopPlacementsCall);
+    }
+
+    [Fact]
+    public async Task GetPublisherReport_LowVolume_IsFlaggedButRatioStillReturned()
+    {
+        using var app = new AdminApp();
+        app.Publishers.PlacementRows = new List<PlacementRangeTotalsRow>
+        {
+            new("small-pub.example", 10, 5, 3, 2, 300, 0,
+                new DateOnly(2026, 8, 1), new DateOnly(2026, 8, 1)),
+        };
+        using var client = app.Client();
+
+        var resp = await client.GetAsync("/admin/reports/publishers?from=2026-08-01&to=2026-08-01");
+        var json = await ReadJson(resp);
+
+        var row = json.GetProperty("rows")[0];
+        Assert.True(row.GetProperty("lowVolume").GetBoolean()); // events (10) < 30
+        Assert.Equal(0.5, row.GetProperty("flaggedRatio").GetDouble()); // still computed, not hidden
+    }
+
+    [Fact]
+    public async Task GetPublisherReport_MissingFrom_Returns400ValidationProblem()
+    {
+        using var app = new AdminApp();
+        using var client = app.Client();
+
+        var resp = await client.GetAsync("/admin/reports/publishers?to=2026-08-10");
+
+        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+        Assert.Equal("application/problem+json", resp.Content.Headers.ContentType?.MediaType);
+    }
+
+    [Fact]
+    public async Task GetPublisherReport_MalformedTo_Returns400ValidationProblem()
+    {
+        using var app = new AdminApp();
+        using var client = app.Client();
+
+        var resp = await client.GetAsync("/admin/reports/publishers?from=2026-08-01&to=not-a-date");
+
+        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetPublisherReport_FromAfterTo_Returns400()
+    {
+        using var app = new AdminApp();
+        using var client = app.Client();
+
+        var resp = await client.GetAsync("/admin/reports/publishers?from=2026-08-10&to=2026-08-01");
+
+        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetPublisherReport_RangeExceeds366Days_Returns400()
+    {
+        using var app = new AdminApp();
+        using var client = app.Client();
+
+        var resp = await client.GetAsync("/admin/reports/publishers?from=2025-01-01&to=2026-06-01");
+
+        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+    }
+
+    [Theory]
+    [InlineData(0, 1)]
+    [InlineData(9999, 200)]
+    public async Task GetPublisherReport_LimitIsClamped(int requested, int expected)
+    {
+        using var app = new AdminApp();
+        using var client = app.Client();
+
+        var resp = await client.GetAsync($"/admin/reports/publishers?from=2026-08-01&to=2026-08-01&limit={requested}");
+
+        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+        Assert.NotNull(app.Publishers.LastTopPlacementsCall);
+        Assert.Equal(expected, app.Publishers.LastTopPlacementsCall!.Value.Limit);
+    }
+
+    [Fact]
+    public async Task GetPublisherReport_NoApiKey_Returns401ProblemJson()
+    {
+        using var app = new AdminApp();
+        using var client = app.AnonymousClient();
+
+        var resp = await client.GetAsync("/admin/reports/publishers?from=2026-08-01&to=2026-08-01");
+
+        Assert.Equal(HttpStatusCode.Unauthorized, resp.StatusCode);
+    }
+
+    // =========================================================== P2-01: sites =
+    // GET /admin/reports/sites.
+
+    [Fact]
+    public async Task GetSiteReport_ReturnsRows_WithAvgScoreMath()
+    {
+        using var app = new AdminApp();
+        app.Publishers.SiteRows = new List<SiteDailySummaryRow>
+        {
+            new(TenantGuid, new DateOnly(2026, 8, 1), "site-1", 50, 10, 6, 2, 2, 300, 1),
+        };
+        using var client = app.Client();
+
+        var resp = await client.GetAsync("/admin/reports/sites?from=2026-08-01&to=2026-08-01");
+        var json = await ReadJson(resp);
+
+        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+        var row = json.GetProperty("rows")[0];
+        Assert.Equal("2026-08-01", row.GetProperty("date").GetString());
+        Assert.Equal("site-1", row.GetProperty("siteKey").GetString());
+        Assert.Equal(50, row.GetProperty("totalEvents").GetInt32());
+        Assert.Equal(10, row.GetProperty("events").GetInt32());
+        Assert.Equal(6, row.GetProperty("allowed").GetInt32());
+        Assert.Equal(2, row.GetProperty("challenged").GetInt32());
+        Assert.Equal(2, row.GetProperty("blocked").GetInt32());
+        Assert.Equal(30.0, row.GetProperty("avgScore").GetDouble()); // 300 / 10
+        Assert.Equal(1, row.GetProperty("noJsBeaconCount").GetInt32());
+
+        Assert.Equal((new DateOnly(2026, 8, 1), new DateOnly(2026, 8, 1)), app.Publishers.LastSiteDailyCall);
+    }
+
+    [Fact]
+    public async Task GetSiteReport_ZeroScoredEvents_AvgScoreIsNull_ButTotalEventsStillReflectsTraffic()
+    {
+        using var app = new AdminApp();
+        app.Publishers.SiteRows = new List<SiteDailySummaryRow>
+        {
+            new(TenantGuid, new DateOnly(2026, 8, 1), "site-2", 20, 0, 0, 0, 0, 0, 0),
+        };
+        using var client = app.Client();
+
+        var resp = await client.GetAsync("/admin/reports/sites?from=2026-08-01&to=2026-08-01");
+        var json = await ReadJson(resp);
+
+        var row = json.GetProperty("rows")[0];
+        Assert.Equal(20, row.GetProperty("totalEvents").GetInt32()); // pixel/tracker-only traffic
+        Assert.Equal(0, row.GetProperty("events").GetInt32());
+        Assert.Equal(JsonValueKind.Null, row.GetProperty("avgScore").ValueKind); // never 0
+    }
+
+    [Fact]
+    public async Task GetSiteReport_MissingTo_Returns400ValidationProblem()
+    {
+        using var app = new AdminApp();
+        using var client = app.Client();
+
+        var resp = await client.GetAsync("/admin/reports/sites?from=2026-08-01");
+
+        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+        Assert.Equal("application/problem+json", resp.Content.Headers.ContentType?.MediaType);
+    }
+
+    [Fact]
+    public async Task GetSiteReport_FromAfterTo_Returns400()
+    {
+        using var app = new AdminApp();
+        using var client = app.Client();
+
+        var resp = await client.GetAsync("/admin/reports/sites?from=2026-08-10&to=2026-08-01");
+
+        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetSiteReport_RangeExceeds366Days_Returns400()
+    {
+        using var app = new AdminApp();
+        using var client = app.Client();
+
+        var resp = await client.GetAsync("/admin/reports/sites?from=2025-01-01&to=2026-06-01");
+
+        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetSiteReport_NoApiKey_Returns401ProblemJson()
+    {
+        using var app = new AdminApp();
+        using var client = app.AnonymousClient();
+
+        var resp = await client.GetAsync("/admin/reports/sites?from=2026-08-01&to=2026-08-01");
+
+        Assert.Equal(HttpStatusCode.Unauthorized, resp.StatusCode);
     }
 
     // ------------------------------------------------------------- helpers --

@@ -1,0 +1,23 @@
+#cloud-config
+package_update: true
+packages:
+  - docker.io
+runcmd:
+  - set -euo pipefail
+  - |
+    DEV=/dev/disk/azure/scsi1/lun0
+    if ! blkid "$DEV"; then mkfs.ext4 -F "$DEV"; fi
+    mkdir -p /var/lib/clickhouse
+    grep -q "$DEV" /etc/fstab || echo "$DEV /var/lib/clickhouse ext4 defaults,nofail 0 2" >> /etc/fstab
+    mount -a
+  - systemctl enable --now docker
+  - |
+    docker run -d --name clickhouse --restart=always \
+      -p 8123:8123 -p 9000:9000 \
+      -e CLICKHOUSE_DB=__CH_DB__ \
+      -e CLICKHOUSE_USER=tg \
+      -e CLICKHOUSE_PASSWORD=__CH_PASSWORD__ \
+      -e CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1 \
+      -v /var/lib/clickhouse:/var/lib/clickhouse \
+      --ulimit nofile=262144:262144 \
+      clickhouse/clickhouse-server:24.8

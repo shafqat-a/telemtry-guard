@@ -275,6 +275,85 @@ public sealed class ClickHouseAnalyticsQueriesTests(ClickHouseAnalyticsQueriesFi
             sources.Select(s => s.SourceValue).ToArray());
     }
 
+    // ---------------------------------------------------------- P2-01 edges --
+    // Provider-specific ClickHouse SQL edges that don't belong in the shared
+    // AnalyticsContractTests suite: engine functions (domainWithoutWWW), the
+    // length(placement) <= 253 HAVING guard, and argMin tie-break behavior.
+    // Each test seeds its own isolated day/tenant so it can't collide with the
+    // fixture's shared seed or with another test in this class.
+
+    [Fact]
+    public async Task GetTopPlacementsDailyAsync_NonUrlReferrer_ProducesNoBucket()
+    {
+        var day = new DateTime(2027, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        var range = new DateRange(day, day.AddDays(1));
+        await TestEvents.SeedAsync(fixture.ConnectionString,
+        [
+            TestEvents.Tracker(ClickHouseAnalyticsQueriesFixture.TenantA, "10.1.1.1", day.AddHours(1), "p01-nonurl",
+                referrer: "not a url"),
+            TestEvents.Verdict(ClickHouseAnalyticsQueriesFixture.TenantA, "10.1.1.1", day.AddHours(2), "p01-nonurl",
+                50, VerdictBands.Challenge),
+        ]);
+
+        var placements = await Queries(ClickHouseAnalyticsQueriesFixture.TenantA)
+            .GetTopPlacementsDailyAsync(range, 10, CancellationToken.None);
+
+        Assert.Empty(placements); // unparseable referrer -> no resolvable placement
+    }
+
+    [Fact]
+    public async Task GetTopPlacementsDailyAsync_HostLongerThan253Chars_IsDropped()
+    {
+        var day = new DateTime(2027, 1, 2, 0, 0, 0, DateTimeKind.Utc);
+        var range = new DateRange(day, day.AddDays(1));
+        var longHost = new string('a', 300) + ".example";
+        await TestEvents.SeedAsync(fixture.ConnectionString,
+        [
+            TestEvents.Tracker(ClickHouseAnalyticsQueriesFixture.TenantA, "10.1.1.2", day.AddHours(1), "p01-longhost",
+                referrer: $"https://{longHost}/"),
+            TestEvents.Verdict(ClickHouseAnalyticsQueriesFixture.TenantA, "10.1.1.2", day.AddHours(2), "p01-longhost",
+                50, VerdictBands.Challenge),
+        ]);
+
+        var placements = await Queries(ClickHouseAnalyticsQueriesFixture.TenantA)
+            .GetTopPlacementsDailyAsync(range, 10, CancellationToken.None);
+
+        Assert.Empty(placements); // > 253 chars -> dropped by the HAVING guard
+    }
+
+    [Fact]
+    public async Task GetTopPlacementsDailyAsync_TwoCaptureRowsOnOneSession_ResolvesToTheEarliestByTimestamp()
+    {
+        var day = new DateTime(2027, 1, 3, 0, 0, 0, DateTimeKind.Utc);
+        var range = new DateRange(day, day.AddDays(1));
+        await TestEvents.SeedAsync(fixture.ConnectionString,
+        [
+            TestEvents.Tracker(ClickHouseAnalyticsQueriesFixture.TenantA, "10.1.1.3", day.AddHours(1), "p01-argmin",
+                referrer: "https://tracker-pub.example/"),
+            // a pixel row 5s later on the SAME session, different referrer — argMin(timestamp) must pick the tracker.
+            new ClickEvent
+            {
+                TenantId = ClickHouseAnalyticsQueriesFixture.TenantA,
+                SiteKey = "sk-test",
+                SessionId = "p01-argmin",
+                Kind = EventKind.Pixel,
+                Ip = "10.1.1.3",
+                HasJsBeacon = false,
+                Referrer = "https://pixel-pub.example/",
+                RetentionDays = 90,
+                TimestampUtc = day.AddHours(1).AddSeconds(5),
+            },
+            TestEvents.Verdict(ClickHouseAnalyticsQueriesFixture.TenantA, "10.1.1.3", day.AddHours(2), "p01-argmin",
+                50, VerdictBands.Challenge),
+        ]);
+
+        var placements = await Queries(ClickHouseAnalyticsQueriesFixture.TenantA)
+            .GetTopPlacementsDailyAsync(range, 10, CancellationToken.None);
+
+        var bucket = Assert.Single(placements);
+        Assert.Equal("tracker-pub.example", bucket.Placement);
+    }
+
     private ClickHouseAnalyticsQueries Queries(TenantId tenant) =>
         new(new FixedTenantContext(tenant),
             Options.Create(new ClickHouseAnalyticsOptions { ConnectionString = fixture.ConnectionString }),

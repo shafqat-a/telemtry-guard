@@ -34,3 +34,7 @@ data/geo/
 # OS
 .DS_Store
 Thumbs.db
+
+# Azure IaC: compiled ARM output and operator-local parameter files are never committed
+infra/azure/**/*.json.arm
+infra/azure/*.local.json

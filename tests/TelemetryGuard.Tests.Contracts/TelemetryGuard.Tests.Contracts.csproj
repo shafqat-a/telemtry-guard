@@ -11,8 +11,11 @@
 
   <ItemGroup>
     <PackageReference Include="coverlet.collector" Version="6.0.0" />
-    <PackageReference Include="Microsoft.Extensions.Options" Version="8.0.2" />
+    <!-- Bumped past 8.0.2 (drift, matches TelemetryGuard.Analytics.Kusto's own csproj
+         comment): the Kusto SDK's Azure.Core dependency pulls in Options >= 10.0.3. -->
+    <PackageReference Include="Microsoft.Extensions.Options" Version="10.0.3" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="Testcontainers" Version="3.10.0" />
     <PackageReference Include="Testcontainers.ClickHouse" Version="3.10.0" />
     <PackageReference Include="xunit" Version="2.9.2" />
     <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2">
@@ -29,6 +32,18 @@
     <ProjectReference Include="..\..\TelemetryGuard.Core\TelemetryGuard.Core.csproj" />
     <ProjectReference Include="..\..\TelemetryGuard.Analytics.Abstractions\TelemetryGuard.Analytics.Abstractions.csproj" />
     <ProjectReference Include="..\..\TelemetryGuard.Analytics.ClickHouse\TelemetryGuard.Analytics.ClickHouse.csproj" />
+    <ProjectReference Include="..\..\TelemetryGuard.Analytics.Kusto\TelemetryGuard.Analytics.Kusto.csproj" />
   </ItemGroup>
+
+  <!-- P2-05: the Kusto runner is compiled only on demand. The ADX emulator image is
+       ~GBs and slow to warm, and the shared suite's inherited [Fact]s cannot be
+       dynamically skipped, so "unavailable" must mean "not discovered" rather than
+       "failed". KustoProviderFixture itself is ALWAYS compiled — only ~40 lines of
+       runner are conditional — so this cannot rot silently.
+         KustoContracts=true dotnet test tests/TelemetryGuard.Tests.Contracts
+       (MSBuild reads KustoContracts from the environment as well as -p:.)          -->
+  <PropertyGroup Condition="'$(KustoContracts)' == 'true'">
+    <DefineConstants>$(DefineConstants);TG_KUSTO_CONTRACTS</DefineConstants>
+  </PropertyGroup>
 
 </Project>

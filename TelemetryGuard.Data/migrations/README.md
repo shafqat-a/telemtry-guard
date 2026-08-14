@@ -20,3 +20,5 @@
 | 0005 | EnforcementAudit (approval-queue audit trail) + RLS | INT-02 |
 | 0006 | Tenants.GoogleAdsCustomerId + GoogleAdsPushedExclusions (LRU state) + RLS | INT-03 |
 | 0007 | Tenants.MetaBusinessId + Tenants.MetaBlockListId (Meta sync state) | INT-04 |
+| 0008 | PublisherDailySummaries + SiteDailySummaries (publisher/site aggregates) + RLS | P2-01 |
+| 0009 | ModelRegistry (model lifecycle: candidate/shadow/active/rejected/retired) — platform table, deliberately outside RLS | P2-02 |

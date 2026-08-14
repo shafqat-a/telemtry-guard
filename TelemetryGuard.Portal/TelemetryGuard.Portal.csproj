@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <!-- D23/D1 GUARDRAIL — INTENTIONALLY EMPTY: this project must have NO
+       ProjectReference and NO PackageReference. Everything it uses (Razor Pages,
+       cookie authentication, IHttpClientFactory, System.Text.Json, IMemoryCache)
+       ships in the Microsoft.AspNetCore.App shared framework. Adding a reference to
+       TelemetryGuard.Data / .Analytics.* would hand the portal a path to SQL Server
+       and ClickHouse — the exact thing D23 forbids. Wire DTOs are re-declared
+       locally in Api/AdminApiDtos.cs and pinned by a round-trip integration test. -->
+
+  <!-- NO InternalsVisibleTo — see the BUILD PITFALL note in PortalEntryPoint.cs.
+       Every type the test projects need is PUBLIC instead. Adding IVT here is a
+       build-breaker, not a convenience. -->
+
+</Project>

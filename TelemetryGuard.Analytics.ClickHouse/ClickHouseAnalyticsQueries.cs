@@ -21,6 +21,11 @@ public sealed class ClickHouseAnalyticsQueries(
 {
     private readonly string _cs = options.Value.ConnectionString;
 
+    /// <summary>P2-01: a session's tracker/pixel hit precedes its verdict by the
+    /// API-02 grace period (~10 s) and can land on the previous UTC day. One hour
+    /// of lookbehind on the capture side is generous and keeps the scan bounded.</summary>
+    private static readonly TimeSpan SessionJoinLookbehind = TimeSpan.FromHours(1);
+
     public async Task<IpVelocityStats> GetIpVelocityAsync(string ip, TimeSpan window, CancellationToken ct)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(ip);
@@ -171,6 +176,130 @@ public sealed class ClickHouseAnalyticsQueries(
                 LastSeenUtc: AsUtc(r["last_seen"])));
         }
         return sources;
+    }
+
+    public async Task<IReadOnlyList<PlacementDailyCounts>> GetTopPlacementsDailyAsync(
+        DateRange range, int limitPerDay, CancellationToken ct)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(limitPerDay);
+
+        await using var conn = new ClickHouseConnection(_cs);
+        await conn.OpenAsync(ct);
+        await using var cmd = conn.CreateCommand();
+        // The inner subquery resolves ONE placement per session (argMin by timestamp
+        // = the earliest capture row's referrer). ifNull keeps the expression a plain
+        // String so domainWithoutWWW/lower never propagate Nullable into HAVING.
+        // BOTH sides filter tenant_id, so the join can never cross tenants (D11).
+        cmd.CommandText =
+            """
+            SELECT
+                toDate(v.timestamp)                    AS day,
+                p.placement                            AS placement,
+                count()                                AS scored_events,
+                countIf(v.band = 'allow')              AS allowed,
+                countIf(v.band = 'challenge')          AS challenged,
+                countIf(v.band = 'block')              AS blocked,
+                sumIf(v.score, isNotNull(v.score))     AS score_sum,
+                avgIf(v.score, isNotNull(v.score))     AS avg_score,
+                countIf(v.has_js_beacon = 0)           AS no_js_beacon
+            FROM tg_events AS v
+            INNER JOIN
+            (
+                SELECT
+                    session_id,
+                    lower(domainWithoutWWW(argMin(ifNull(referrer, ''), timestamp))) AS placement
+                FROM tg_events
+                WHERE tenant_id = {tenantId:UUID}
+                  AND kind IN ('tracker', 'pixel')
+                  AND referrer IS NOT NULL
+                  AND referrer != ''
+                  AND timestamp >= {captureFromTs:DateTime64(3)}
+                  AND timestamp <  {toTs:DateTime64(3)}
+                GROUP BY session_id
+                HAVING placement != '' AND length(placement) <= 253
+            ) AS p ON v.session_id = p.session_id
+            WHERE v.tenant_id = {tenantId:UUID}
+              AND v.kind = 'verdict'
+              AND v.timestamp >= {fromTs:DateTime64(3)}
+              AND v.timestamp <  {toTs:DateTime64(3)}
+            GROUP BY day, placement
+            ORDER BY day ASC, scored_events DESC, placement ASC
+            LIMIT {limitPerDay:Int32} BY day
+            """;
+        cmd.AddParameter("tenantId", tenant.TenantId.Value);
+        cmd.AddParameter("captureFromTs", range.FromUtc - SessionJoinLookbehind);
+        cmd.AddParameter("fromTs", range.FromUtc);
+        cmd.AddParameter("toTs", range.ToUtc);
+        cmd.AddParameter("limitPerDay", limitPerDay);
+
+        var rows = new List<PlacementDailyCounts>();
+        await using var r = await cmd.ExecuteReaderAsync(ct);
+        while (await r.ReadAsync(ct))
+        {
+            rows.Add(new PlacementDailyCounts(
+                Day: DateOnly.FromDateTime(Convert.ToDateTime(r["day"])),
+                Placement: Convert.ToString(r["placement"]) ?? "",
+                ScoredEvents: Convert.ToInt64(r["scored_events"]),
+                Allowed: Convert.ToInt64(r["allowed"]),
+                Challenged: Convert.ToInt64(r["challenged"]),
+                Blocked: Convert.ToInt64(r["blocked"]),
+                ScoreSum: ToInt64OrZero(r["score_sum"]),
+                AvgScore: ToDoubleOrNaN(r["avg_score"]),
+                NoJsBeaconCount: Convert.ToInt64(r["no_js_beacon"])));
+        }
+        return rows;
+    }
+
+    public async Task<IReadOnlyList<SiteDailyCounts>> GetSiteDailyCountsAsync(
+        DateRange range, CancellationToken ct)
+    {
+        await using var conn = new ClickHouseConnection(_cs);
+        await conn.OpenAsync(ct);
+        await using var cmd = conn.CreateCommand();
+        // Same conditional-aggregate shape as GetCampaignReportAsync, grouped on
+        // site_key instead of campaign_id: TotalEvents spans every kind.
+        cmd.CommandText =
+            """
+            SELECT
+                toDate(timestamp)                                   AS day,
+                site_key                                            AS site_key,
+                count()                                             AS total_events,
+                countIf(kind = 'verdict')                           AS scored_events,
+                countIf(kind = 'verdict' AND band = 'allow')        AS allowed,
+                countIf(kind = 'verdict' AND band = 'challenge')    AS challenged,
+                countIf(kind = 'verdict' AND band = 'block')        AS blocked,
+                sumIf(score, kind = 'verdict' AND isNotNull(score)) AS score_sum,
+                avgIf(score, kind = 'verdict' AND isNotNull(score)) AS avg_score,
+                countIf(kind = 'verdict' AND has_js_beacon = 0)     AS no_js_beacon
+            FROM tg_events
+            WHERE tenant_id = {tenantId:UUID}
+              AND site_key != ''
+              AND timestamp >= {fromTs:DateTime64(3)}
+              AND timestamp <  {toTs:DateTime64(3)}
+            GROUP BY day, site_key
+            ORDER BY day ASC, site_key ASC
+            """;
+        cmd.AddParameter("tenantId", tenant.TenantId.Value);
+        cmd.AddParameter("fromTs", range.FromUtc);
+        cmd.AddParameter("toTs", range.ToUtc);
+
+        var rows = new List<SiteDailyCounts>();
+        await using var r = await cmd.ExecuteReaderAsync(ct);
+        while (await r.ReadAsync(ct))
+        {
+            rows.Add(new SiteDailyCounts(
+                Day: DateOnly.FromDateTime(Convert.ToDateTime(r["day"])),
+                SiteKey: Convert.ToString(r["site_key"]) ?? "",
+                TotalEvents: Convert.ToInt64(r["total_events"]),
+                ScoredEvents: Convert.ToInt64(r["scored_events"]),
+                Allowed: Convert.ToInt64(r["allowed"]),
+                Challenged: Convert.ToInt64(r["challenged"]),
+                Blocked: Convert.ToInt64(r["blocked"]),
+                ScoreSum: ToInt64OrZero(r["score_sum"]),
+                AvgScore: ToDoubleOrNaN(r["avg_score"]),
+                NoJsBeaconCount: Convert.ToInt64(r["no_js_beacon"])));
+        }
+        return rows;
     }
 
     /// <summary>IPv4 inputs must compare equal to stored IPv4-mapped IPv6 values —

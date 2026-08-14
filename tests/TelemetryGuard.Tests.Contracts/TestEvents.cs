@@ -23,10 +23,12 @@ public static class TestEvents
         DateTime? timestampUtc = null,
         string? userAgent = null,
         string? fingerprint = null,
-        bool hasJsBeacon = false) => new()
+        bool hasJsBeacon = false,
+        string siteKey = "site-1",
+        string? referrer = null) => new()
     {
         TenantId = tenantId,
-        SiteKey = "site-1",
+        SiteKey = siteKey,
         SessionId = sessionId,
         Kind = kind,
         CampaignId = campaignId,
@@ -37,6 +39,7 @@ public static class TestEvents
         Score = score,      // stays null on non-verdict rows — never 0
         Band = band,
         Action = band,
+        Referrer = referrer, // P2-01: only tracker/pixel rows carry one in real traffic
         RetentionDays = 90,
         TimestampUtc = timestampUtc ?? DateTime.UtcNow
     };
@@ -52,7 +55,9 @@ public static class TestEvents
         DateTime? timestampUtc = null,
         string? userAgent = null,
         string? fingerprint = null,
-        bool hasJsBeacon = false) =>
+        bool hasJsBeacon = false,
+        string siteKey = "site-1",
+        string? referrer = null) =>
         Create(tenantId, ip, sessionId, campaignId, EventKind.Verdict, band, score,
-            timestampUtc, userAgent, fingerprint, hasJsBeacon);
+            timestampUtc, userAgent, fingerprint, hasJsBeacon, siteKey, referrer);
 }

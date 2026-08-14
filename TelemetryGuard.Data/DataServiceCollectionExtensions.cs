@@ -29,6 +29,9 @@ public static class DataServiceCollectionExtensions
         services.TryAddScoped<Repositories.IVerdictSummaryRepository, Repositories.VerdictSummaryRepository>();
         services.TryAddScoped<Repositories.IRollupWatermarkRepository, Repositories.RollupWatermarkRepository>();
 
+        // P2-01 publisher/site aggregate repository — scoped like the DAT-06 pair above.
+        services.TryAddScoped<Repositories.IPublisherSummaryRepository, Repositories.PublisherSummaryRepository>();
+
         // API-06 exclusion-queue writer — DAT-06 ships the dbo.ExclusionQueue table
         // only ("API-06 (writer) owns its access path"); scoped like the repositories above.
         services.TryAddScoped<Repositories.IExclusionQueueRepository, Repositories.ExclusionQueueRepository>();
@@ -45,6 +48,10 @@ public static class DataServiceCollectionExtensions
         services.TryAddSingleton<IConnectionMultiplexer>(sp =>
             ConnectionMultiplexer.Connect(
                 sp.GetRequiredService<IConfiguration>().GetConnectionString("Redis") ?? "localhost:6379"));
+
+        // P2-02 model registry — SINGLETON (platform table, no ambient tenant; reads go
+        // through ISystemConnectionFactory, never a request-path connection).
+        services.TryAddSingleton<Repositories.IModelRegistryRepository, Repositories.ModelRegistryRepository>();
         return services;
     }
 }

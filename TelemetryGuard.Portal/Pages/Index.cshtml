@@ -1,0 +1,160 @@
+@page "/"
+@model TelemetryGuard.Portal.Pages.IndexModel
+@{
+    ViewData["Title"] = "Dashboard";
+}
+
+<h1>Dashboard</h1>
+
+<section class="panel">
+    <h2>Campaign &amp; date range</h2>
+    @if (Model.CampaignsResult?.Error is not null)
+    {
+        <div class="panel-error" role="alert">@Model.CampaignsResult.Error</div>
+    }
+    <form method="get" action="/" class="tg-filter-form">
+        <label>
+            Campaign
+            <select name="CampaignId">
+                <option value="00000000-0000-0000-0000-000000000000"
+                        selected="@(Model.CampaignId == Guid.Empty ? "selected" : null)">
+                    (no campaign — organic / pixel)
+                </option>
+                @if (Model.CampaignsResult?.Value is not null)
+                {
+                    @foreach (var c in Model.CampaignsResult.Value.Campaigns)
+                    {
+                        <option value="@c.CampaignId" selected="@(Model.CampaignId == c.CampaignId ? "selected" : null)">
+                            @TelemetryGuard.Portal.Pages.IndexModel.CampaignLabel(c)
+                        </option>
+                    }
+                }
+            </select>
+        </label>
+        <label>
+            From
+            <input type="date" name="From" value="@Model.From?.ToString("yyyy-MM-dd")" />
+        </label>
+        <label>
+            To
+            <input type="date" name="To" value="@Model.To?.ToString("yyyy-MM-dd")" />
+        </label>
+        <button type="submit">Update</button>
+    </form>
+</section>
+
+<section class="panel">
+    <h2>Verdict summary</h2>
+    @if (Model.SummaryResult?.Error is not null)
+    {
+        <div class="panel-error" role="alert">@Model.SummaryResult.Error</div>
+    }
+    else if (Model.SummaryResult?.Value is { } summary)
+    {
+        <table>
+            <thead>
+                <tr><th>Date</th><th>Events</th><th>Allowed</th><th>Challenged</th><th>Blocked</th><th>Avg score</th></tr>
+            </thead>
+            <tbody>
+                @foreach (var row in summary.Rows)
+                {
+                    <tr>
+                        <td>@row.Date.ToString("yyyy-MM-dd")</td>
+                        <td>@row.Events</td>
+                        <td>@row.Allowed</td>
+                        <td>@row.Challenged</td>
+                        <td>@row.Blocked</td>
+                        <td>@(row.AvgScore is null ? "—" : row.AvgScore.Value.ToString("0.0"))</td>
+                    </tr>
+                }
+            </tbody>
+            <tfoot>
+                <tr>
+                    <td>Total</td>
+                    <td>@summary.Rows.Sum(r => r.Events)</td>
+                    <td>@summary.Rows.Sum(r => r.Allowed)</td>
+                    <td>@summary.Rows.Sum(r => r.Challenged)</td>
+                    <td>@summary.Rows.Sum(r => r.Blocked)</td>
+                    <td>—</td>
+                </tr>
+            </tfoot>
+        </table>
+        <p class="tg-note">Per-day averages cannot be re-aggregated exactly (the API returns each day's mean rounded to 1 dp).</p>
+        <p class="tg-note">Summary figures are materialized from the event store every ~15 minutes; the current day updates live per verdict.</p>
+    }
+</section>
+
+<section class="panel">
+    <h2>Exclusion queue</h2>
+    @if (Model.PendingResult?.Error is not null)
+    {
+        <div class="panel-error" role="alert">@Model.PendingResult.Error</div>
+    }
+    else
+    {
+        <p>
+            <a href="/enforcement?status=pending">
+                <span class="badge badge-pending">Pending: @TelemetryGuard.Portal.Pages.IndexModel.CountBadge(Model.PendingResult?.Value?.Count)</span>
+            </a>
+            @if (Model.FailedResult?.Error is null)
+            {
+                <a href="/enforcement?status=failed">
+                    <span class="badge badge-failed">Failed: @TelemetryGuard.Portal.Pages.IndexModel.CountBadge(Model.FailedResult?.Value?.Count)</span>
+                </a>
+            }
+            @if (Model.UnsupportedResult?.Error is null)
+            {
+                <a href="/enforcement?status=unsupported">
+                    <span class="badge badge-unsupported">Unsupported: @TelemetryGuard.Portal.Pages.IndexModel.CountBadge(Model.UnsupportedResult?.Value?.Count)</span>
+                </a>
+            }
+        </p>
+        @if (Model.FailedResult?.Error is not null)
+        {
+            <div class="panel-error" role="alert">@Model.FailedResult.Error</div>
+        }
+        @if (Model.UnsupportedResult?.Error is not null)
+        {
+            <div class="panel-error" role="alert">@Model.UnsupportedResult.Error</div>
+        }
+    }
+</section>
+
+<section class="panel">
+    <h2>Site integration level</h2>
+    @if (Model.IntegrationResult?.Error is not null)
+    {
+        <div class="panel-error" role="alert">@Model.IntegrationResult.Error</div>
+    }
+    else if (Model.IntegrationResult?.Value is { } integration)
+    {
+        <table>
+            <thead>
+                <tr><th>Site key</th><th>Domain</th><th>Configured mode</th><th>Effective level</th><th>Last beacon</th></tr>
+            </thead>
+            <tbody>
+                @foreach (var site in integration.Sites)
+                {
+                    <tr>
+                        <td>@site.SiteKey</td>
+                        <td>@site.Domain</td>
+                        <td>@site.ConfiguredMode</td>
+                        <td>@site.EffectiveLevel</td>
+                        <td>@(site.LastBeaconAt?.ToString("u") ?? "never")</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+        @if (integration.Sites.Any(s => s.ConfiguredMode == "pixel" || s.EffectiveLevel == "http-only"))
+        {
+            <div class="tg-explainer">
+                <strong>Pixel / HTTP-only sites are scored on fewer signals.</strong>
+                Without the JS snippet we never receive behavioral timing, fingerprint or honeypot
+                signals, storage age, or beacon integrity — those features are recorded as
+                <em>missing</em> (not zero) and scoring falls back to network- and velocity-tier
+                signals only. A site configured as <code>js</code> that shows <code>http-only</code>
+                has had no beacon in the last 24 hours: check that the snippet is still installed.
+            </div>
+        }
+    }
+</section>

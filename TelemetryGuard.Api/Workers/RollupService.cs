@@ -102,6 +102,7 @@ public sealed class RollupService(
         var summaries   = sp.GetRequiredService<IVerdictSummaryRepository>();  // DAT-06, scoped
         var watermarks  = sp.GetRequiredService<IRollupWatermarkRepository>(); // DAT-06, scoped
         var connFactory = sp.GetRequiredService<ITenantConnectionFactory>();   // DAT-03, campaigns query
+        var publishers  = sp.GetRequiredService<IPublisherSummaryRepository>(); // P2-01, scoped
 
         var now = clock.UtcNow.UtcDateTime;
         var rollupName = options.Value.RollupName;
@@ -153,6 +154,62 @@ public sealed class RollupService(
             }
         }
 
+        // ---- P2-01: publisher/placement + site (non-campaign) aggregates ----
+        // Its OWN watermark: on first deploy this rollup must backfill LookbackDays
+        // independently of the already-advanced 'verdict_daily' watermark, otherwise
+        // the new tables would silently start at "now" with no history.
+        var pubName = options.Value.PublisherRollupName;
+        var pubWatermark = await watermarks.GetAsync(pubName, ct);
+        var (_, pubRange) = ComputeWindow(pubWatermark, now, options.Value.LookbackDays);
+
+        // Self-referral filter: a session's first capture row on a tenant's OWN
+        // landing page yields that tenant's own domain as a "placement", which would
+        // top every report. dbo.Sites is RLS-EXEMPT (a resolution table), so the
+        // explicit TenantId predicate here is load-bearing, not just an index hint.
+        HashSet<string> ownDomains;
+        await using (var conn = await connFactory.OpenAsync(ct))
+        {
+            var domains = await conn.QueryAsync<string>(new CommandDefinition(
+                "SELECT Domain FROM dbo.Sites WHERE TenantId = @TenantId",
+                new { TenantId = tid }, cancellationToken: ct));
+            ownDomains = domains.Select(NormalizeHost)
+                                .Where(d => d.Length > 0)
+                                .ToHashSet(StringComparer.Ordinal);
+        }
+
+        var placements = await queries.GetTopPlacementsDailyAsync(
+            pubRange, options.Value.TopPlacementsLimit, ct);
+        foreach (var p in placements)
+        {
+            if (ownDomains.Contains(p.Placement)) continue;   // tenant's own site, not a publisher
+            await publishers.UpsertPlacementDailyAsync(new PublisherDailySummaryRow(
+                TenantId: tid, Date: p.Day, Placement: p.Placement,
+                Events: checked((int)p.ScoredEvents),
+                Allowed: checked((int)p.Allowed),
+                Challenged: checked((int)p.Challenged),
+                Blocked: checked((int)p.Blocked),
+                ScoreSum: p.ScoreSum,                          // AvgScore (NaN included) is never stored
+                NoJsBeaconCount: checked((int)p.NoJsBeaconCount)), ct);
+            rows++;
+        }
+
+        var sites = await queries.GetSiteDailyCountsAsync(pubRange, ct);
+        foreach (var s in sites)
+        {
+            await publishers.UpsertSiteDailyAsync(new SiteDailySummaryRow(
+                TenantId: tid, Date: s.Day, SiteKey: s.SiteKey,
+                TotalEvents: checked((int)s.TotalEvents),
+                Events: checked((int)s.ScoredEvents),
+                Allowed: checked((int)s.Allowed),
+                Challenged: checked((int)s.Challenged),
+                Blocked: checked((int)s.Blocked),
+                ScoreSum: s.ScoreSum,
+                NoJsBeaconCount: checked((int)s.NoJsBeaconCount)), ct);
+            rows++;
+        }
+
+        await watermarks.SetAsync(pubName, now, ct);  // advance ONLY after these upserts succeeded
+
         await watermarks.SetAsync(rollupName, now, ct);  // advance ONLY after all upserts succeeded
         RowsUpserted.Add(rows);
     }
@@ -187,5 +244,25 @@ public sealed class RollupService(
         return (fromDay, new DateRange(
             fromDay,
             DateTime.SpecifyKind(nowUtc, DateTimeKind.Utc)));
+    }
+
+    /// <summary>
+    /// P2-01 host normalization, identical on both sides of the self-referral
+    /// filter: trim, lowercase (invariant), drop any scheme/path/port a configured
+    /// dbo.Sites.Domain may carry, then strip a leading "www.". Must match what
+    /// lower(domainWithoutWWW(...)) produces in the ClickHouse query.
+    /// </summary>
+    internal static string NormalizeHost(string? value)
+    {
+        var s = (value ?? string.Empty).Trim().ToLowerInvariant();
+        if (s.Length == 0) return string.Empty;
+        var scheme = s.IndexOf("://", StringComparison.Ordinal);
+        if (scheme >= 0) s = s[(scheme + 3)..];
+        var slash = s.IndexOf('/');
+        if (slash >= 0) s = s[..slash];
+        var colon = s.IndexOf(':');
+        if (colon >= 0) s = s[..colon];
+        if (s.StartsWith("www.", StringComparison.Ordinal)) s = s[4..];
+        return s;
     }
 }

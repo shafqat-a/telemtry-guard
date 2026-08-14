@@ -49,11 +49,54 @@ public sealed class RlsProofTests(SqlServerFixture fx)
         await using var raw = await fx.OpenAsync(null);
         foreach (var table in new[] { "dbo.Tenants", "dbo.Campaigns",
             "dbo.VerdictDailySummaries", "dbo.FlaggedSourcesDaily",
-            "dbo.ExclusionQueue", "dbo.RollupWatermarks", "dbo.WhitelistEntries" })
+            "dbo.ExclusionQueue", "dbo.RollupWatermarks", "dbo.WhitelistEntries",
+            "dbo.PublisherDailySummaries", "dbo.SiteDailySummaries" })
         {
             var n = await raw.ExecuteScalarAsync<int>($"SELECT COUNT(*) FROM {table}");
             Assert.Equal(0, n);
         }
+    }
+
+    [Fact] // P2-01: the same RLS pattern (a + b) proven for the new aggregate tables
+    public async Task PublisherAndSite_summaries_are_RLS_protected()
+    {
+        var placement = $"rls-test-{Guid.NewGuid():N}.example";
+        var siteKey = $"rls-{Guid.NewGuid():N}"[..20];
+
+        // Seed directly (not through the repository) so this exercises the RLS
+        // predicates themselves, not the repository's own ambient-tenant guard.
+        await using (var asA = await fx.OpenAsync(SqlServerFixture.TenantA))
+        {
+            await asA.ExecuteAsync(
+                "INSERT INTO dbo.PublisherDailySummaries (TenantId, [Date], Placement) " +
+                "VALUES (@TenantId, CAST(SYSUTCDATETIME() AS date), @Placement)",
+                new { TenantId = SqlServerFixture.TenantA, Placement = placement });
+            await asA.ExecuteAsync(
+                "INSERT INTO dbo.SiteDailySummaries (TenantId, [Date], SiteKey) " +
+                "VALUES (@TenantId, CAST(SYSUTCDATETIME() AS date), @SiteKey)",
+                new { TenantId = SqlServerFixture.TenantA, SiteKey = siteKey });
+        }
+
+        // (a) cross-tenant read is EMPTY, not an error
+        await using var asB = await fx.OpenAsync(SqlServerFixture.TenantB);
+        var pubRows = await asB.QueryAsync(
+            "SELECT * FROM dbo.PublisherDailySummaries WHERE TenantId = @tid",
+            new { tid = SqlServerFixture.TenantA });
+        Assert.Empty(pubRows);
+        var siteRows = await asB.QueryAsync(
+            "SELECT * FROM dbo.SiteDailySummaries WHERE TenantId = @tid",
+            new { tid = SqlServerFixture.TenantA });
+        Assert.Empty(siteRows);
+
+        // (b) BLOCK predicate: mismatched INSERT under a stamped session throws
+        await Assert.ThrowsAsync<SqlException>(() => asB.ExecuteAsync(
+            "INSERT INTO dbo.PublisherDailySummaries (TenantId, [Date], Placement) " +
+            "VALUES (@tid, CAST(SYSUTCDATETIME() AS date), 'mismatched.example')",
+            new { tid = SqlServerFixture.TenantA }));
+        await Assert.ThrowsAsync<SqlException>(() => asB.ExecuteAsync(
+            "INSERT INTO dbo.SiteDailySummaries (TenantId, [Date], SiteKey) " +
+            "VALUES (@tid, CAST(SYSUTCDATETIME() AS date), 'mismatched-site')",
+            new { tid = SqlServerFixture.TenantA }));
     }
 
     [Fact] // (d) SYSTEM sentinel sees all tenants

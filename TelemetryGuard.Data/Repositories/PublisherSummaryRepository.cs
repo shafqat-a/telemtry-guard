@@ -1,0 +1,188 @@
+using Dapper;
+using TelemetryGuard.Core.Tenancy;
+using TelemetryGuard.Data.Models;
+
+namespace TelemetryGuard.Data.Repositories;
+
+/// <summary>
+/// Dapper repository for the P2-01 aggregate tables dbo.PublisherDailySummaries
+/// and dbo.SiteDailySummaries. Connections come exclusively from
+/// <see cref="ITenantConnectionFactory"/> (RLS-scoped); every statement additionally
+/// carries an explicit TenantId = @TenantId predicate for index seeks (D11).
+/// Upserts are idempotent absolute-value MERGEs — never increments — so ANA-07
+/// rollup re-runs converge instead of double-counting.
+/// </summary>
+internal sealed class PublisherSummaryRepository(ITenantConnectionFactory connections, ITenantContext tenant)
+    : IPublisherSummaryRepository
+{
+    public async Task UpsertPlacementDailyAsync(PublisherDailySummaryRow row, CancellationToken ct)
+    {
+        if (row.TenantId != tenant.TenantId.Value)
+        {
+            throw new InvalidOperationException(
+                "PublisherDailySummaryRow.TenantId does not match the ambient tenant; refusing to upsert.");
+        }
+
+        await using var conn = await connections.OpenAsync(ct);
+        await conn.ExecuteAsync(new CommandDefinition(
+            """
+            MERGE dbo.PublisherDailySummaries WITH (HOLDLOCK) AS t
+            USING (SELECT @TenantId AS TenantId, @Date AS [Date], @Placement AS Placement) AS s
+                ON t.TenantId = s.TenantId AND t.[Date] = s.[Date] AND t.Placement = s.Placement
+            WHEN MATCHED THEN UPDATE SET
+                Events = @Events, Allowed = @Allowed, Challenged = @Challenged, Blocked = @Blocked,
+                ScoreSum = @ScoreSum, NoJsBeaconCount = @NoJsBeaconCount, UpdatedUtc = SYSUTCDATETIME()
+            WHEN NOT MATCHED THEN INSERT
+                (TenantId, [Date], Placement, Events, Allowed, Challenged, Blocked, ScoreSum, NoJsBeaconCount)
+                VALUES (@TenantId, @Date, @Placement, @Events, @Allowed, @Challenged, @Blocked, @ScoreSum, @NoJsBeaconCount);
+            """,
+            new
+            {
+                TenantId = tenant.TenantId.Value,
+                Date = row.Date.ToDateTime(TimeOnly.MinValue),
+                row.Placement,
+                row.Events,
+                row.Allowed,
+                row.Challenged,
+                row.Blocked,
+                row.ScoreSum,
+                row.NoJsBeaconCount,
+            },
+            cancellationToken: ct));
+    }
+
+    public async Task UpsertSiteDailyAsync(SiteDailySummaryRow row, CancellationToken ct)
+    {
+        if (row.TenantId != tenant.TenantId.Value)
+        {
+            throw new InvalidOperationException(
+                "SiteDailySummaryRow.TenantId does not match the ambient tenant; refusing to upsert.");
+        }
+
+        await using var conn = await connections.OpenAsync(ct);
+        await conn.ExecuteAsync(new CommandDefinition(
+            """
+            MERGE dbo.SiteDailySummaries WITH (HOLDLOCK) AS t
+            USING (SELECT @TenantId AS TenantId, @Date AS [Date], @SiteKey AS SiteKey) AS s
+                ON t.TenantId = s.TenantId AND t.[Date] = s.[Date] AND t.SiteKey = s.SiteKey
+            WHEN MATCHED THEN UPDATE SET
+                TotalEvents = @TotalEvents, Events = @Events, Allowed = @Allowed,
+                Challenged = @Challenged, Blocked = @Blocked, ScoreSum = @ScoreSum,
+                NoJsBeaconCount = @NoJsBeaconCount, UpdatedUtc = SYSUTCDATETIME()
+            WHEN NOT MATCHED THEN INSERT
+                (TenantId, [Date], SiteKey, TotalEvents, Events, Allowed, Challenged, Blocked, ScoreSum, NoJsBeaconCount)
+                VALUES (@TenantId, @Date, @SiteKey, @TotalEvents, @Events, @Allowed, @Challenged, @Blocked, @ScoreSum, @NoJsBeaconCount);
+            """,
+            new
+            {
+                TenantId = tenant.TenantId.Value,
+                Date = row.Date.ToDateTime(TimeOnly.MinValue),
+                row.SiteKey,
+                row.TotalEvents,
+                row.Events,
+                row.Allowed,
+                row.Challenged,
+                row.Blocked,
+                row.ScoreSum,
+                row.NoJsBeaconCount,
+            },
+            cancellationToken: ct));
+    }
+
+    public async Task<IReadOnlyList<PlacementRangeTotalsRow>> GetTopPlacementsAsync(
+        DateOnly from, DateOnly to, int limit, CancellationToken ct)
+    {
+        if (limit is not (> 0 and <= 1000))
+        {
+            throw new ArgumentOutOfRangeException(nameof(limit), limit,
+                "limit must be between 1 and 1000.");
+        }
+
+        await using var conn = await connections.OpenAsync(ct);
+        var rows = await conn.QueryAsync<PlacementRangeTotalsDbRow>(new CommandDefinition(
+            """
+            SELECT TOP (@Limit)
+                Placement,
+                SUM(Events)          AS Events,
+                SUM(Allowed)         AS Allowed,
+                SUM(Challenged)      AS Challenged,
+                SUM(Blocked)         AS Blocked,
+                SUM(ScoreSum)        AS ScoreSum,
+                SUM(NoJsBeaconCount) AS NoJsBeaconCount,
+                MIN([Date])          AS FirstDay,
+                MAX([Date])          AS LastDay
+            FROM dbo.PublisherDailySummaries
+            WHERE TenantId = @TenantId AND [Date] BETWEEN @From AND @To
+            GROUP BY Placement
+            ORDER BY SUM(Blocked) DESC, SUM(Challenged) + SUM(Blocked) DESC, Placement ASC;
+            """,
+            new
+            {
+                Limit = limit,
+                TenantId = tenant.TenantId.Value,
+                From = from.ToDateTime(TimeOnly.MinValue),
+                To = to.ToDateTime(TimeOnly.MinValue),
+            },
+            cancellationToken: ct));
+        return rows.Select(r => r.ToRecord()).ToList();
+    }
+
+    public async Task<IReadOnlyList<SiteDailySummaryRow>> GetSiteDailyAsync(
+        DateOnly from, DateOnly to, CancellationToken ct)
+    {
+        await using var conn = await connections.OpenAsync(ct);
+        var rows = await conn.QueryAsync<SiteDailySummaryDbRow>(new CommandDefinition(
+            """
+            SELECT TenantId, [Date], SiteKey, TotalEvents, Events, Allowed, Challenged,
+                   Blocked, ScoreSum, NoJsBeaconCount
+            FROM dbo.SiteDailySummaries
+            WHERE TenantId = @TenantId AND [Date] BETWEEN @From AND @To
+            ORDER BY [Date], SiteKey;
+            """,
+            new
+            {
+                TenantId = tenant.TenantId.Value,
+                From = from.ToDateTime(TimeOnly.MinValue),
+                To = to.ToDateTime(TimeOnly.MinValue),
+            },
+            cancellationToken: ct));
+        return rows.Select(r => r.ToRecord()).ToList();
+    }
+
+    // Private materialization rows: SQL Server `date` comes back as DateTime; mapping
+    // through DateTime avoids Dapper/SqlClient DateOnly version pitfalls.
+    private sealed class PlacementRangeTotalsDbRow
+    {
+        public string Placement { get; init; } = string.Empty;
+        public int Events { get; init; }
+        public int Allowed { get; init; }
+        public int Challenged { get; init; }
+        public int Blocked { get; init; }
+        public long ScoreSum { get; init; }
+        public int NoJsBeaconCount { get; init; }
+        public DateTime FirstDay { get; init; }
+        public DateTime LastDay { get; init; }
+
+        public PlacementRangeTotalsRow ToRecord() => new(
+            Placement, Events, Allowed, Challenged, Blocked, ScoreSum, NoJsBeaconCount,
+            DateOnly.FromDateTime(FirstDay), DateOnly.FromDateTime(LastDay));
+    }
+
+    private sealed class SiteDailySummaryDbRow
+    {
+        public Guid TenantId { get; init; }
+        public DateTime Date { get; init; }
+        public string SiteKey { get; init; } = string.Empty;
+        public int TotalEvents { get; init; }
+        public int Events { get; init; }
+        public int Allowed { get; init; }
+        public int Challenged { get; init; }
+        public int Blocked { get; init; }
+        public long ScoreSum { get; init; }
+        public int NoJsBeaconCount { get; init; }
+
+        public SiteDailySummaryRow ToRecord() => new(
+            TenantId, DateOnly.FromDateTime(Date), SiteKey,
+            TotalEvents, Events, Allowed, Challenged, Blocked, ScoreSum, NoJsBeaconCount);
+    }
+}

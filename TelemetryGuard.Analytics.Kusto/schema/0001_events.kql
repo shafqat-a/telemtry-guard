@@ -1,0 +1,195 @@
+// ---------------------------------------------------------------------------
+// P2-05 / 0001_events.kql — the Kusto mirror of ANA-02's schema/0001_events.sql
+// (+ the RSK-08 columns added by 0002_training_and_shadow.sql). Column ORDER and
+// NAMES match KustoEventSink.ColumnNames / ClickHouseEventSink.ColumnNames
+// exactly; KustoIngestionMappingTests enforces that.
+//
+// Retention (D20): Kusto has NO per-row TTL. The table policy below is the
+// 180-day BACKSTOP (the D20 maximum); the per-row half of D20 is
+// KustoRetentionSweeper (P2-05 step 8), driven by the retention_days column.
+// ---------------------------------------------------------------------------
+.create-merge table tg_events (
+    tenant_id: guid,
+    site_key: string,
+    session_id: string,
+    // 'kind' is a KQL reserved word (used e.g. by `join kind=`) and must be
+    // bracket-quoted wherever it is DECLARED or REFERENCED as an identifier —
+    // verified against the emulator during step 0. The underlying column name is
+    // still the plain string "kind" (KustoEventSink.ColumnNames, the ingestion
+    // mapping's "Column" values, and JSON payload keys are unaffected — only KQL
+    // identifier syntax needs the brackets).
+    ['kind']: string,
+    campaign_id: string,
+    gclid: string,
+    fbclid: string,
+    msclkid: string,
+    ttclid: string,
+    click_id_invalid: bool,
+    ip: string,
+    header_names: dynamic,
+    user_agent: string,
+    sec_ch_ua: string,
+    sec_ch_ua_mobile: string,
+    sec_ch_ua_platform: string,
+    accept_language: string,
+    referrer: string,
+    tls_ja3: string,
+    tls_ja4: string,
+    cf_asn: long,
+    country: string,
+    asn: long,
+    asn_org: string,
+    asn_type: string,
+    is_datacenter: bool,
+    is_proxy: bool,
+    is_vpn: bool,
+    is_tor: bool,
+    is_private_relay: bool,
+    has_js_beacon: bool,
+    beacon_integrity_ok: bool,
+    fingerprint_visitor_id: string,
+    storage_age_sec: real,
+    webdriver_flag: bool,
+    headless_browser: bool,
+    screen_width: real,
+    screen_height: real,
+    timezone: string,
+    language: string,
+    mouse_event_count: real,
+    key_event_count: real,
+    touch_event_count: real,
+    scroll_event_count: real,
+    mean_inter_event_ms: real,
+    std_inter_event_ms: real,
+    mouse_path_linearity: real,
+    first_interaction_delay_ms: real,
+    form_fill_time_sec: real,
+    autofill_detected: bool,
+    paste_in_identity_fields: bool,
+    honeypot_touched: bool,
+    pointer_untrusted: bool,
+    input_modality_mismatch: bool,
+    time_on_page_sec: real,
+    pages_viewed: real,
+    ip_clicks_last_min: int,
+    ip_distinct_uas_last_hour: int,
+    device_sessions_last_hour: int,
+    device_ids_this_ip_hour: int,
+    score: int,
+    band: string,
+    action: string,
+    rule_hits: dynamic,
+    scorer_version: string,
+    feature_set_version: int,
+    retention_days: int,
+    timestamp: datetime,
+    features: string,
+    shadow_score: int,
+    shadow_scorer_version: string
+)
+
+// tg_labels: training labels (D18/D19). ClickHouse gives `weight` a DEFAULT of 1;
+// Kusto has no column defaults, so KustoLabelSink writes 1.0 explicitly.
+.create-merge table tg_labels (
+    tenant_id: guid,
+    session_id: string,
+    label: string,
+    label_source: string,
+    created_at: datetime,
+    weight: real
+)
+
+// D20 backstop: 180 days is the maximum tenant-configurable retention. Per-row
+// expiry inside that window is KustoRetentionSweeper's job.
+.alter-merge table tg_events policy retention softdelete = 180d recoverability = disabled
+
+// Mirrors ClickHouse's fixed 400-day tg_labels TTL (ANA-02).
+.alter-merge table tg_labels policy retention softdelete = 400d recoverability = disabled
+
+// Ingestion mappings. One entry per KustoEventSink.ColumnNames name, SAME ORDER.
+// Generated once from ColumnNames by a throwaway (uncommitted) local script; kept
+// honest afterwards by KustoIngestionMappingTests, which parses this block back
+// out of the embedded resource and asserts it against ColumnNames element-for-
+// element (the Kusto analogue of ANA-03's "MUST match schema column order").
+.create-or-alter table tg_events ingestion json mapping "tg_events_json_mapping"
+'['
+'  {"Column":"tenant_id","Properties":{"Path":"$.tenant_id"}},'
+'  {"Column":"site_key","Properties":{"Path":"$.site_key"}},'
+'  {"Column":"session_id","Properties":{"Path":"$.session_id"}},'
+'  {"Column":"kind","Properties":{"Path":"$.kind"}},'
+'  {"Column":"campaign_id","Properties":{"Path":"$.campaign_id"}},'
+'  {"Column":"gclid","Properties":{"Path":"$.gclid"}},'
+'  {"Column":"fbclid","Properties":{"Path":"$.fbclid"}},'
+'  {"Column":"msclkid","Properties":{"Path":"$.msclkid"}},'
+'  {"Column":"ttclid","Properties":{"Path":"$.ttclid"}},'
+'  {"Column":"click_id_invalid","Properties":{"Path":"$.click_id_invalid"}},'
+'  {"Column":"ip","Properties":{"Path":"$.ip"}},'
+'  {"Column":"header_names","Properties":{"Path":"$.header_names"}},'
+'  {"Column":"user_agent","Properties":{"Path":"$.user_agent"}},'
+'  {"Column":"sec_ch_ua","Properties":{"Path":"$.sec_ch_ua"}},'
+'  {"Column":"sec_ch_ua_mobile","Properties":{"Path":"$.sec_ch_ua_mobile"}},'
+'  {"Column":"sec_ch_ua_platform","Properties":{"Path":"$.sec_ch_ua_platform"}},'
+'  {"Column":"accept_language","Properties":{"Path":"$.accept_language"}},'
+'  {"Column":"referrer","Properties":{"Path":"$.referrer"}},'
+'  {"Column":"tls_ja3","Properties":{"Path":"$.tls_ja3"}},'
+'  {"Column":"tls_ja4","Properties":{"Path":"$.tls_ja4"}},'
+'  {"Column":"cf_asn","Properties":{"Path":"$.cf_asn"}},'
+'  {"Column":"country","Properties":{"Path":"$.country"}},'
+'  {"Column":"asn","Properties":{"Path":"$.asn"}},'
+'  {"Column":"asn_org","Properties":{"Path":"$.asn_org"}},'
+'  {"Column":"asn_type","Properties":{"Path":"$.asn_type"}},'
+'  {"Column":"is_datacenter","Properties":{"Path":"$.is_datacenter"}},'
+'  {"Column":"is_proxy","Properties":{"Path":"$.is_proxy"}},'
+'  {"Column":"is_vpn","Properties":{"Path":"$.is_vpn"}},'
+'  {"Column":"is_tor","Properties":{"Path":"$.is_tor"}},'
+'  {"Column":"is_private_relay","Properties":{"Path":"$.is_private_relay"}},'
+'  {"Column":"has_js_beacon","Properties":{"Path":"$.has_js_beacon"}},'
+'  {"Column":"beacon_integrity_ok","Properties":{"Path":"$.beacon_integrity_ok"}},'
+'  {"Column":"fingerprint_visitor_id","Properties":{"Path":"$.fingerprint_visitor_id"}},'
+'  {"Column":"storage_age_sec","Properties":{"Path":"$.storage_age_sec"}},'
+'  {"Column":"webdriver_flag","Properties":{"Path":"$.webdriver_flag"}},'
+'  {"Column":"headless_browser","Properties":{"Path":"$.headless_browser"}},'
+'  {"Column":"screen_width","Properties":{"Path":"$.screen_width"}},'
+'  {"Column":"screen_height","Properties":{"Path":"$.screen_height"}},'
+'  {"Column":"timezone","Properties":{"Path":"$.timezone"}},'
+'  {"Column":"language","Properties":{"Path":"$.language"}},'
+'  {"Column":"mouse_event_count","Properties":{"Path":"$.mouse_event_count"}},'
+'  {"Column":"key_event_count","Properties":{"Path":"$.key_event_count"}},'
+'  {"Column":"touch_event_count","Properties":{"Path":"$.touch_event_count"}},'
+'  {"Column":"scroll_event_count","Properties":{"Path":"$.scroll_event_count"}},'
+'  {"Column":"mean_inter_event_ms","Properties":{"Path":"$.mean_inter_event_ms"}},'
+'  {"Column":"std_inter_event_ms","Properties":{"Path":"$.std_inter_event_ms"}},'
+'  {"Column":"mouse_path_linearity","Properties":{"Path":"$.mouse_path_linearity"}},'
+'  {"Column":"first_interaction_delay_ms","Properties":{"Path":"$.first_interaction_delay_ms"}},'
+'  {"Column":"form_fill_time_sec","Properties":{"Path":"$.form_fill_time_sec"}},'
+'  {"Column":"autofill_detected","Properties":{"Path":"$.autofill_detected"}},'
+'  {"Column":"paste_in_identity_fields","Properties":{"Path":"$.paste_in_identity_fields"}},'
+'  {"Column":"honeypot_touched","Properties":{"Path":"$.honeypot_touched"}},'
+'  {"Column":"pointer_untrusted","Properties":{"Path":"$.pointer_untrusted"}},'
+'  {"Column":"input_modality_mismatch","Properties":{"Path":"$.input_modality_mismatch"}},'
+'  {"Column":"time_on_page_sec","Properties":{"Path":"$.time_on_page_sec"}},'
+'  {"Column":"pages_viewed","Properties":{"Path":"$.pages_viewed"}},'
+'  {"Column":"ip_clicks_last_min","Properties":{"Path":"$.ip_clicks_last_min"}},'
+'  {"Column":"ip_distinct_uas_last_hour","Properties":{"Path":"$.ip_distinct_uas_last_hour"}},'
+'  {"Column":"device_sessions_last_hour","Properties":{"Path":"$.device_sessions_last_hour"}},'
+'  {"Column":"device_ids_this_ip_hour","Properties":{"Path":"$.device_ids_this_ip_hour"}},'
+'  {"Column":"score","Properties":{"Path":"$.score"}},'
+'  {"Column":"band","Properties":{"Path":"$.band"}},'
+'  {"Column":"action","Properties":{"Path":"$.action"}},'
+'  {"Column":"rule_hits","Properties":{"Path":"$.rule_hits"}},'
+'  {"Column":"scorer_version","Properties":{"Path":"$.scorer_version"}},'
+'  {"Column":"feature_set_version","Properties":{"Path":"$.feature_set_version"}},'
+'  {"Column":"retention_days","Properties":{"Path":"$.retention_days"}},'
+'  {"Column":"timestamp","Properties":{"Path":"$.timestamp"}},'
+'  {"Column":"features","Properties":{"Path":"$.features"}},'
+'  {"Column":"shadow_score","Properties":{"Path":"$.shadow_score"}},'
+'  {"Column":"shadow_scorer_version","Properties":{"Path":"$.shadow_scorer_version"}}'
+']'
+
+.create-or-alter table tg_labels ingestion json mapping "tg_labels_json_mapping"
+'[{"Column":"tenant_id","Properties":{"Path":"$.tenant_id"}},'
+' {"Column":"session_id","Properties":{"Path":"$.session_id"}},'
+' {"Column":"label","Properties":{"Path":"$.label"}},'
+' {"Column":"label_source","Properties":{"Path":"$.label_source"}},'
+' {"Column":"created_at","Properties":{"Path":"$.created_at"}},'
+' {"Column":"weight","Properties":{"Path":"$.weight"}}]'

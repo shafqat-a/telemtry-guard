@@ -1,0 +1,190 @@
+/* TelemetryGuard Portal — hand-written, no web fonts, no CDN URL (CSP forbids both). */
+
+:root {
+  --tg-bg: #f7f8fa;
+  --tg-panel-bg: #ffffff;
+  --tg-border: #d9dde3;
+  --tg-text: #1c2430;
+  --tg-muted: #5a6472;
+  --tg-accent: #1f5fbf;
+  --tg-error-bg: #fdeaea;
+  --tg-error-border: #d64545;
+  --tg-error-text: #7a1f1f;
+  --tg-ok-bg: #e8f6ec;
+  --tg-ok-border: #2f9e52;
+  --tg-ok-text: #175c2c;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  background: var(--tg-bg);
+  color: var(--tg-text);
+  line-height: 1.5;
+}
+
+a { color: var(--tg-accent); }
+
+.tg-header {
+  background: var(--tg-panel-bg);
+  border-bottom: 1px solid var(--tg-border);
+}
+
+.tg-header-inner {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 0.75rem 1.25rem;
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+}
+
+.tg-brand { font-weight: 700; font-size: 1.1rem; }
+
+.tg-nav { display: flex; gap: 1rem; flex: 1 1 auto; }
+.tg-nav a { text-decoration: none; }
+.tg-nav a:hover { text-decoration: underline; }
+
+.tg-key-hint { color: var(--tg-muted); font-size: 0.9rem; }
+
+.tg-signout-form { margin: 0; }
+.tg-signout-form button {
+  background: none;
+  border: 1px solid var(--tg-border);
+  border-radius: 4px;
+  padding: 0.3rem 0.7rem;
+  cursor: pointer;
+  color: var(--tg-text);
+}
+
+.tg-main {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 1.25rem;
+}
+
+h1 { font-size: 1.4rem; margin-top: 0; }
+h2 { font-size: 1.15rem; }
+
+.panel {
+  background: var(--tg-panel-bg);
+  border: 1px solid var(--tg-border);
+  border-radius: 6px;
+  padding: 1rem 1.25rem;
+  margin-bottom: 1.25rem;
+}
+
+.panel-error {
+  background: var(--tg-error-bg);
+  border: 1px solid var(--tg-error-border);
+  color: var(--tg-error-text);
+  border-radius: 4px;
+  padding: 0.6rem 0.9rem;
+  margin: 0.5rem 0;
+}
+
+.panel-message {
+  background: var(--tg-ok-bg);
+  border: 1px solid var(--tg-ok-border);
+  color: var(--tg-ok-text);
+  border-radius: 4px;
+  padding: 0.6rem 0.9rem;
+  margin: 0.5rem 0;
+}
+
+.tg-note {
+  color: var(--tg-muted);
+  font-size: 0.88rem;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.5rem 0;
+}
+
+th, td {
+  text-align: left;
+  padding: 0.4rem 0.6rem;
+  border-bottom: 1px solid var(--tg-border);
+  font-size: 0.92rem;
+}
+
+th { color: var(--tg-muted); font-weight: 600; }
+
+tfoot td { font-weight: 600; }
+
+form.tg-filter-form, form.tg-add-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  align-items: end;
+  margin-bottom: 0.75rem;
+}
+
+form.tg-filter-form label, form.tg-add-form label {
+  display: flex;
+  flex-direction: column;
+  font-size: 0.85rem;
+  color: var(--tg-muted);
+  gap: 0.2rem;
+}
+
+input, select, button {
+  font: inherit;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid var(--tg-border);
+  border-radius: 4px;
+}
+
+button {
+  background: var(--tg-accent);
+  color: #fff;
+  border-color: var(--tg-accent);
+  cursor: pointer;
+}
+
+button:hover { opacity: 0.9; }
+
+button.secondary {
+  background: none;
+  color: var(--tg-text);
+  border-color: var(--tg-border);
+}
+
+.badge {
+  display: inline-block;
+  padding: 0.1rem 0.5rem;
+  border-radius: 10px;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.badge-pending     { background: #fff4d6; color: #8a6300; }
+.badge-approved    { background: #e1eeff; color: #17427a; }
+.badge-rejected    { background: #f0f0f0; color: #555; }
+.badge-pushed      { background: #e8f6ec; color: #175c2c; }
+.badge-failed      { background: #fdeaea; color: #7a1f1f; }
+.badge-unsupported { background: #f0e6fb; color: #4b1f7a; }
+
+.tg-explainer {
+  border-left: 3px solid var(--tg-accent);
+  padding: 0.5rem 0.9rem;
+  background: #eef4fc;
+  font-size: 0.9rem;
+  margin: 0.5rem 0;
+}
+
+.tg-signin-wrap {
+  max-width: 360px;
+  margin: 3rem auto;
+}
+
+.tg-signin-wrap form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}

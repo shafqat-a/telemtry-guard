@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>@ViewData["Title"] - TelemetryGuard Portal</title>
+    <link rel="stylesheet" href="~/css/portal.css" />
+</head>
+<body>
+<header class="tg-header">
+    <div class="tg-header-inner">
+        <span class="tg-brand">TelemetryGuard Portal</span>
+        @if (User.Identity?.IsAuthenticated == true)
+        {
+            <nav class="tg-nav">
+                <a href="/">Dashboard</a>
+                <a href="/review">Review &amp; override</a>
+                <a href="/enforcement">Approval queue</a>
+                <a href="/whitelist">Whitelist</a>
+            </nav>
+            <span class="tg-key-hint">Signed in @PortalAuth.HintFor(User)</span>
+            <form method="post" action="/signout" class="tg-signout-form">
+                @Html.AntiForgeryToken()
+                <button type="submit">Sign out</button>
+            </form>
+        }
+    </div>
+</header>
+<main class="tg-main">
+    @RenderBody()
+</main>
+</body>
+</html>

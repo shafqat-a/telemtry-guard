@@ -1,0 +1,91 @@
+@page "/enforcement"
+@model TelemetryGuard.Portal.Pages.EnforcementModel
+@{
+    ViewData["Title"] = "Approval queue";
+}
+
+<h1>Approval queue</h1>
+
+@if (Model.Message is not null)
+{
+    <div class="panel-message">@Model.Message</div>
+}
+@if (Model.Error is not null)
+{
+    <div class="panel-error" role="alert">@Model.Error</div>
+}
+
+<section class="panel">
+    <p class="tg-filter-form">
+        @foreach (var s in TelemetryGuard.Portal.Pages.EnforcementModel.AllStatuses)
+        {
+            <a href="/enforcement?status=@s" class="badge badge-@s">@s@(s == Model.Status ? " (current)" : "")</a>
+        }
+    </p>
+
+    @if (Model.EntriesResult?.Error is not null)
+    {
+        <div class="panel-error" role="alert">@Model.EntriesResult.Error</div>
+    }
+    else if (Model.EntriesResult?.Value is { } entries)
+    {
+        var actionable = Model.Status == "pending";
+        <form method="post">
+            @Html.AntiForgeryToken()
+            <table>
+                <thead>
+                    <tr>
+                        @if (actionable) { <th></th> }
+                        <th>Id</th><th>Platform</th><th>Source type</th><th>Value</th>
+                        <th>Campaign scope</th><th>Reason</th><th>Status</th><th>Created</th><th>Updated</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var e in entries)
+                    {
+                        <tr>
+                            @if (actionable)
+                            {
+                                <td><input type="checkbox" name="ids" value="@e.Id" /></td>
+                            }
+                            <td>@e.Id</td>
+                            <td>@e.Platform</td>
+                            <td>@e.SourceType</td>
+                            <td>@e.Value</td>
+                            <td>@(e.CampaignScope?.ToString() ?? "—")</td>
+                            <td>@e.Reason</td>
+                            <td><span class="badge badge-@e.Status">@e.Status</span></td>
+                            <td>@e.CreatedUtc.ToString("u")</td>
+                            <td>@(e.UpdatedUtc?.ToString("u") ?? "—")</td>
+                        </tr>
+                        @if (e.Status == "unsupported")
+                        {
+                            <tr><td colspan="9" class="tg-explainer">@e.Reason — Meta Marketing API provides no IP exclusion capability; entry cannot be enforced on Meta.</td></tr>
+                        }
+                        else if (e.Status == "failed")
+                        {
+                            <tr><td colspan="9" class="tg-note">The sync worker will not retry this automatically — re-queueing is a manual operation.</td></tr>
+                        }
+                    }
+                </tbody>
+            </table>
+
+            @if (actionable)
+            {
+                <p class="tg-note">Tick the rows you want to act on.</p>
+                <div class="tg-filter-form">
+                    <label>
+                        Note (reject only, ≤400 chars)
+                        <input type="text" name="note" maxlength="400" />
+                    </label>
+                    <button type="submit" asp-page-handler="Approve">Approve selected</button>
+                    <button type="submit" asp-page-handler="Reject" class="secondary">Reject selected</button>
+                </div>
+            }
+        </form>
+    }
+
+    <p class="tg-note">Approving queues the exclusion for the platform sync worker (it runs every
+        ~15 minutes). Nothing here pushes to an ad platform directly, and nothing here affects the
+        challenge band — mid-band Turnstile prompts are always automatic.</p>
+</section>

@@ -21,10 +21,12 @@ internal static class TestEvents
         string sessionId,
         string campaignId = "",
         string? userAgent = null,
-        string? fingerprint = null) => new()
+        string? fingerprint = null,
+        string siteKey = "sk-test",
+        string? referrer = null) => new()
     {
         TenantId = tenant,
-        SiteKey = "sk-test",
+        SiteKey = siteKey,
         SessionId = sessionId,
         Kind = EventKind.Tracker,
         CampaignId = campaignId,
@@ -32,6 +34,7 @@ internal static class TestEvents
         UserAgent = userAgent,
         FingerprintVisitorId = fingerprint,
         HasJsBeacon = false,
+        Referrer = referrer, // P2-01: publisher-attribution source column
         RetentionDays = 90,
         TimestampUtc = timestampUtc
     };
@@ -46,10 +49,11 @@ internal static class TestEvents
         string campaignId = "",
         string? userAgent = null,
         string? fingerprint = null,
-        bool hasJsBeacon = true) => new()
+        bool hasJsBeacon = true,
+        string siteKey = "sk-test") => new()
     {
         TenantId = tenant,
-        SiteKey = "sk-test",
+        SiteKey = siteKey,
         SessionId = sessionId,
         Kind = EventKind.Verdict,
         CampaignId = campaignId,

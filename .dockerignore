@@ -1,0 +1,25 @@
+# Build outputs and VCS
+.git/
+**/bin/
+**/obj/
+artifacts/
+TestResults/
+coverage/
+
+# Node + SDK build outputs: the image builds these itself (stage `sdk`).
+TelemetryGuard.Sdk/node_modules/
+TelemetryGuard.Sdk/dist/
+TelemetryGuard.Sdk/test-results/
+# NEVER ship a host-built bundle: stage `sdk` is the only source of wwwroot/sdk.
+TelemetryGuard.Api/wwwroot/sdk/
+
+# Not needed to build the API or the migrator
+tests/
+TelemetryGuard.Training/
+doc/
+ops/
+infra/
+.github/
+data/
+*.md
+.env

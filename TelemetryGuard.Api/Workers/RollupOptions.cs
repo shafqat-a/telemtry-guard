@@ -7,4 +7,6 @@ public sealed class RollupOptions
     public int LookbackDays { get; init; } = 3;        // first-run / no-watermark backfill window
     public int TopFlaggedLimit { get; init; } = 100;   // flagged sources per tenant per day
     public string RollupName { get; init; } = "verdict_daily"; // key into dbo.RollupWatermarks
+    public int TopPlacementsLimit { get; init; } = 100;             // placements per tenant per DAY
+    public string PublisherRollupName { get; init; } = "publisher_daily"; // second key into dbo.RollupWatermarks
 }

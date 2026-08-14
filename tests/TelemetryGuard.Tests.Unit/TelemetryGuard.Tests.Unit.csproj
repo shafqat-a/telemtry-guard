@@ -37,12 +37,16 @@
     <ProjectReference Include="..\..\TelemetryGuard.RiskEngine.Contracts\TelemetryGuard.RiskEngine.Contracts.csproj" />
     <ProjectReference Include="..\..\TelemetryGuard.Analytics.Abstractions\TelemetryGuard.Analytics.Abstractions.csproj" />
     <ProjectReference Include="..\..\TelemetryGuard.Analytics.ClickHouse\TelemetryGuard.Analytics.ClickHouse.csproj" />
+    <ProjectReference Include="..\..\TelemetryGuard.Analytics.Kusto\TelemetryGuard.Analytics.Kusto.csproj" />
     <ProjectReference Include="..\..\TelemetryGuard.Data\TelemetryGuard.Data.csproj" />
     <ProjectReference Include="..\..\TelemetryGuard.Integrations\TelemetryGuard.Integrations.csproj" />
     <ProjectReference Include="..\..\TelemetryGuard.Api\TelemetryGuard.Api.csproj" />
     <!-- RSK-08: Trainer/LabelResolver smoke + AUC-gate tests invoke the Training
          project's classes directly (not the process). -->
     <ProjectReference Include="..\..\TelemetryGuard.Training\TelemetryGuard.Training.csproj" />
+    <!-- P2-03: WebApplicationFactory<TelemetryGuard.Portal.PortalEntryPoint> pipeline
+         tests (sign-in, page render, action posts) against a stubbed admin API. -->
+    <ProjectReference Include="..\..\TelemetryGuard.Portal\TelemetryGuard.Portal.csproj" />
   </ItemGroup>
 
 </Project>

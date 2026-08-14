@@ -17,7 +17,8 @@ namespace TelemetryGuard.Api.Endpoints;
 /// guarantees only X-Api-Key-resolved requests ever reach these handlers.
 ///
 /// D23: reads here go ONLY through the small RLS-protected SQL aggregate tables
-/// (<see cref="IVerdictSummaryRepository"/>) — never ClickHouse/IAnalyticsQueries.
+/// (<see cref="IVerdictSummaryRepository"/>, <see cref="IPublisherSummaryRepository"/>) —
+/// never ClickHouse/IAnalyticsQueries.
 /// D19: whitelist mutations go through DAT-07's <see cref="IWhitelistRepository"/>
 /// exactly as-is; the Redis cache rebuild and the review-screen negative training
 /// label are BOTH side effects of that repository's AddAsync/Remove* methods —
@@ -36,6 +37,11 @@ public static partial class AdminEndpoints
     private const int MaxSummaryRangeDays = 366;
     private const int LastBeaconJsWindowSeconds = 24 * 60 * 60; // D22: "recent" = within 24h
 
+    /// <summary>Below this many scored events a placement's FlaggedRatio is noise;
+    /// the response flags it rather than hiding the row (§7 — surface the volume,
+    /// never fabricate confidence).</summary>
+    private const int LowVolumePlacementEvents = 30;
+
     public static IEndpointRouteBuilder MapAdminEndpoints(this IEndpointRouteBuilder app)
     {
         var admin = app.MapGroup("/admin").AddEndpointFilter<AdminScopeFilter>();
@@ -44,6 +50,10 @@ public static partial class AdminEndpoints
         admin.MapDelete("/whitelist/{id:long}", DeleteWhitelistAsync);
         admin.MapGet("/reports/summary", GetSummaryAsync);
         admin.MapGet("/sites/integration-status", GetIntegrationStatusAsync);
+        admin.MapGet("/campaigns", ListCampaignsAsync);
+        admin.MapGet("/reports/flagged-sources", GetFlaggedSourcesAsync);
+        admin.MapGet("/reports/publishers", GetPublisherReportAsync);
+        admin.MapGet("/reports/sites", GetSiteReportAsync);
         return app;
     }
 
@@ -189,6 +199,109 @@ public static partial class AdminEndpoints
 
         return Results.Ok(new IntegrationStatusReportResponse(results));
     }
+
+    // ----------------------------------------------------------- campaigns --
+    // P2-03: the summary report requires a campaignId and nothing else exposed the
+    // tenant's campaign list. Read-only projection of DAT-05's ICampaignRepository;
+    // LandingUrl/GeoTargets are deliberately NOT returned (the portal never needs
+    // them, and LandingUrl is the /c open-redirect guardrail's own business).
+    private static async Task<IResult> ListCampaignsAsync(
+        ICampaignRepository campaigns, CancellationToken ct)
+    {
+        var rows = await campaigns.ListAsync(ct);
+        return Results.Ok(new CampaignListResponse(
+            rows.Select(c => new CampaignSummaryResponse(
+                    c.CampaignId, c.Platform, c.ExternalCampaignId, c.Status))
+                .ToList()));
+    }
+
+    // ------------------------------------------------------ flagged sources --
+    // P2-03: D23 read of dbo.FlaggedSourcesDaily (SQL aggregate table) — the
+    // review/override screen's data source. NEVER ClickHouse.
+    private static async Task<IResult> GetFlaggedSourcesAsync(
+        string? from, string? to, int? limit,
+        IVerdictSummaryRepository summaries, CancellationToken ct)
+    {
+        if (from is null || !TryParseDate(from, out var fromDate))
+            return ValidationProblem("from", "from is required and must be yyyy-MM-dd.");
+
+        if (to is null || !TryParseDate(to, out var toDate))
+            return ValidationProblem("to", "to is required and must be yyyy-MM-dd.");
+
+        if (fromDate > toDate)
+            return ValidationProblem("from", "from must be <= to.");
+
+        if (toDate.DayNumber - fromDate.DayNumber > MaxSummaryRangeDays)
+            return ValidationProblem("to", $"date range must not exceed {MaxSummaryRangeDays} days.");
+
+        // DAT-06's repository throws outside 1..1000 — clamp, never forward blindly.
+        var effectiveLimit = Math.Clamp(limit ?? 100, 1, 1000);
+
+        var rows = await summaries.GetTopFlaggedSourcesAsync(fromDate, toDate, effectiveLimit, ct);
+        return Results.Ok(new FlaggedSourcesReportResponse(
+            fromDate, toDate,
+            rows.Select(r => new FlaggedSourceResponse(
+                    r.Date, r.SourceType, r.Value, r.FlaggedCount, r.BlockedCount, r.ScoreSum))
+                .ToList()));
+    }
+
+    // -------------------------------------------------------- publishers --
+    // P2-01: D23 reads of dbo.PublisherDailySummaries / dbo.SiteDailySummaries
+    // (SQL aggregate tables materialized by RollupService) — NEVER ClickHouse.
+
+    private static async Task<IResult> GetPublisherReportAsync(
+        string? from, string? to, int? limit,
+        IPublisherSummaryRepository publishers, CancellationToken ct)
+    {
+        if (from is null || !TryParseDate(from, out var fromDate))
+            return ValidationProblem("from", "from is required and must be yyyy-MM-dd.");
+        if (to is null || !TryParseDate(to, out var toDate))
+            return ValidationProblem("to", "to is required and must be yyyy-MM-dd.");
+        if (fromDate > toDate)
+            return ValidationProblem("from", "from must be <= to.");
+        if (toDate.DayNumber - fromDate.DayNumber > MaxSummaryRangeDays)
+            return ValidationProblem("to", $"date range must not exceed {MaxSummaryRangeDays} days.");
+
+        var effectiveLimit = Math.Clamp(limit ?? 50, 1, 200);
+        var rows = await publishers.GetTopPlacementsAsync(fromDate, toDate, effectiveLimit, ct);
+        return Results.Ok(new PublisherReportResponse(
+            fromDate, toDate, rows.Select(ToPublisherRow).ToList()));
+    }
+
+    private static PublisherReportRowResponse ToPublisherRow(PlacementRangeTotalsRow r)
+    {
+        var flagged = r.Challenged + r.Blocked;
+        return new PublisherReportRowResponse(
+            r.Placement, r.Events, r.Allowed, r.Challenged, r.Blocked, flagged,
+            r.Events == 0 ? null : Math.Round((double)flagged / r.Events, 4),
+            r.Events == 0 ? null : Math.Round((double)r.ScoreSum / r.Events, 1),
+            r.NoJsBeaconCount, r.Events < LowVolumePlacementEvents,
+            r.FirstDay, r.LastDay);
+    }
+
+    private static async Task<IResult> GetSiteReportAsync(
+        string? from, string? to,
+        IPublisherSummaryRepository publishers, CancellationToken ct)
+    {
+        if (from is null || !TryParseDate(from, out var fromDate))
+            return ValidationProblem("from", "from is required and must be yyyy-MM-dd.");
+        if (to is null || !TryParseDate(to, out var toDate))
+            return ValidationProblem("to", "to is required and must be yyyy-MM-dd.");
+        if (fromDate > toDate)
+            return ValidationProblem("from", "from must be <= to.");
+        if (toDate.DayNumber - fromDate.DayNumber > MaxSummaryRangeDays)
+            return ValidationProblem("to", $"date range must not exceed {MaxSummaryRangeDays} days.");
+
+        var rows = await publishers.GetSiteDailyAsync(fromDate, toDate, ct);
+        return Results.Ok(new SiteReportResponse(
+            fromDate, toDate, rows.Select(ToSiteReportDay).ToList()));
+    }
+
+    private static SiteReportDayResponse ToSiteReportDay(SiteDailySummaryRow r)
+        => new(
+            r.Date, r.SiteKey, r.TotalEvents, r.Events, r.Allowed, r.Challenged, r.Blocked,
+            r.Events == 0 ? null : Math.Round((double)r.ScoreSum / r.Events, 1),
+            r.NoJsBeaconCount);
 
     // ------------------------------------------------------------- helpers --
 

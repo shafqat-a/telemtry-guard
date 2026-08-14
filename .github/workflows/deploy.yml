@@ -1,0 +1,259 @@
+name: Deploy (Azure)
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment
+        type: choice
+        options: [dev, prod]
+        default: dev
+  push:
+    branches: [main]
+
+concurrency:
+  group: deploy-${{ github.event.inputs.environment || 'dev' }}
+  cancel-in-progress: false
+
+permissions:
+  id-token: write        # OIDC federation — no long-lived cloud secret in the repo
+  contents: read
+
+env:
+  TG_ENV: ${{ github.event.inputs.environment || 'dev' }}
+  IMAGE_NAME: telemetryguard-api
+  OTEL_COLLECTOR_UPSTREAM: docker.io/otel/opentelemetry-collector-contrib:0.115.0
+
+jobs:
+  preflight:
+    name: Are Azure credentials configured?
+    runs-on: ubuntu-latest
+    outputs:
+      enabled: ${{ steps.gate.outputs.enabled }}
+    steps:
+      # The `secrets` context is NOT available in a job-level `if`, so gate through a
+      # step output — the same idiom ci.yml's `sdk` job already uses.
+      - id: gate
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          AZURE_RESOURCE_GROUP: ${{ secrets.AZURE_RESOURCE_GROUP }}
+          TG_SQL_ADMIN_PASSWORD: ${{ secrets.TG_SQL_ADMIN_PASSWORD }}
+          TG_CLICKHOUSE_PASSWORD: ${{ secrets.TG_CLICKHOUSE_PASSWORD }}
+          TG_BEACON_HMAC_SECRET: ${{ secrets.TG_BEACON_HMAC_SECRET }}
+        run: |
+          missing=""
+          for v in AZURE_CLIENT_ID AZURE_TENANT_ID AZURE_SUBSCRIPTION_ID AZURE_RESOURCE_GROUP \
+                   TG_SQL_ADMIN_PASSWORD TG_CLICKHOUSE_PASSWORD TG_BEACON_HMAC_SECRET; do
+            [ -n "${!v}" ] || missing="$missing $v"
+          done
+          if [ -n "$missing" ]; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Azure deploy skipped — missing secrets:$missing"
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  build-push:
+    name: Build & push image
+    runs-on: ubuntu-latest
+    needs: preflight
+    if: needs.preflight.outputs.enabled == 'true'
+    timeout-minutes: 30
+    outputs:
+      image: ${{ steps.vars.outputs.image }}
+      collectorImage: ${{ steps.vars.outputs.collectorImage }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      # Bootstraps ONLY the registry (+ the shared identity/AcrPull role) as a
+      # standalone deployment. Necessary because the rest of main.bicep (the
+      # `infra` job below) needs an already-pushed image for the migration jobs it
+      # creates — a first-ever deploy would otherwise need the image before the ACR
+      # that receives it exists. registry.bicep derives its resource names
+      # deterministically from (namePrefix, environmentName, resourceGroup().id),
+      # so this is 100% idempotent: re-applied inside the full main.bicep deploy in
+      # the `infra` job below, it reconciles to the same resource, never recreates it.
+      - name: Bootstrap ACR + identity (idempotent)
+        id: bootstrap
+        env:
+          RG: ${{ secrets.AZURE_RESOURCE_GROUP }}
+        run: |
+          az deployment group create -g "$RG" -n "tg-$TG_ENV-$GITHUB_RUN_ID-registry" \
+            -f infra/azure/modules/registry.bicep \
+            -p location=$(az group show -g "$RG" --query location -o tsv) \
+            -p namePrefix=tguard -p environmentName="$TG_ENV" \
+            --query properties.outputs.acrLoginServer.value -o tsv > acr.txt
+          echo "acr=$(cat acr.txt)" >> "$GITHUB_OUTPUT"
+
+      - name: Compute image references
+        id: vars
+        run: |
+          ACR="${{ steps.bootstrap.outputs.acr }}"
+          echo "acr=$ACR" >> "$GITHUB_OUTPUT"
+          echo "image=$ACR/$IMAGE_NAME:${{ github.sha }}" >> "$GITHUB_OUTPUT"
+          echo "collectorImage=$ACR/opentelemetry-collector-contrib:0.115.0" >> "$GITHUB_OUTPUT"
+
+      - name: az acr login
+        run: az acr login -n $(echo "${{ steps.vars.outputs.acr }}" | cut -d. -f1)
+
+      - name: Build image (Dockerfile — SDK bundle + API + migrator, D22/DAT-01)
+        run: >
+          docker build -t "${{ steps.vars.outputs.image }}"
+          --build-arg GIT_SHA=${{ github.sha }} .
+
+      - name: Push image
+        run: docker push "${{ steps.vars.outputs.image }}"
+
+      - name: Import OTel Collector into ACR (so replicas never pull docker.io)
+        run: >
+          az acr import --source "$OTEL_COLLECTOR_UPSTREAM"
+          -t opentelemetry-collector-contrib:0.115.0
+          -n $(echo "${{ steps.vars.outputs.acr }}" | cut -d. -f1) --force
+
+  infra:
+    name: Deploy infra (phase A — everything but the app)
+    runs-on: ubuntu-latest
+    needs: [preflight, build-push]
+    if: needs.preflight.outputs.enabled == 'true'
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy (deployApiApp=false)
+        env:
+          RG: ${{ secrets.AZURE_RESOURCE_GROUP }}
+          IMAGE: ${{ needs.build-push.outputs.image }}
+          COLLECTOR_IMAGE: ${{ needs.build-push.outputs.collectorImage }}
+          TG_SQL_ADMIN_PASSWORD: ${{ secrets.TG_SQL_ADMIN_PASSWORD }}
+          TG_CLICKHOUSE_PASSWORD: ${{ secrets.TG_CLICKHOUSE_PASSWORD }}
+          TG_BEACON_HMAC_SECRET: ${{ secrets.TG_BEACON_HMAC_SECRET }}
+        run: |
+          CF=$(grep -v '^#' TelemetryGuard.Api/Edge/cloudflare-ips.txt | grep -v ':' | grep -v '^$' | jq -R . | jq -sc .)
+          az deployment group create -g "$RG" -n "tg-$TG_ENV-$GITHUB_RUN_ID-a" \
+            -f infra/azure/main.bicep --parameters @infra/azure/params.$TG_ENV.json \
+            -p containerImage="$IMAGE" -p otelCollectorImage="$COLLECTOR_IMAGE" \
+            -p cloudflareIpv4Ranges="$CF" -p deployApiApp=false \
+            -p sqlAdminPassword="$TG_SQL_ADMIN_PASSWORD" \
+            -p clickHousePassword="$TG_CLICKHOUSE_PASSWORD" \
+            -p beaconHmacSecret="$TG_BEACON_HMAC_SECRET"
+
+  migrate:
+    name: Run migration jobs (gate)
+    runs-on: ubuntu-latest
+    needs: [preflight, infra]
+    if: needs.preflight.outputs.enabled == 'true'
+    timeout-minutes: 20
+    steps:
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Start SQL and ClickHouse migration jobs, wait for completion
+        env:
+          RG: ${{ secrets.AZURE_RESOURCE_GROUP }}
+        run: |
+          SQL_JOB=$(az deployment group show -g "$RG" -n "tg-$TG_ENV-$GITHUB_RUN_ID-a" --query properties.outputs.migrateSqlJobName.value -o tsv)
+          CH_JOB=$(az deployment group show -g "$RG" -n "tg-$TG_ENV-$GITHUB_RUN_ID-a" --query properties.outputs.migrateClickHouseJobName.value -o tsv)
+
+          run_job () {
+            name="$1"
+            exec_name=$(az containerapp job start -n "$name" -g "$RG" --query name -o tsv)
+            for i in $(seq 1 60); do
+              status=$(az containerapp job execution show -n "$name" -g "$RG" \
+                         --job-execution-name "$exec_name" --query properties.status -o tsv)
+              echo "$name/$exec_name: $status"
+              case "$status" in
+                Succeeded) return 0 ;;
+                Failed|Degraded) echo "::error::$name failed"; return 1 ;;
+              esac
+              sleep 10
+            done
+            echo "::error::$name timed out"; return 1
+          }
+          run_job "$SQL_JOB" && run_job "$CH_JOB"
+
+  deploy:
+    name: Deploy app (phase B)
+    runs-on: ubuntu-latest
+    needs: [preflight, build-push, migrate]
+    if: needs.preflight.outputs.enabled == 'true'
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy (deployApiApp=true)
+        env:
+          RG: ${{ secrets.AZURE_RESOURCE_GROUP }}
+          IMAGE: ${{ needs.build-push.outputs.image }}
+          COLLECTOR_IMAGE: ${{ needs.build-push.outputs.collectorImage }}
+          TG_SQL_ADMIN_PASSWORD: ${{ secrets.TG_SQL_ADMIN_PASSWORD }}
+          TG_CLICKHOUSE_PASSWORD: ${{ secrets.TG_CLICKHOUSE_PASSWORD }}
+          TG_BEACON_HMAC_SECRET: ${{ secrets.TG_BEACON_HMAC_SECRET }}
+        run: |
+          CF=$(grep -v '^#' TelemetryGuard.Api/Edge/cloudflare-ips.txt | grep -v ':' | grep -v '^$' | jq -R . | jq -sc .)
+          az deployment group create -g "$RG" -n "tg-$TG_ENV-$GITHUB_RUN_ID-b" \
+            -f infra/azure/main.bicep --parameters @infra/azure/params.$TG_ENV.json \
+            -p containerImage="$IMAGE" -p otelCollectorImage="$COLLECTOR_IMAGE" \
+            -p cloudflareIpv4Ranges="$CF" -p deployApiApp=true \
+            -p sqlAdminPassword="$TG_SQL_ADMIN_PASSWORD" \
+            -p clickHousePassword="$TG_CLICKHOUSE_PASSWORD" \
+            -p beaconHmacSecret="$TG_BEACON_HMAC_SECRET"
+
+  smoke:
+    name: Smoke check
+    runs-on: ubuntu-latest
+    needs: [preflight, deploy]
+    if: needs.preflight.outputs.enabled == 'true'
+    timeout-minutes: 10
+    steps:
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      # Deliberately does NOT curl the origin directly: ingress is locked to
+      # Cloudflare (D13) and poking a GitHub-runner-shaped hole in that list would
+      # defeat the point.
+      - name: Active revision is Healthy/Provisioned
+        env:
+          RG: ${{ secrets.AZURE_RESOURCE_GROUP }}
+        run: |
+          APP=$(az deployment group show -g "$RG" -n "tg-$TG_ENV-$GITHUB_RUN_ID-b" --query properties.outputs.containerAppName.value -o tsv)
+          az containerapp revision list -n "$APP" -g "$RG" \
+            --query "[?properties.active].{n:name,h:properties.healthState,p:properties.provisioningState}" -o table
+
+      - name: Through-Cloudflare smoke (optional — only if TG_SMOKE_BASE_URL is set)
+        if: ${{ secrets.TG_SMOKE_BASE_URL != '' }}
+        env:
+          TG_SMOKE_BASE_URL: ${{ secrets.TG_SMOKE_BASE_URL }}
+        run: |
+          curl -fsS "$TG_SMOKE_BASE_URL/healthz"
+          curl -fsSI "$TG_SMOKE_BASE_URL/sdk/tg.js"

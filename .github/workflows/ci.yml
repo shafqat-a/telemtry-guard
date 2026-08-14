@@ -180,3 +180,112 @@ jobs:
         with:
           name: sdk-dist
           path: TelemetryGuard.Sdk/dist/
+
+  image:
+    name: API container image (Dockerfile)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image
+        run: docker build -t telemetryguard-api:ci --build-arg GIT_SHA=${{ github.sha }} .
+
+      - name: SDK bundle is inside the image (SDK-08 / D22)
+        run: |
+          docker run --rm telemetryguard-api:ci ls -1 /app/wwwroot/sdk > files.txt
+          cat files.txt
+          grep -qx 'tg.js'      files.txt || { echo "::error::tg.js missing from image"; exit 1; }
+          grep -qx 'tg.js.map'  files.txt || { echo "::error::tg.js.map missing from image"; exit 1; }
+          grep -qE '^tg-[0-9]'  files.txt || { echo "::error::version-pinned bundle missing from image"; exit 1; }
+
+      - name: Migrator is inside the same image (DAT-01)
+        run: |
+          set +e
+          out=$(docker run --rm telemetryguard-api:ci dotnet /app/migrator/TelemetryGuard.MigrationRunner.dll 2>&1)
+          code=$?
+          echo "$out"
+          [ "$code" = "2" ] || { echo "::error::expected exit 2 (missing MIGRATIONS_CONNECTIONSTRING), got $code"; exit 1; }
+
+      - name: Container starts and answers /healthz
+        run: |
+          docker run -d --name tg-smoke -p 18080:8080 \
+            -e Beacon__HmacSecret=ci-only-not-a-real-secret-0123456789 \
+            telemetryguard-api:ci
+          ok=0
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:18080/healthz >/dev/null 2>&1; then ok=1; break; fi
+            sleep 2
+          done
+          docker logs tg-smoke
+          docker rm -f tg-smoke
+          [ "$ok" = "1" ] || { echo "::error::/healthz never returned 200"; exit 1; }
+
+  iac:
+    name: Bicep compile (offline — no Azure auth)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Bicep
+        run: az bicep install
+      # No `az login` in this job, by design: compiling Bicep needs no credentials, and
+      # CI must never make a real cloud call.
+      - name: Compile templates (linter rules are errors via infra/azure/bicepconfig.json)
+        run: az bicep build --file infra/azure/main.bicep --stdout > /dev/null
+
+  kusto-contracts:
+    name: Kusto contract tests (ADX emulator)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    needs: build-test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', 'Directory.Build.props') }}
+          restore-keys: |
+            nuget-${{ runner.os }}-
+
+      # Compile coverage is NEVER skipped: the conditional runner must build on every PR.
+      - name: Build contracts project with the Kusto runner enabled
+        run: >
+          dotnet build tests/TelemetryGuard.Tests.Contracts/TelemetryGuard.Tests.Contracts.csproj
+          -c Release -p:KustoContracts=true
+
+      # The emulator image is large and occasionally unavailable; a PULL failure SKIPS
+      # the run with a warning instead of failing CI (P2-05 clean-skip rule).
+      - name: Pull the Kusto emulator image (preflight)
+        id: emulator
+        run: |
+          if docker pull mcr.microsoft.com/azuredataexplorer/kustainer-linux:latest; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Kusto emulator image unavailable — Kusto contract tests skipped for this run."
+          fi
+
+      - name: Kusto contract tests
+        if: steps.emulator.outputs.available == 'true'
+        run: >
+          dotnet test tests/TelemetryGuard.Tests.Contracts/TelemetryGuard.Tests.Contracts.csproj
+          -c Release --no-build -p:KustoContracts=true
+          --filter "provider=kusto"
+          --logger "trx;LogFileName=kusto-contracts.trx"
+          --results-directory TestResults
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kusto-contract-test-results
+          path: TestResults/*.trx
+          if-no-files-found: ignore

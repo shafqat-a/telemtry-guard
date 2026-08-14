@@ -105,4 +105,18 @@ public sealed class RollupServiceTests
         Assert.Equal(210, row.ScoreSum);
         Assert.Equal(5, row.Events);     // scored (verdict) events, NOT TotalEvents
     }
+
+    // ------------------------------------------------------- P2-01: NormalizeHost =
+
+    [Theory]
+    [InlineData("https://WWW.Example.COM/path?q=1", "example.com")]
+    [InlineData("example.com:8443", "example.com")]
+    [InlineData("www.www.example.com", "www.example.com")] // only ONE leading label stripped
+    [InlineData(null, "")]
+    [InlineData("", "")]
+    [InlineData("   ", "")]
+    public void NormalizeHost_ProducesExpectedHost(string? input, string expected)
+    {
+        Assert.Equal(expected, RollupService.NormalizeHost(input));
+    }
 }

@@ -65,4 +65,32 @@ public static class Migrations
             return 1;
         }
     }
+
+    /// <summary>Delegates Kusto schema application to P2-05's KustoSchemaMigrator
+    /// (single journal: tg_schema_migrations). Constructs the options + executor
+    /// directly — this console has no DI container.</summary>
+    public static async Task<int> RunKustoAsync(string connectionString, string database, bool enableStreaming)
+    {
+        try
+        {
+            var options = Microsoft.Extensions.Options.Options.Create(
+                new TelemetryGuard.Analytics.Kusto.KustoAnalyticsOptions
+                {
+                    ConnectionString = connectionString,
+                    Database = database
+                });
+            var executor = new TelemetryGuard.Analytics.Kusto.KustoQueryExecutor(
+                options, Microsoft.Extensions.Logging.Abstractions.NullLogger<TelemetryGuard.Analytics.Kusto.KustoQueryExecutor>.Instance);
+            var applied = await new TelemetryGuard.Analytics.Kusto
+                .KustoSchemaMigrator(executor).ApplyAsync(enableStreaming);
+            foreach (var name in applied) Console.WriteLine($"Applied Kusto script {name}");
+            Console.WriteLine("Kusto schema up to date.");
+            return 0;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine(ex);
+            return 1;
+        }
+    }
 }

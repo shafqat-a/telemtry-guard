@@ -352,4 +352,235 @@ public abstract class AnalyticsContractTests<TFixture>(TFixture fx) : IClassFixt
         var count = await EventuallyAsync(() => fx.CountLabelsAsync(TenantA), c => c >= 1);
         Assert.True(count >= 1, "label row must become visible within the 5 s eventual-delivery window");
     }
+
+    // ---------------------------------------------------- P2-01: placements =
+
+    [Fact]
+    public async Task TopPlacements_AttributesVerdictsToTheSessionsCaptureReferrer()
+    {
+        var day = Today.AddDays(-45);
+        var range = new DateRange(day, day.AddDays(1));
+        var ip = UniqueIpv4();
+        var session = Unique("s");
+
+        await WriteAsync(
+            TestEvents.Create(TenantA, ip, session,
+                referrer: "https://www.Pub-One.example/a", timestampUtc: day.AddHours(8)),
+            TestEvents.Verdict(TenantA, ip, session, 90, VerdictBands.Block, timestampUtc: day.AddHours(9)));
+
+        var queries = fx.CreateQueries(TenantA);
+        var placements = await EventuallyAsync(
+            () => queries.GetTopPlacementsDailyAsync(range, 10, Ct),
+            r => r.Count == 1);
+
+        var bucket = Assert.Single(placements);
+        Assert.Equal("pub-one.example", bucket.Placement);
+        Assert.Equal(1, bucket.ScoredEvents);
+        Assert.Equal(1, bucket.Blocked);
+        Assert.Equal(90, bucket.ScoreSum);
+        Assert.Equal(90.0, bucket.AvgScore, 0.01);
+    }
+
+    [Fact]
+    public async Task TopPlacements_SessionWithoutReferrer_ProducesNoBucket()
+    {
+        var day = Today.AddDays(-49);
+        var range = new DateRange(day, day.AddDays(1));
+        var ip = UniqueIpv4();
+        var noReferrerSession = Unique("s");
+        var publisherSession = Unique("s");
+
+        await WriteAsync(
+            // No referrer on the capture row -> the verdict must produce NO bucket
+            // at all, never a '' bucket (§7).
+            TestEvents.Create(TenantA, ip, noReferrerSession, referrer: null, timestampUtc: day.AddHours(8)),
+            TestEvents.Verdict(TenantA, ip, noReferrerSession, 50, VerdictBands.Challenge, timestampUtc: day.AddHours(9)),
+            // A second, real publisher session in the same window.
+            TestEvents.Create(TenantA, ip, publisherSession,
+                referrer: "https://pub-two.example/x", timestampUtc: day.AddHours(10)),
+            TestEvents.Verdict(TenantA, ip, publisherSession, 20, VerdictBands.Allow, timestampUtc: day.AddHours(11)));
+
+        var queries = fx.CreateQueries(TenantA);
+        var placements = await EventuallyAsync(
+            () => queries.GetTopPlacementsDailyAsync(range, 10, Ct),
+            r => r.Count == 1);
+
+        var bucket = Assert.Single(placements);
+        Assert.Equal("pub-two.example", bucket.Placement);
+        Assert.Equal(1, bucket.ScoredEvents);
+    }
+
+    [Fact]
+    public async Task TopPlacements_RanksAndLimitsPerDay()
+    {
+        var day1 = Today.AddDays(-55);
+        var day2 = day1.AddDays(1);
+        var range = new DateRange(day1, day2.AddDays(1));
+        var ip = UniqueIpv4();
+
+        var placementA = $"pub-a-{Guid.NewGuid():N}.example"; // 3 verdicts/day -> rank 1
+        var placementB = $"pub-b-{Guid.NewGuid():N}.example"; // 2 verdicts/day -> rank 2
+        var placementC = $"pub-c-{Guid.NewGuid():N}.example"; // 1 verdict/day  -> rank 3 (dropped by limit)
+
+        var events = new List<ClickEvent>();
+        void SeedPlacement(DateTime day, string placement, int count)
+        {
+            for (var i = 0; i < count; i++)
+            {
+                var session = Unique("s");
+                events.Add(TestEvents.Create(TenantA, ip, session,
+                    referrer: $"https://{placement}/", timestampUtc: day.AddHours(1 + i)));
+                events.Add(TestEvents.Verdict(TenantA, ip, session, 40, VerdictBands.Challenge,
+                    timestampUtc: day.AddHours(2 + i)));
+            }
+        }
+        foreach (var day in new[] { day1, day2 })
+        {
+            SeedPlacement(day, placementA, 3);
+            SeedPlacement(day, placementB, 2);
+            SeedPlacement(day, placementC, 1);
+        }
+        await WriteAsync(events.ToArray());
+
+        var queries = fx.CreateQueries(TenantA);
+        var placements = await EventuallyAsync(
+            () => queries.GetTopPlacementsDailyAsync(range, 2, Ct),
+            r => r.Count == 4);
+
+        Assert.Equal(4, placements.Count); // top 2 PER DAY, not top 2 overall
+        Assert.DoesNotContain(placements, p => p.Placement == placementC);
+
+        foreach (var day in new[] { DateOnly.FromDateTime(day1), DateOnly.FromDateTime(day2) })
+        {
+            var dayRows = placements.Where(p => p.Day == day).ToList();
+            Assert.Equal(2, dayRows.Count);
+            Assert.Equal(placementA, dayRows[0].Placement);
+            Assert.Equal(3, dayRows[0].ScoredEvents);
+            Assert.Equal(placementB, dayRows[1].Placement);
+            Assert.Equal(2, dayRows[1].ScoredEvents);
+        }
+    }
+
+    [Fact]
+    public async Task TopPlacements_CaptureRowOnPreviousDay_StillAttributed()
+    {
+        var day = Today.AddDays(-61); // UTC midnight
+        var range = new DateRange(day, day.AddDays(1));
+        var ip = UniqueIpv4();
+        var session = Unique("s");
+
+        await WriteAsync(
+            // 5s BEFORE the range start (previous UTC day) — inside SessionJoinLookbehind (1h).
+            TestEvents.Create(TenantA, ip, session,
+                referrer: "https://cross-day-pub.example/", timestampUtc: day.AddSeconds(-5)),
+            TestEvents.Verdict(TenantA, ip, session, 60, VerdictBands.Challenge, timestampUtc: day.AddSeconds(5)));
+
+        var queries = fx.CreateQueries(TenantA);
+        var placements = await EventuallyAsync(
+            () => queries.GetTopPlacementsDailyAsync(range, 10, Ct),
+            r => r.Count == 1);
+
+        var bucket = Assert.Single(placements);
+        Assert.Equal("cross-day-pub.example", bucket.Placement);
+        Assert.Equal(DateOnly.FromDateTime(day), bucket.Day); // attributed to the VERDICT's day
+        Assert.Equal(1, bucket.ScoredEvents);
+    }
+
+    [Fact]
+    public async Task TopPlacements_TenantIsolation_SameSessionIdAndReferrer()
+    {
+        var day = Today.AddDays(-67);
+        var range = new DateRange(day, day.AddDays(1));
+        var ip = UniqueIpv4();
+        var sharedSession = Unique("s"); // SAME session id on both tenants
+        const string referrer = "https://shared-pub.example/";
+
+        await WriteAsync(
+            TestEvents.Create(TenantA, ip, sharedSession, referrer: referrer, timestampUtc: day.AddHours(8)),
+            TestEvents.Verdict(TenantA, ip, sharedSession, 80, VerdictBands.Block, timestampUtc: day.AddHours(9)),
+            TestEvents.Create(TenantB, ip, sharedSession, referrer: referrer, timestampUtc: day.AddHours(8)),
+            TestEvents.Verdict(TenantB, ip, sharedSession, 40, VerdictBands.Challenge, timestampUtc: day.AddHours(9)),
+            TestEvents.Verdict(TenantB, ip, sharedSession, 45, VerdictBands.Challenge, timestampUtc: day.AddHours(10)));
+
+        var qa = fx.CreateQueries(TenantA);
+        var qb = fx.CreateQueries(TenantB);
+
+        var pa = await EventuallyAsync(() => qa.GetTopPlacementsDailyAsync(range, 10, Ct), r => r.Count == 1);
+        var pb = await EventuallyAsync(() => qb.GetTopPlacementsDailyAsync(range, 10, Ct), r => r.Count == 1);
+
+        var ba = Assert.Single(pa);
+        Assert.Equal("shared-pub.example", ba.Placement);
+        Assert.Equal(1, ba.ScoredEvents); // tenant A's ONE verdict only
+        Assert.Equal(80, ba.ScoreSum);
+
+        var bb = Assert.Single(pb);
+        Assert.Equal("shared-pub.example", bb.Placement);
+        Assert.Equal(2, bb.ScoredEvents); // tenant B's TWO verdicts only
+        Assert.Equal(85, bb.ScoreSum);
+    }
+
+    // ------------------------------------------------------- P2-01: sites =
+
+    [Fact]
+    public async Task SiteDailyCounts_AggregatesPerSiteKeyAndDay()
+    {
+        var day = Today.AddDays(-73);
+        var range = new DateRange(day, day.AddDays(1));
+        var ip = UniqueIpv4();
+        var siteX = Unique("site");
+        var siteY = Unique("site");
+
+        await WriteAsync(
+            TestEvents.Create(TenantA, ip, Unique("s"), siteKey: siteX, timestampUtc: day.AddHours(8)),
+            TestEvents.Create(TenantA, ip, Unique("s"), siteKey: siteX, kind: EventKind.Pixel, timestampUtc: day.AddHours(9)),
+            TestEvents.Verdict(TenantA, ip, Unique("s"), 20, VerdictBands.Allow, siteKey: siteX, timestampUtc: day.AddHours(10)),
+            TestEvents.Create(TenantA, ip, Unique("s"), siteKey: siteY, timestampUtc: day.AddHours(8)),
+            TestEvents.Verdict(TenantA, ip, Unique("s"), 90, VerdictBands.Block, siteKey: siteY, timestampUtc: day.AddHours(9)),
+            TestEvents.Verdict(TenantA, ip, Unique("s"), 10, VerdictBands.Allow, siteKey: siteY, timestampUtc: day.AddHours(10)));
+
+        var queries = fx.CreateQueries(TenantA);
+        var sites = await EventuallyAsync(
+            () => queries.GetSiteDailyCountsAsync(range, Ct),
+            r => r.Count == 2);
+
+        Assert.Equal(2, sites.Count);
+        var x = Assert.Single(sites, s => s.SiteKey == siteX);
+        Assert.Equal(3, x.TotalEvents);  // tracker + pixel + verdict
+        Assert.Equal(1, x.ScoredEvents); // verdict only
+        Assert.Equal(1, x.Allowed);
+        Assert.Equal(20, x.ScoreSum);
+
+        var y = Assert.Single(sites, s => s.SiteKey == siteY);
+        Assert.Equal(3, y.TotalEvents);  // tracker + 2 verdicts
+        Assert.Equal(2, y.ScoredEvents);
+        Assert.Equal(1, y.Allowed);
+        Assert.Equal(1, y.Blocked);
+        Assert.Equal(100, y.ScoreSum);
+    }
+
+    [Fact]
+    public async Task SiteDailyCounts_NoScoredEvents_AvgScoreIsNaN()
+    {
+        var day = Today.AddDays(-79);
+        var range = new DateRange(day, day.AddDays(1));
+        var ip = UniqueIpv4();
+        var site = Unique("site");
+
+        await WriteAsync(
+            TestEvents.Create(TenantA, ip, Unique("s"), siteKey: site, timestampUtc: day.AddHours(8)),
+            TestEvents.Create(TenantA, ip, Unique("s"), siteKey: site, kind: EventKind.Pixel, timestampUtc: day.AddHours(9)));
+
+        var queries = fx.CreateQueries(TenantA);
+        var sites = await EventuallyAsync(
+            () => queries.GetSiteDailyCountsAsync(range, Ct),
+            r => r.Count == 1);
+
+        var s = Assert.Single(sites);
+        Assert.Equal(site, s.SiteKey);
+        Assert.Equal(2, s.TotalEvents);
+        Assert.Equal(0, s.ScoredEvents);
+        Assert.Equal(0, s.ScoreSum);
+        Assert.True(double.IsNaN(s.AvgScore),
+            $"AvgScore must be NaN with no scored events, was {s.AvgScore}");
+    }
 }

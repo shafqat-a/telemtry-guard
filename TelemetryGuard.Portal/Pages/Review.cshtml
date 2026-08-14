@@ -1,0 +1,88 @@
+@page "/review"
+@model TelemetryGuard.Portal.Pages.ReviewModel
+@{
+    ViewData["Title"] = "Review & override";
+}
+
+<h1>Review &amp; override</h1>
+
+@if (Model.Message is not null)
+{
+    <div class="panel-message">@Model.Message</div>
+}
+@if (Model.Error is not null)
+{
+    <div class="panel-error" role="alert">@Model.Error</div>
+}
+
+<section class="panel">
+    <form method="get" action="/review" class="tg-filter-form">
+        <label>
+            From
+            <input type="date" name="From" value="@Model.From?.ToString("yyyy-MM-dd")" />
+        </label>
+        <label>
+            To
+            <input type="date" name="To" value="@Model.To?.ToString("yyyy-MM-dd")" />
+        </label>
+        <label>
+            Limit
+            <input type="number" name="Limit" min="1" max="1000" value="@Model.Limit" />
+        </label>
+        <button type="submit">Update</button>
+    </form>
+
+    @if (Model.FlaggedResult?.Error is not null)
+    {
+        <div class="panel-error" role="alert">@Model.FlaggedResult.Error</div>
+    }
+    else if (Model.FlaggedResult?.Value is { } report)
+    {
+        <table>
+            <thead>
+                <tr>
+                    <th>Date</th><th>Source type</th><th>Value</th>
+                    <th>Flagged</th><th>Blocked</th><th>Score sum</th><th>Override</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var row in report.Sources)
+                {
+                    <tr>
+                        <td>@row.Date.ToString("yyyy-MM-dd")</td>
+                        <td>@row.SourceType</td>
+                        <td>@row.Value</td>
+                        <td>@row.FlaggedCount</td>
+                        <td>@row.BlockedCount</td>
+                        <td>@row.ScoreSum</td>
+                        <td>
+                            @if (row.SourceType == "placement")
+                            {
+                                <span class="tg-note">Not whitelistable — reject in the approval queue.</span>
+                            }
+                            else
+                            {
+                                <form method="post" asp-page-handler="Override">
+                                    @Html.AntiForgeryToken()
+                                    <input type="hidden" name="sourceType" value="@row.SourceType" />
+                                    <input type="hidden" name="value" value="@row.Value" />
+                                    <input type="text" name="sessionId" placeholder="session id (optional)" />
+                                    <input type="text" name="reason" value="Marked real customer in portal review" />
+                                    <button type="submit">Mark as real customer</button>
+                                </form>
+                            }
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+
+    <p class="tg-note">Whitelisting prevents future challenges and blocks for this source. It does
+        not rewrite past verdicts (verdicts are immutable records) and does not remove an exclusion
+        already pushed to Google Ads or Meta — for a pending exclusion, reject it in the approval queue.</p>
+    <p class="tg-note">Review is per source and per day. Individual events are not shown here: raw
+        events live in the event store, which the portal deliberately never queries.</p>
+    <p class="tg-note">Score sum is shown raw; no average is computed because the number of scored
+        events for a source is not stored on this table.</p>
+</section>
