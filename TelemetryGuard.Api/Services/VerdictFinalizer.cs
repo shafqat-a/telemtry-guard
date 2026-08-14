@@ -1,5 +1,6 @@
 namespace TelemetryGuard.Api.Services;
 
+using System.Text.Json;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -136,9 +137,17 @@ public sealed class VerdictFinalizer(
         var retentionDays = (ushort)(tenantRecord?.RetentionDays ?? retentionOptions.Value.DefaultDays);
 
         // ---- Step 5: verdict event (D18/D20 stamps). Sink call is an enqueue only —
-        // never await ClickHouse round trips on the finalize path (spec §4). ----
+        // never await ClickHouse round trips on the finalize path (spec §4).
+        // RSK-08: `features` is the JSON-serialized FraudFeatureVector captured at
+        // scoring time (null/"" on the whitelist short-circuit — extraction never ran)
+        // so the offline trainer can rebuild MlFeatureRow later; shadow_score/
+        // shadow_scorer_version are D18 listen-only fields, populated only when a
+        // shadow scorer ran (never on whitelisted sessions). ----
         try
         {
+            var featuresJson = outcome.Features is { } vector
+                ? JsonSerializer.Serialize(vector, FraudFeatureVectorJson.Options)
+                : "";
             var evt = new ClickEvent
             {
                 TenantId = tenantId,
@@ -155,6 +164,9 @@ public sealed class VerdictFinalizer(
                 FeatureSetVersion = result.FeatureSetVersion,
                 RetentionDays = retentionDays,
                 TimestampUtc = clock.UtcNow.UtcDateTime,
+                Features = featuresJson,
+                ShadowScore = outcome.ShadowScore,
+                ShadowScorerVersion = outcome.ShadowScorerVersion,
             };
             await sink.WriteBatchAsync(new[] { evt }, ct).ConfigureAwait(false);
         }
@@ -189,10 +201,12 @@ public sealed class VerdictFinalizer(
                         if (campaignRecord is not null) platform = campaignRecord.Platform;
                     }
 
-                    // TODO(INT-02): ApprovalQueue flow (tenant approval + notifications)
-                    // lands in INT-02; AutoEnforce (default) enqueues straight to
-                    // 'approved' for INT-03/INT-04 sync pickup.
-                    var status = tenantRecord?.EnforcementMode == 1 ? "pending" : "approved";
+                    // Approval flow implemented by INT-02: /admin/enforcement endpoints
+                    // transition pending->approved|rejected. AutoEnforce (default)
+                    // enqueues straight to 'approved' for INT-03/INT-04 sync pickup.
+                    var status = tenantRecord?.EnforcementMode == 1
+                        ? ExclusionStatuses.Pending
+                        : ExclusionStatuses.Approved;
                     await exclusions.EnqueueAsync(new ExclusionQueueInsert(
                         platform, "ip", ip,
                         $"score={result.Score} rules={string.Join('|', result.RuleHits)}",

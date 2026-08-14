@@ -7,7 +7,8 @@ using TelemetryGuard.Core.Tenancy;
 namespace TelemetryGuard.Tests.Unit.Analytics;
 
 /// <summary>
-/// ANA-03: MapRow must mirror the tg_events column order (68 columns) and
+/// ANA-03: MapRow must mirror the tg_events column order (68 base columns + 3 RSK-08
+/// training/listen-only columns appended by 0002_training_and_shadow.sql) and
 /// preserve null semantics — NaN stays NaN, bool? maps to (byte)1/(byte)0/null.
 /// </summary>
 public sealed class ClickHouseEventSinkMapRowTests
@@ -31,25 +32,50 @@ public sealed class ClickHouseEventSinkMapRowTests
     };
 
     [Fact]
-    public void ColumnNames_HasAll68Columns_InContractOrder()
+    public void ColumnNames_HasAll71Columns_InContractOrder()
     {
-        Assert.Equal(68, ClickHouseEventSink.ColumnNames.Length);
+        Assert.Equal(71, ClickHouseEventSink.ColumnNames.Length);
         Assert.Equal(0, Array.IndexOf(ClickHouseEventSink.ColumnNames, "tenant_id"));
         Assert.Equal(66, Array.IndexOf(ClickHouseEventSink.ColumnNames, "retention_days"));
         Assert.Equal(67, Array.IndexOf(ClickHouseEventSink.ColumnNames, "timestamp"));
+        // RSK-08: appended at the end (bulk-copy ColumnNames is an explicit
+        // name/order whitelist, independent of the table's physical column order).
+        Assert.Equal(68, Array.IndexOf(ClickHouseEventSink.ColumnNames, "features"));
+        Assert.Equal(69, Array.IndexOf(ClickHouseEventSink.ColumnNames, "shadow_score"));
+        Assert.Equal(70, Array.IndexOf(ClickHouseEventSink.ColumnNames, "shadow_scorer_version"));
     }
 
     [Fact]
-    public void MapRow_Produces68Values_MatchingColumnOrder()
+    public void MapRow_Produces71Values_MatchingColumnOrder()
     {
         var row = ClickHouseEventSink.MapRow(SampleEvent());
 
-        Assert.Equal(68, row.Length);
+        Assert.Equal(71, row.Length);
         Assert.Equal(TenantGuid, row[0]);                 // tenant_id
         Assert.Equal("tracker", row[3]);                  // kind wire string
         Assert.Equal((ushort)90, row[66]);                // retention_days
         Assert.Equal(Stamp, row[67]);                     // timestamp
         Assert.Equal(DateTimeKind.Utc, ((DateTime)row[67]!).Kind);
+        Assert.Equal("", row[68]);                        // features: default "" when unset
+        Assert.Null(row[69]);                             // shadow_score: null when no shadow scorer ran
+        Assert.Equal("", row[70]);                         // shadow_scorer_version: default ""
+    }
+
+    [Fact]
+    public void MapRow_RSK08Fields_FlowVerbatim_WhenPopulated()
+    {
+        var evt = SampleEvent() with
+        {
+            Features = """{"HasJsBeacon":true}""",
+            ShadowScore = 42,
+            ShadowScorerVersion = "lgbm-20260915-a1b2c3d4",
+        };
+
+        var row = ClickHouseEventSink.MapRow(evt);
+
+        Assert.Equal("""{"HasJsBeacon":true}""", row[68]);
+        Assert.Equal((short)42, row[69]);
+        Assert.Equal("lgbm-20260915-a1b2c3d4", row[70]);
     }
 
     [Fact]

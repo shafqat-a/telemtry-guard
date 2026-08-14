@@ -5,6 +5,7 @@ using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Primitives;
 using StackExchange.Redis;
 using TelemetryGuard.Analytics.Abstractions;
+using TelemetryGuard.Api.Edge;
 using TelemetryGuard.Api.Options;
 using TelemetryGuard.Core.Tenancy;
 using TelemetryGuard.Core.Time;
@@ -56,7 +57,8 @@ public static partial class PixelEndpoints
         HttpContext ctx, ITenantContext tenant, IEventSink sink,
         IConnectionMultiplexer redis, IClock clock, IMemoryCache cache,
         ITenantRepository tenants, IOptions<TrackerOptions> trackerOpts,
-        IOptions<RetentionOptions> retentionOpts, ILoggerFactory loggerFactory,
+        IOptions<RetentionOptions> retentionOpts, IEdgeSignalReader edgeSignals,
+        ILoggerFactory loggerFactory,
         CancellationToken ct)
     {
         var opts = trackerOpts.Value;
@@ -106,6 +108,12 @@ public static partial class PixelEndpoints
         var referrer = NullIfEmpty(ctx.Request.Headers.Referer);
         var siteKey = tenant.SiteKey ?? ctx.Request.Query["k"].ToString();
 
+        // 2b. INT-05: Cloudflare edge signals (X-TG-*) — see API-02 step 4b for the
+        //     gating/spoof-defense contract. tls_fp mirrors the tracker's contract
+        //     field for RSK-04 (JA3 wins, JA4 fallback).
+        var edge = edgeSignals.Read(ctx);
+        var tlsFp = edge.Ja3 ?? edge.Ja4;
+
         // Steps 3–6 must never break the response: capture may be lost to
         // analytics on a Redis/sink/SQL hiccup, but the GIF is always served.
         try
@@ -143,6 +151,13 @@ public static partial class PixelEndpoints
                     new("referrer", referrer ?? ""),
                     new("header_order", headerOrder),
                     new("site_key", siteKey),
+                    // INT-05: RSK-04's actual TlsUaMismatch contract field.
+                    new("tls_fp", tlsFp ?? ""),
+                    // INT-05: forward-compat extras (no current reader; empty = absent).
+                    new("tls_ja3", edge.Ja3 ?? ""),
+                    new("tls_ja4", edge.Ja4 ?? ""),
+                    new("cf_asn", edge.Asn?.ToString() ?? ""),
+                    new("cf_bot_score", edge.BotScore?.ToString() ?? ""),
                 };
                 await db.HashSetAsync(clickKey, fields);
                 await db.KeyExpireAsync(clickKey, TimeSpan.FromSeconds(opts.SessionTtlSeconds));
@@ -183,6 +198,9 @@ public static partial class PixelEndpoints
                 SecChUaPlatform = chPlatform,
                 AcceptLanguage = acceptLanguage,
                 Referrer = referrer,
+                TlsJa3 = edge.Ja3,              // INT-05: null unless Cloudflare-fronted (D13)
+                TlsJa4 = edge.Ja4,
+                CfAsn = edge.Asn,
                 HasJsBeacon = false,           // pixel path: SDK features stay NaN/null (missing != zero)
                 RetentionDays = retentionDays,
                 TimestampUtc = now.UtcDateTime,

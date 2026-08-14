@@ -214,7 +214,8 @@ public sealed class PixelEndpointTests
         public readonly RedisHarness Redis;
         public readonly FakeClock Clock = new();
 
-        public PixelApp(bool redisDown = false)
+        public PixelApp(
+            bool redisDown = false, Dictionary<string, string?>? settings = null, IPAddress? remoteIp = null)
         {
             Redis = new RedisHarness(redisDown);
             Velocity.Down = redisDown;
@@ -230,6 +231,8 @@ public sealed class PixelEndpointTests
                     ["ConnectionStrings:Redis"] = "localhost:1,connectTimeout=250,abortConnect=false",
                     ["Analytics:ClickHouse:ConnectionString"] = "Host=localhost;Port=1;Database=telemetry_guard",
                 };
+                if (settings is not null)
+                    foreach (var (k, v) in settings) overrides[k] = v;
                 foreach (var (k, v) in overrides)
                     b.UseSetting(k, v);
                 b.ConfigureTestServices(services =>
@@ -246,7 +249,7 @@ public sealed class PixelEndpointTests
                     services.AddSingleton(Redis.Mux);
                     services.RemoveAll<IClock>();
                     services.AddSingleton<IClock>(Clock);
-                    services.AddSingleton<IStartupFilter>(new RemoteIpStartupFilter(RemoteIp));
+                    services.AddSingleton<IStartupFilter>(new RemoteIpStartupFilter(remoteIp ?? RemoteIp));
                 });
             });
         }
@@ -527,6 +530,60 @@ public sealed class PixelEndpointTests
         Assert.Empty(app.Redis.Expires);                     // and no TTL reset on the tracker's hash
         Assert.Single(app.Sink.Events);                      // the pixel event still flows to the sink
         Assert.Single(app.Redis.SortedSetAdds);              // and the grace NX attempt still happens
+    }
+
+    /// <summary>INT-05: with Edge:Provider=Cloudflare and a Cloudflare-range direct
+    /// peer, the pixel's own click-context write (kind=pixel, no preexisting hash)
+    /// carries RSK-04's tls_fp contract field plus the forward-compat extras, and the
+    /// emitted ClickEvent carries TlsJa3/TlsJa4/CfAsn.</summary>
+    [Fact]
+    public async Task EdgeSignals_Present_WhenCloudflareFrontedFromCloudflarePeer_PopulatesClickContextAndEvent()
+    {
+        using var app = new PixelApp(
+            settings: new() { ["Edge:Provider"] = "Cloudflare" },
+            remoteIp: IPAddress.Parse("104.16.1.1"));
+        using var client = app.Client();
+
+        await client.SendAsync(Get($"/p.gif?k={SiteKey}",
+            ("X-TG-JA3", "cd08e31494f9531f560d64c695473da9"),
+            ("X-TG-ASN", "13335")));
+
+        var hash = Assert.Single(app.Redis.Hashes);
+        var fields = hash.Entries.ToDictionary(e => e.Name.ToString(), e => e.Value.ToString());
+        Assert.Equal("cd08e31494f9531f560d64c695473da9", fields["tls_fp"]);
+        Assert.Equal("cd08e31494f9531f560d64c695473da9", fields["tls_ja3"]);
+        Assert.Equal("13335", fields["cf_asn"]);
+
+        var evt = Assert.Single(app.Sink.Events);
+        Assert.Equal("cd08e31494f9531f560d64c695473da9", evt.TlsJa3);
+        Assert.Equal(13335u, evt.CfAsn);
+    }
+
+    /// <summary>The non-clobber rule (kind=tracker already present -> skip the ENTIRE
+    /// hash write, INT-05 pre-flight note) applies to the tls_* fields exactly like
+    /// every other field — no second HashSet call sneaks them in. The pixel's own
+    /// ClickEvent still records what ITS OWN request's edge signals were, independent
+    /// of the hash.</summary>
+    [Fact]
+    public async Task EdgeSignals_PreseededTrackerContext_HashWriteStillSkipped_EventStillPopulated()
+    {
+        using var app = new PixelApp(
+            settings: new() { ["Edge:Provider"] = "Cloudflare" },
+            remoteIp: IPAddress.Parse("104.16.1.1"));
+        using var client = app.Client();
+        const string sid = "0123456789abcdef0123456789abcdef";
+        app.Redis.PreseededKinds[$"t:{Tid}:click:{sid}"] = "tracker";
+
+        var resp = await client.SendAsync(Get($"/p.gif?k={SiteKey}&tg_sid={sid}",
+            ("X-TG-JA3", "cd08e31494f9531f560d64c695473da9"),
+            ("X-TG-ASN", "13335")));
+
+        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+        Assert.Empty(app.Redis.Hashes); // kind=tracker preserved — no second HashSet, tls_* included
+
+        var evt = Assert.Single(app.Sink.Events);
+        Assert.Equal("cd08e31494f9531f560d64c695473da9", evt.TlsJa3);
+        Assert.Equal(13335u, evt.CfAsn);
     }
 
     [Fact]

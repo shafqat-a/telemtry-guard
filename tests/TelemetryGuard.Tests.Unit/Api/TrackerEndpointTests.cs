@@ -225,7 +225,8 @@ public sealed class TrackerEndpointTests
         public readonly FakeClock Clock = new();
         public readonly FakeCampaignRepository Campaigns = new();
 
-        public TrackerApp(Dictionary<string, string?>? settings = null, bool redisDown = false)
+        public TrackerApp(
+            Dictionary<string, string?>? settings = null, bool redisDown = false, IPAddress? remoteIp = null)
         {
             Redis = new RedisHarness(redisDown);
             Velocity.Down = redisDown;
@@ -263,7 +264,7 @@ public sealed class TrackerEndpointTests
                     services.AddSingleton(Redis.Mux);
                     services.RemoveAll<IClock>();
                     services.AddSingleton<IClock>(Clock);
-                    services.AddSingleton<IStartupFilter>(new RemoteIpStartupFilter(RemoteIp));
+                    services.AddSingleton<IStartupFilter>(new RemoteIpStartupFilter(remoteIp ?? RemoteIp));
                 });
             });
         }
@@ -494,6 +495,101 @@ public sealed class TrackerEndpointTests
         Assert.InRange(evt.RetentionDays, (ushort)30, (ushort)180);
         Assert.Equal(DateTimeKind.Utc, evt.TimestampUtc.Kind);
         Assert.Equal(FixedNow.UtcDateTime, evt.TimestampUtc);
+    }
+
+    /// <summary>INT-05, absent case: no Cloudflare fronting (default Edge:Provider=
+    /// None) — even from a would-be Cloudflare-range peer with spoofed X-TG-* headers,
+    /// nothing lands in the click-context hash or the ClickEvent (missing ≠ zero: the
+    /// hash fields are "", never "0"/fabricated; the event fields are null).</summary>
+    [Fact]
+    public async Task EdgeSignals_Absent_WhenNotCloudflareFronted_ClickContextAndEventStayNull()
+    {
+        using var app = new TrackerApp(remoteIp: IPAddress.Parse("104.16.1.1")); // a real CF address
+        using var client = app.Client();
+
+        var resp = await client.SendAsync(Get(
+            $"/c?k={SiteKey}&cid={ActiveCampaign:D}&gclid=cf-off",
+            ("X-TG-JA3", "cd08e31494f9531f560d64c695473da9"),
+            ("X-TG-JA4", "t13d1516h2_8daaf6152771_02713d6af862"),
+            ("X-TG-ASN", "13335"),
+            ("X-TG-Bot-Score", "10")));
+        Assert.Equal(HttpStatusCode.Found, resp.StatusCode);
+
+        var hash = Assert.Single(app.Redis.Hashes);
+        var fields = hash.Entries.ToDictionary(e => e.Name.ToString(), e => e.Value.ToString());
+        Assert.Equal("", fields["tls_fp"]);
+        Assert.Equal("", fields["tls_ja3"]);
+        Assert.Equal("", fields["tls_ja4"]);
+        Assert.Equal("", fields["cf_asn"]);
+        Assert.Equal("", fields["cf_bot_score"]);
+
+        var evt = Assert.Single(app.Sink.Events);
+        Assert.Null(evt.TlsJa3);
+        Assert.Null(evt.TlsJa4);
+        Assert.Null(evt.CfAsn);
+    }
+
+    /// <summary>INT-05, present case: Edge:Provider=Cloudflare AND the direct peer is a
+    /// Cloudflare address — the click-context hash gets RSK-04's actual contract field
+    /// (tls_fp, JA3-wins) plus the forward-compat extras, and the emitted ClickEvent
+    /// carries TlsJa3/TlsJa4/CfAsn (no CfBotScore column exists on ClickEvent v1 —
+    /// bot score is click-context-only, per the task's guardrail).</summary>
+    [Fact]
+    public async Task EdgeSignals_Present_WhenCloudflareFrontedFromCloudflarePeer_PopulatesClickContextAndEvent()
+    {
+        using var app = new TrackerApp(
+            settings: new() { ["Edge:Provider"] = "Cloudflare" },
+            remoteIp: IPAddress.Parse("104.16.1.1")); // inside embedded 104.16.0.0/13
+        using var client = app.Client();
+
+        var resp = await client.SendAsync(Get(
+            $"/c?k={SiteKey}&cid={ActiveCampaign:D}&gclid=cf-on",
+            ("X-TG-JA3", "cd08e31494f9531f560d64c695473da9"),
+            ("X-TG-JA4", "t13d1516h2_8daaf6152771_02713d6af862"),
+            ("X-TG-ASN", "13335"),
+            ("X-TG-Bot-Score", "10")));
+        Assert.Equal(HttpStatusCode.Found, resp.StatusCode);
+
+        var hash = Assert.Single(app.Redis.Hashes);
+        var fields = hash.Entries.ToDictionary(e => e.Name.ToString(), e => e.Value.ToString());
+        Assert.Equal("cd08e31494f9531f560d64c695473da9", fields["tls_fp"]);   // JA3 wins over JA4
+        Assert.Equal("cd08e31494f9531f560d64c695473da9", fields["tls_ja3"]);
+        Assert.Equal("t13d1516h2_8daaf6152771_02713d6af862", fields["tls_ja4"]);
+        Assert.Equal("13335", fields["cf_asn"]);
+        Assert.Equal("10", fields["cf_bot_score"]);
+
+        var evt = Assert.Single(app.Sink.Events);
+        Assert.Equal("cd08e31494f9531f560d64c695473da9", evt.TlsJa3);
+        Assert.Equal("t13d1516h2_8daaf6152771_02713d6af862", evt.TlsJa4);
+        Assert.Equal(13335u, evt.CfAsn);
+    }
+
+    /// <summary>Same as above but the peer is NOT Cloudflare — even with
+    /// Edge:Provider=Cloudflare configured, the spoof-defense peer check rejects the
+    /// headers (mirrors the INT-05 acceptance criterion "same headers from a
+    /// NON-Cloudflare peer → all signals null").</summary>
+    [Fact]
+    public async Task EdgeSignals_Present_ButPeerIsNotCloudflare_SpoofRejected()
+    {
+        using var app = new TrackerApp(
+            settings: new() { ["Edge:Provider"] = "Cloudflare" },
+            remoteIp: IPAddress.Parse("8.8.8.8"));
+        using var client = app.Client();
+
+        var resp = await client.SendAsync(Get(
+            $"/c?k={SiteKey}&cid={ActiveCampaign:D}&gclid=cf-spoof",
+            ("X-TG-JA3", "cd08e31494f9531f560d64c695473da9"),
+            ("X-TG-ASN", "13335")));
+        Assert.Equal(HttpStatusCode.Found, resp.StatusCode);
+
+        var hash = Assert.Single(app.Redis.Hashes);
+        var fields = hash.Entries.ToDictionary(e => e.Name.ToString(), e => e.Value.ToString());
+        Assert.Equal("", fields["tls_fp"]);
+        Assert.Equal("", fields["cf_asn"]);
+
+        var evt = Assert.Single(app.Sink.Events);
+        Assert.Null(evt.TlsJa3);
+        Assert.Null(evt.CfAsn);
     }
 
     [Fact]

@@ -15,6 +15,12 @@
     <PackageReference Include="Microsoft.Extensions.Options" Version="8.0.2" />
     <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" Version="8.0.0" />
     <PackageReference Include="StackExchange.Redis" Version="2.8.16" />
+    <!-- RSK-08 (Phase 1.5, D18): serving side of the LightGBM listen-only model —
+         PredictionEnginePool keeps inference in-process/pooled, sub-millisecond,
+         well inside the < 50 ms scoring budget (D3). No model-server sidecar. -->
+    <PackageReference Include="Microsoft.ML" Version="4.0.2" />
+    <PackageReference Include="Microsoft.ML.LightGbm" Version="4.0.2" />
+    <PackageReference Include="Microsoft.Extensions.ML" Version="4.0.2" />
   </ItemGroup>
 
   <PropertyGroup>

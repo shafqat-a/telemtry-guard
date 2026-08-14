@@ -33,6 +33,10 @@ public static class DataServiceCollectionExtensions
         // only ("API-06 (writer) owns its access path"); scoped like the repositories above.
         services.TryAddScoped<Repositories.IExclusionQueueRepository, Repositories.ExclusionQueueRepository>();
 
+        // INT-02 approval-queue read/transition path (pending -> approved | rejected)
+        // + dbo.EnforcementAudit — scoped like the repositories above.
+        services.TryAddScoped<Repositories.IEnforcementQueueRepository, Repositories.EnforcementQueueRepository>();
+
         // DAT-07 whitelist repository — scoped (scoped ITenantContext). Redis multiplexer:
         // registered only if the host has not already added one (RSK-03's AddVelocityStore
         // also TryAdds it — first registration wins, one multiplexer per process).

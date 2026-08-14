@@ -6,6 +6,12 @@
     <LangVersion>latest</LangVersion>
     <InvariantGlobalization>false</InvariantGlobalization>
   </PropertyGroup>
-  <!-- NOTE: Microsoft.ML / Microsoft.ML.LightGbm are Phase-1.5-only (task RSK-08, spec D18).
-       Do not add them before the label pipeline exists. -->
+  <!-- NOTE: Microsoft.ML / Microsoft.ML.LightGbm / Microsoft.Extensions.ML are now IN
+       SCOPE (RSK-08, Phase 1.5, spec D18) — the label pipeline (TelemetryGuard.Training)
+       and the listen-only LightGBM scorer (TelemetryGuard.RiskEngine's MlNetScorer,
+       behind PredictionEnginePool) both use them. The LightGBM trainer options type is
+       Microsoft.ML.Trainers.LightGbm.LightGbmBinaryTrainer.Options — NOT a top-level
+       LightGbmBinaryTrainerOptions type. The heuristic scorer (RSK-06) remains the sole
+       ENFORCING scorer at MVP/pilot; ML.NET only ships behind Scoring:Mode=ListenOnly
+       (log, never enforce) until a human promotes it via config (Scoring:Mode=Enforce). -->
 </Project>

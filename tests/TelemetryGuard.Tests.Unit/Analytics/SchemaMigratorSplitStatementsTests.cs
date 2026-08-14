@@ -18,16 +18,34 @@ public sealed class SchemaMigratorSplitStatementsTests
     }
 
     [Fact]
-    public void Embedded0001Script_IsTheOnlyEmbeddedSchemaScript()
+    public void EmbeddedSchemaScripts_ApplyInOrdinalNameOrder_0001ThenRsk08s0002()
     {
         var asm = typeof(SchemaMigrator).Assembly;
         var scripts = asm.GetManifestResourceNames()
             .Where(n => n.Contains(".schema.", StringComparison.Ordinal)
                      && n.EndsWith(".sql", StringComparison.OrdinalIgnoreCase))
+            .OrderBy(n => n, StringComparer.Ordinal)
             .ToList();
 
-        var name = Assert.Single(scripts);
-        Assert.EndsWith(".schema.0001_events.sql", name, StringComparison.Ordinal);
+        Assert.Equal(2, scripts.Count);
+        Assert.EndsWith(".schema.0001_events.sql", scripts[0], StringComparison.Ordinal);
+        Assert.EndsWith(".schema.0002_training_and_shadow.sql", scripts[1], StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Embedded0002Script_RSK08_OnlyAltersExistingTables_NeverRecreates()
+    {
+        var sql = ReadEmbeddedScript("0002_training_and_shadow.sql");
+
+        var statements = SchemaMigrator.SplitStatements(sql).ToList();
+
+        Assert.Equal(4, statements.Count);
+        // Leading comment lines with no semicolon of their own stay bundled with the
+        // statement that follows them (same SplitStatements behavior as 0001's
+        // header comment + CREATE TABLE) — assert Contains, not StartsWith.
+        Assert.All(statements, s => Assert.Contains("ALTER TABLE", s, StringComparison.Ordinal));
+        Assert.All(statements, s => Assert.Contains("ADD COLUMN IF NOT EXISTS", s, StringComparison.Ordinal));
+        Assert.DoesNotContain(statements, s => s.Contains("CREATE TABLE", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -67,11 +85,13 @@ public sealed class SchemaMigratorSplitStatementsTests
         Assert.Equal("SELECT 1", only);
     }
 
-    private static string ReadEmbedded0001Script()
+    private static string ReadEmbedded0001Script() => ReadEmbeddedScript("0001_events.sql");
+
+    private static string ReadEmbeddedScript(string fileName)
     {
         var asm = typeof(SchemaMigrator).Assembly;
         var resource = asm.GetManifestResourceNames()
-            .Single(n => n.EndsWith(".schema.0001_events.sql", StringComparison.Ordinal));
+            .Single(n => n.EndsWith($".schema.{fileName}", StringComparison.Ordinal));
         using var stream = asm.GetManifestResourceStream(resource)
             ?? throw new InvalidOperationException($"Missing embedded resource {resource}");
         using var reader = new StreamReader(stream);

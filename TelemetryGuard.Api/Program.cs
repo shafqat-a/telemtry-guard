@@ -17,6 +17,7 @@ using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 using StackExchange.Redis;
 using TelemetryGuard.Analytics.ClickHouse;
+using TelemetryGuard.Api.Edge;
 using TelemetryGuard.Api.Endpoints;
 using TelemetryGuard.Api.Health;
 using TelemetryGuard.Api.Middleware;
@@ -25,6 +26,8 @@ using TelemetryGuard.Api.Services;
 using TelemetryGuard.Core.Tenancy;
 using TelemetryGuard.Core.Time;
 using TelemetryGuard.Data;
+using TelemetryGuard.Integrations.GoogleAds;
+using TelemetryGuard.Integrations.Meta;
 using TelemetryGuard.Integrations.Turnstile;
 using TelemetryGuard.RiskEngine.Pipeline;
 using TelemetryGuard.RiskEngine.Velocity;
@@ -109,6 +112,12 @@ builder.Services.AddTurnstileVerification(builder.Configuration);
 builder.Services.Configure<ScoringBandOptions>(
     builder.Configuration.GetSection(ScoringBandOptions.SectionName));
 
+// INT-02: "Enforcement:DefaultMode" documented fallback label — see
+// EnforcementOptions's doc comment for why nothing on the request path reads it
+// (per-tenant dbo.Tenants.EnforcementMode via TenantRecord is authoritative).
+builder.Services.Configure<TelemetryGuard.Api.Options.EnforcementOptions>(
+    builder.Configuration.GetSection(TelemetryGuard.Api.Options.EnforcementOptions.SectionName));
+
 // API-06: real verdict finalizer (verdict persistence, exclusion-queue writes,
 // EnforcementMode handling, summary MERGEs) — replaces API-05's build-order
 // stub. Scoped: it consumes scoped tenant-bound repositories and must be
@@ -119,6 +128,21 @@ builder.Services.AddScoped<IVerdictFinalizer, VerdictFinalizer>();
 // API-06: grace-period worker — every second, finalizes sessions whose ~10 s
 // beacon grace period (API-02/API-03) expired with no beacon ever arriving.
 builder.Services.AddHostedService<VerdictFinalizerService>();
+
+// INT-03: Google Ads exclusion sync — every GoogleAds:SyncIntervalMinutes
+// minutes, pushes approved dbo.ExclusionQueue rows (Platform='google') to
+// Google Ads as negative campaign criteria. Dry-run ON by default (see
+// GoogleAdsOptions.EffectiveDryRun) until real credentials are configured.
+builder.Services.AddGoogleAdsGateway(builder.Configuration);
+builder.Services.AddHostedService<TelemetryGuard.Api.Workers.GoogleAdsExclusionSyncService>();
+
+// INT-04: Meta Marketing API exclusion sync — every Meta:SyncIntervalMinutes
+// minutes, marks Platform='meta'/SourceType='ip' rows Unsupported (Meta has no
+// IP-exclusion API, D15) and pushes approved 'placement' rows into a per-tenant
+// publisher block list. Dry-run ON by default (see MetaOptions.EffectiveDryRun)
+// until a system-user token is configured.
+builder.Services.AddMetaMarketingClient(builder.Configuration);
+builder.Services.AddHostedService<TelemetryGuard.Api.Workers.MetaExclusionSyncService>();
 
 // ---------- OpenTelemetry (OTLP endpoint/headers come from standard env vars) ----------
 builder.Services.AddOpenTelemetry()
@@ -134,6 +158,12 @@ builder.Services.AddOpenTelemetry()
         .AddHttpClientInstrumentation()
         .AddRuntimeInstrumentation()
         .AddOtlpExporter());
+
+// INT-05: Cloudflare edge signal intake — config gate + reader. Registered
+// unconditionally (cheap, options-only); EdgeSignalReader itself no-ops when
+// Edge:Provider != "Cloudflare" or the direct peer isn't a Cloudflare address.
+builder.Services.Configure<EdgeOptions>(builder.Configuration.GetSection(EdgeOptions.SectionName));
+builder.Services.AddSingleton<IEdgeSignalReader, EdgeSignalReader>();
 
 // ---------- ForwardedHeaders: trust ONLY configured proxy CIDRs (spec D13) ----------
 // Empty by default so local dev sees real socket IPs; INT-05 fills in the
@@ -151,6 +181,17 @@ builder.Services.Configure<ForwardedHeadersOptions>(o =>
         var parts = cidr.Split('/');
         o.KnownNetworks.Add(new Microsoft.AspNetCore.HttpOverrides.IPNetwork(
             System.Net.IPAddress.Parse(parts[0]), int.Parse(parts[1])));
+    }
+    // INT-05: when Cloudflare-fronted, merge the embedded Cloudflare ranges into the
+    // trusted-proxy set (config-driven activation — the ranges themselves are never
+    // hardcoded at this call site). Runs BEFORE the empty-trust sentinel guard below
+    // so a Cloudflare deployment with no extra TrustedProxyCidrs still ends up with a
+    // non-empty KnownNetworks and skips the sentinel.
+    if (builder.Configuration.GetValue<string>("Edge:Provider")?.Equals("Cloudflare",
+            StringComparison.OrdinalIgnoreCase) == true)
+    {
+        foreach (var (addr, prefix) in CloudflareIpRanges.Load())
+            o.KnownNetworks.Add(new Microsoft.AspNetCore.HttpOverrides.IPNetwork(addr, prefix));
     }
     if (o.KnownNetworks.Count == 0 && o.KnownProxies.Count == 0)
     {
@@ -269,6 +310,14 @@ if (app.Configuration.GetValue("TestHost:EnableDiagnostics", false))
 {
     app.MapGet("/__test/ip", (HttpContext ctx) =>
         Results.Text(ctx.Connection.RemoteIpAddress?.ToString() ?? "none"));
+    // INT-05: echoes IEdgeSignalReader.Read(ctx) so EdgeSignalsTests can assert the
+    // gate + spoof-defense behavior over the REAL Program composition (ForwardedHeaders
+    // included) without standing up a Cloudflare-fronted endpoint of its own.
+    app.MapGet("/__test/edge-signals", (HttpContext ctx, IEdgeSignalReader edgeSignals) =>
+    {
+        var s = edgeSignals.Read(ctx);
+        return Results.Json(new { s.Ja3, s.Ja4, s.Asn, s.BotScore });
+    });
     app.MapGet("/__test/throw", (HttpContext _) =>
     {
         throw new InvalidOperationException("Deliberate test-host failure.");
@@ -284,6 +333,7 @@ app.MapPixelEndpoints();         // API-03  GET /p.gif
 app.MapBeaconEndpoints();        // API-04  GET /i/init, POST /i
 app.MapDecisionEndpoints();      // API-05  POST /decide
 app.MapAdminEndpoints();         // API-07  /admin/*
+app.MapEnforcementAdminEndpoints(); // INT-02  /admin/enforcement/*
 app.Run();
 
 public partial class Program // exposes Program to WebApplicationFactory tests

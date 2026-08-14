@@ -7,6 +7,7 @@ using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Primitives;
 using StackExchange.Redis;
 using TelemetryGuard.Analytics.Abstractions;
+using TelemetryGuard.Api.Edge;
 using TelemetryGuard.Api.Options;
 using TelemetryGuard.Core.Tenancy;
 using TelemetryGuard.Core.Time;
@@ -51,6 +52,7 @@ public static partial class TrackerEndpoints
         ITenantRepository tenants, IMemoryCache cache, IVelocityStore velocity,
         IEventSink sink, IConnectionMultiplexer redis, IClock clock,
         IOptions<TrackerOptions> trackerOpts, IOptions<RetentionOptions> retentionOpts,
+        IEdgeSignalReader edgeSignals,
         IConfiguration config, ILoggerFactory loggerFactory, CancellationToken ct)
     {
         using var activity = ActivitySource.StartActivity("tracker.handle");
@@ -94,6 +96,15 @@ public static partial class TrackerEndpoints
         var acceptLanguage = NullIfEmpty(ctx.Request.Headers.AcceptLanguage);
         var referrer = NullIfEmpty(ctx.Request.Headers.Referer);
         var siteKey = tenant.SiteKey ?? ctx.Request.Query["k"].ToString();
+
+        // 4b. INT-05: Cloudflare edge signals (X-TG-*), already gated on
+        //     Edge:Provider AND a Cloudflare-range direct peer inside the reader —
+        //     all-null (never fabricated) when not Cloudflare-fronted. tls_fp is the
+        //     contract field RSK-04 reads for tls_ua_mismatch: JA3 wins, JA4 is the
+        //     fallback (both fingerprint the TLS handshake; JA3 is the format the
+        //     seeded family map is keyed on today).
+        var edge = edgeSignals.Read(ctx);
+        var tlsFp = edge.Ja3 ?? edge.Ja4;
 
         // 5. Click-ID extraction: first present param wins; both null when absent
         //    (organic traffic still gets tracked — type + flag are recorded
@@ -145,6 +156,14 @@ public static partial class TrackerEndpoints
                 new("click_id_type", clickIdType ?? ""),
                 new("click_id", clickIdValue ?? ""),
                 new("click_id_invalid", clickIdInvalid ? "1" : "0"),
+                // INT-05: RSK-04's actual TlsUaMismatch contract field.
+                new("tls_fp", tlsFp ?? ""),
+                // INT-05: forward-compat extras (no current reader; kept for future
+                // signals/debugging — empty string encodes absent, never "0"/fabricated).
+                new("tls_ja3", edge.Ja3 ?? ""),
+                new("tls_ja4", edge.Ja4 ?? ""),
+                new("cf_asn", edge.Asn?.ToString() ?? ""),
+                new("cf_bot_score", edge.BotScore?.ToString() ?? ""),
             };
             await db.HashSetAsync(clickKey, fields);
             await db.KeyExpireAsync(clickKey, TimeSpan.FromSeconds(opts.SessionTtlSeconds));
@@ -185,6 +204,9 @@ public static partial class TrackerEndpoints
                 SecChUaPlatform = chPlatform,
                 AcceptLanguage = acceptLanguage,
                 Referrer = referrer,
+                TlsJa3 = edge.Ja3,              // INT-05: null unless Cloudflare-fronted (D13)
+                TlsJa4 = edge.Ja4,
+                CfAsn = edge.Asn,
                 HasJsBeacon = false,           // tracker path: SDK features stay NaN/null (missing != zero)
                 RetentionDays = retentionDays,
                 TimestampUtc = now.UtcDateTime,

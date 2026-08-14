@@ -39,7 +39,11 @@ public sealed class ClickHouseEventSink : IEventSink, IHostedService
         "ip_clicks_last_min", "ip_distinct_uas_last_hour",
         "device_sessions_last_hour", "device_ids_this_ip_hour",
         "score", "band", "action", "rule_hits", "scorer_version", "feature_set_version",
-        "retention_days", "timestamp"
+        "retention_days", "timestamp",
+        // RSK-08 (0002_training_and_shadow.sql ALTERs): appended at the end — bulk-copy
+        // ColumnNames is an explicit name/order whitelist, independent of the table's
+        // physical column order, so appending here needs no reshuffle of the above.
+        "features", "shadow_score", "shadow_scorer_version"
     };
 
     private static readonly Meter Meter = new("TelemetryGuard.Analytics.ClickHouse");
@@ -205,7 +209,8 @@ public sealed class ClickHouseEventSink : IEventSink, IHostedService
         e.RuleHits as string[] ?? e.RuleHits.ToArray(),
         e.ScorerVersion, (ushort?)e.FeatureSetVersion,
         e.RetentionDays,
-        DateTime.SpecifyKind(e.TimestampUtc, DateTimeKind.Utc)
+        DateTime.SpecifyKind(e.TimestampUtc, DateTimeKind.Utc),
+        e.Features, (short?)e.ShadowScore, e.ShadowScorerVersion ?? ""
     ];
 
     private static byte? B(bool? v) => v is null ? null : (byte)(v.Value ? 1 : 0);

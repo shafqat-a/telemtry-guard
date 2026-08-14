@@ -29,6 +29,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TelemetryGuard.Tests.Contra
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TelemetryGuard.MigrationRunner", "TelemetryGuard.MigrationRunner\TelemetryGuard.MigrationRunner.csproj", "{8AE263F4-3E9D-40B9-A809-3631EA706C74}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TelemetryGuard.Training", "TelemetryGuard.Training\TelemetryGuard.Training.csproj", "{D1B5EAF4-EB50-4E96-BC43-89E98CD4B052}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -86,6 +88,10 @@ Global
 		{8AE263F4-3E9D-40B9-A809-3631EA706C74}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{8AE263F4-3E9D-40B9-A809-3631EA706C74}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{8AE263F4-3E9D-40B9-A809-3631EA706C74}.Release|Any CPU.Build.0 = Release|Any CPU
+		{D1B5EAF4-EB50-4E96-BC43-89E98CD4B052}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D1B5EAF4-EB50-4E96-BC43-89E98CD4B052}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D1B5EAF4-EB50-4E96-BC43-89E98CD4B052}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D1B5EAF4-EB50-4E96-BC43-89E98CD4B052}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{C045E385-1725-4F6A-866D-16E0EC96E039} = {47914DC2-25CD-497E-B8E5-7FB8BD02A4DA}

@@ -55,7 +55,7 @@ internal sealed class ExclusionQueueRepository(ITenantConnectionFactory connecti
                 "SourceType must be one of: ip, placement.", nameof(entry));
         }
 
-        if (entry.Status is not ("pending" or "approved"))
+        if (entry.Status != ExclusionStatuses.Pending && entry.Status != ExclusionStatuses.Approved)
         {
             throw new ArgumentException(
                 "Status must be one of: pending, approved (writer-side; INT-02/03/04 own later transitions).",

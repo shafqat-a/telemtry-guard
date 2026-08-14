@@ -4,6 +4,7 @@ using TelemetryGuard.RiskEngine.Contracts;
 using TelemetryGuard.RiskEngine.Enrichment;
 using TelemetryGuard.RiskEngine.Features;
 using TelemetryGuard.RiskEngine.Rules;
+using TelemetryGuard.RiskEngine.Scoring;
 using TelemetryGuard.RiskEngine.Velocity;
 
 namespace TelemetryGuard.RiskEngine.Pipeline;
@@ -39,6 +40,7 @@ public sealed class ScoringPipeline : IScoringPipeline
     private readonly IScorer _scorer;
     private readonly ICampaignContextProvider _campaigns;
     private readonly ILogger<ScoringPipeline> _logger;
+    private readonly IShadowScorer? _shadowScorer;
 
     public ScoringPipeline(
         ISessionStateStore sessions,
@@ -49,7 +51,8 @@ public sealed class ScoringPipeline : IScoringPipeline
         IT1RuleEngine rules,
         IScorer scorer,
         ICampaignContextProvider campaigns,
-        ILogger<ScoringPipeline> logger)
+        ILogger<ScoringPipeline> logger,
+        IShadowScorer? shadowScorer = null)
     {
         _sessions = sessions;
         _whitelist = whitelist;
@@ -60,6 +63,7 @@ public sealed class ScoringPipeline : IScoringPipeline
         _scorer = scorer;
         _campaigns = campaigns;
         _logger = logger;
+        _shadowScorer = shadowScorer;
     }
 
     public async Task<ScoringOutcome?> ScoreSessionAsync(
@@ -136,6 +140,28 @@ public sealed class ScoringPipeline : IScoringPipeline
         var t1 = _rules.Evaluate(in vector);
         var scored = _scorer.Score(in vector);
 
+        // 8½. RSK-08 (D18 listen-only): an optional secondary model run purely for
+        //     shadow logging. Runs on the SAME vector, never on the whitelist path
+        //     (we are already past that branch here). A throw is logged and the
+        //     shadow fields simply stay null — it can NEVER affect the verdict below.
+        int? shadowScore = null;
+        string? shadowScorerVersion = null;
+        if (_shadowScorer is not null)
+        {
+            try
+            {
+                var shadow = _shadowScorer.Score(in vector);
+                shadowScore = shadow.Score;
+                shadowScorerVersion = shadow.ScorerVersion;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex,
+                    "Shadow scorer failed for session {SessionId}; verdict unaffected (D18 listen-only).",
+                    sessionId);
+            }
+        }
+
         // 9. The single combination point: rules only RAISE (§6.3). The scorer's
         //    version stamp survives — the floor never overwrites it (D18).
         var finalScore = Math.Max(scored.Score, t1.Floor ?? 0);
@@ -145,7 +171,7 @@ public sealed class ScoringPipeline : IScoringPipeline
         var band = BandMapper.ToBand(finalScore);
         var elapsed = ElapsedMs(startTimestamp);
         RiskMetrics.RecordScoringDuration(elapsed, BandTag(band), whitelisted: false);
-        return new ScoringOutcome(result, band, Whitelisted: false, elapsed);
+        return new ScoringOutcome(result, band, Whitelisted: false, elapsed, vector, shadowScore, shadowScorerVersion);
     }
 
     private static readonly IReadOnlyDictionary<string, string> EmptyHeaders =

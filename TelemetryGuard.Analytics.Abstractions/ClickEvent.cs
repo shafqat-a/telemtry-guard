@@ -90,6 +90,23 @@ public sealed record ClickEvent
     public string? ScorerVersion { get; init; }        // e.g. "heuristic-1" (D18)
     public int? FeatureSetVersion { get; init; }       // 1 for the MVP contract
 
+    // ---- RSK-08 training/listen-only block (null/"" until populated at verdict time) ----
+    /// <summary>JSON-serialized FraudFeatureVector captured at scoring time
+    /// (TelemetryGuard.RiskEngine.Contracts.FraudFeatureVectorJson options) — the
+    /// offline trainer (TelemetryGuard.Training) deserializes this back for model
+    /// input. "" (not null) when not yet populated or the session was whitelisted
+    /// (extraction never runs on that short-circuit).</summary>
+    public string Features { get; init; } = "";
+
+    /// <summary>D18 listen-only: the shadow (non-enforcing) model's score, 0-100, when a
+    /// shadow scorer ran successfully for this session. Null when no shadow scorer is
+    /// registered, the session was whitelisted, or the shadow scorer threw.</summary>
+    public int? ShadowScore { get; init; }
+
+    /// <summary>D18 listen-only: the shadow scorer's version stamp (e.g.
+    /// "lgbm-20260915-a1b2c3d4"), paired with <see cref="ShadowScore"/>.</summary>
+    public string? ShadowScorerVersion { get; init; }
+
     // ---- storage control ----
     public required ushort RetentionDays { get; init; } // denormalized from tenant config at ingest (D20), 30–180
     public required DateTime TimestampUtc { get; init; } // must be DateTimeKind.Utc

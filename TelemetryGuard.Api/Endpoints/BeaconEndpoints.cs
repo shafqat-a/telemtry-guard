@@ -8,6 +8,7 @@ using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Options;
 using StackExchange.Redis;
 using TelemetryGuard.Analytics.Abstractions;
+using TelemetryGuard.Api.Edge;
 using TelemetryGuard.Api.Options;
 using TelemetryGuard.Api.Services;
 using TelemetryGuard.Core.Tenancy;
@@ -115,6 +116,7 @@ public static partial class BeaconEndpoints
         HttpContext ctx, ITenantResolver resolver, TenantContext tenantContext,
         IConnectionMultiplexer redis, IClock clock, IEventSink sink, IMemoryCache cache,
         IOptions<BeaconOptions> beaconOpts, IOptions<RetentionOptions> retentionOpts,
+        IEdgeSignalReader edgeSignals,
         IConfiguration config, ILoggerFactory loggerFactory, CancellationToken ct)
     {
         var opts = beaconOpts.Value;
@@ -244,10 +246,14 @@ public static partial class BeaconEndpoints
             {
                 var retentionDays = await ResolveRetentionDaysAsync(
                     ctx, cache, retentionOpts.Value, tid, ct);
+                // INT-05: this beacon POST is its own HTTP request — no click-context
+                // hash write happens here (that stays API-02/API-03's job); only the
+                // snapshot ClickEvent gets the edge fields, for analytics completeness.
+                var edge = edgeSignals.Read(ctx);
                 var evt = BuildSnapshot(
                     tenantContext.TenantId, k, sid, hash, ip, ua,
                     ctx.Request.Headers.Select(h => h.Key).ToArray(),
-                    retentionDays, now.UtcDateTime);
+                    retentionDays, now.UtcDateTime, edge);
                 await sink.WriteBatchAsync(new[] { evt }, ct);
             }
 
@@ -301,7 +307,8 @@ public static partial class BeaconEndpoints
     /// Missing ≠ zero: absent aggregates stay NaN/null on the event.</summary>
     private static ClickEvent BuildSnapshot(
         TenantId tenantId, string siteKey, string sid, Dictionary<string, string> h,
-        string ip, string? ua, string[] headerNames, ushort retentionDays, DateTime nowUtc)
+        string ip, string? ua, string[] headerNames, ushort retentionDays, DateTime nowUtc,
+        EdgeSignals edge)
     {
         return new ClickEvent
         {
@@ -313,6 +320,9 @@ public static partial class BeaconEndpoints
             HeaderNames = headerNames,
             UserAgent = ua,
             Referrer = Str(h, "page_url"),
+            TlsJa3 = edge.Ja3,               // INT-05: null unless Cloudflare-fronted (D13)
+            TlsJa4 = edge.Ja4,
+            CfAsn = edge.Asn,
             HasJsBeacon = true,
             BeaconIntegrityOk = (SessionAggregator.GetLong(h, "integrity_fails") ?? 0) == 0,
             FingerprintVisitorId = Str(h, "visitor_id"),

@@ -17,3 +17,6 @@
 | 0002 | RLS schema, predicate, security policy | DAT-03 |
 | 0003 | Verdict summaries, flagged sources, exclusion queue, rollup watermarks | DAT-06 |
 | 0004 | Whitelist entries + RLS | DAT-07 |
+| 0005 | EnforcementAudit (approval-queue audit trail) + RLS | INT-02 |
+| 0006 | Tenants.GoogleAdsCustomerId + GoogleAdsPushedExclusions (LRU state) + RLS | INT-03 |
+| 0007 | Tenants.MetaBusinessId + Tenants.MetaBlockListId (Meta sync state) | INT-04 |

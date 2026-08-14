@@ -1,0 +1,11 @@
+# TelemetryGuard edge worker (INT-05) — deployed with `wrangler deploy` from this
+# directory. Edge configuration only; never executed by our .NET services (D1/D13).
+name = "tg-edge-worker"
+main = "tg-edge-worker.js"
+compatibility_date = "2026-08-14"
+
+# Uncomment and set to the real API hostname once DNS is proxied (orange-cloud) and
+# SSL/TLS mode is Full (strict) — see doc/runbooks/cloudflare-fronting.md steps 1-2.
+# [[routes]]
+# pattern = "track.example.com/*"
+# zone_name = "example.com"

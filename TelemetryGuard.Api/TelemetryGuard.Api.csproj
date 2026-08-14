@@ -11,6 +11,12 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- INT-05: embedded, refreshable Cloudflare IP range list (never hardcoded at
+         call sites — see TelemetryGuard.Api/Edge/CloudflareIpRanges.cs). -->
+    <EmbeddedResource Include="Edge\cloudflare-ips.txt" LogicalName="TelemetryGuard.Api.Edge.cloudflare-ips.txt" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\TelemetryGuard.Core\TelemetryGuard.Core.csproj" />
     <ProjectReference Include="..\TelemetryGuard.Data\TelemetryGuard.Data.csproj" />
     <ProjectReference Include="..\TelemetryGuard.RiskEngine\TelemetryGuard.RiskEngine.csproj" />
@@ -23,6 +29,10 @@
   <ItemGroup>
     <!-- ANA-07 unit tests exercise RollupService's internal ComputeWindow/MapDay helpers. -->
     <InternalsVisibleTo Include="TelemetryGuard.Tests.Unit" />
+    <!-- INT-03: GoogleAdsSyncServiceTests drives GoogleAdsExclusionSyncService's internal
+         SyncTenantAsync directly against a real migrated SQL Server (DAT-08 harness).
+         INT-04: MetaExclusionSyncServiceTests does the same for MetaExclusionSyncService. -->
+    <InternalsVisibleTo Include="TelemetryGuard.Tests.Integration" />
   </ItemGroup>
 
   <PropertyGroup>

@@ -229,7 +229,7 @@ public sealed class BeaconEndpointTests
         public readonly CapturingLabelSink Labels = new();
         public readonly FakeClock Clock = new();
 
-        public BeaconApp(Dictionary<string, string?>? settings = null)
+        public BeaconApp(Dictionary<string, string?>? settings = null, IPAddress? remoteIp = null)
         {
             Factory = new WebApplicationFactory<Program>().WithWebHostBuilder(b =>
             {
@@ -264,7 +264,7 @@ public sealed class BeaconEndpointTests
                     services.AddSingleton(Redis.Mux);
                     services.RemoveAll<IClock>();
                     services.AddSingleton<IClock>(Clock);
-                    services.AddSingleton<IStartupFilter>(new RemoteIpStartupFilter(RemoteIp));
+                    services.AddSingleton<IStartupFilter>(new RemoteIpStartupFilter(remoteIp ?? RemoteIp));
                 });
             });
         }
@@ -518,6 +518,46 @@ public sealed class BeaconEndpointTests
         Assert.Equal(1920f, fpEvent.ScreenWidth);
         Assert.Equal(false, fpEvent.WebdriverFlag);
         Assert.Equal(10f, fpEvent.PagesViewed);
+    }
+
+    /// <summary>INT-05: no Cloudflare fronting -> the beacon's own snapshot
+    /// ClickEvent carries null TlsJa3/TlsJa4/CfAsn (missing ≠ zero); no click-context
+    /// hash write happens on this path at all (that stays API-02/API-03's job) —
+    /// only t:{tid}:sess:{sid} is touched here.</summary>
+    [Fact]
+    public async Task EdgeSignals_Absent_SnapshotClickEventStaysNull_NoClickContextHashWritten()
+    {
+        using var app = new BeaconApp();
+        using var client = app.Client();
+
+        await client.SendAsync(Post(Envelope(0, """[{"e":"pv","t":1}]""")));
+
+        var evt = Assert.Single(app.Sink.Events);
+        Assert.Null(evt.TlsJa3);
+        Assert.Null(evt.TlsJa4);
+        Assert.Null(evt.CfAsn);
+        Assert.False(app.Redis.Hashes.ContainsKey($"t:{Tid}:click:{HexSid}"));
+    }
+
+    /// <summary>INT-05: Cloudflare-fronted + a Cloudflare-range direct peer -> the
+    /// snapshot ClickEvent for THIS beacon POST carries TlsJa3/TlsJa4/CfAsn (analytics
+    /// completeness for the beacon path); still no click-context hash write.</summary>
+    [Fact]
+    public async Task EdgeSignals_Present_WhenCloudflareFronted_PopulatesTheSnapshotClickEvent()
+    {
+        using var app = new BeaconApp(
+            settings: new() { ["Edge:Provider"] = "Cloudflare" },
+            remoteIp: IPAddress.Parse("104.16.1.1"));
+        using var client = app.Client();
+
+        await client.SendAsync(Post(Envelope(0, """[{"e":"pv","t":1}]"""),
+            headers: [("X-TG-JA3", "cd08e31494f9531f560d64c695473da9"), ("X-TG-ASN", "13335")]));
+
+        var evt = Assert.Single(app.Sink.Events);
+        Assert.Equal("cd08e31494f9531f560d64c695473da9", evt.TlsJa3);
+        Assert.Null(evt.TlsJa4);
+        Assert.Equal(13335u, evt.CfAsn);
+        Assert.False(app.Redis.Hashes.ContainsKey($"t:{Tid}:click:{HexSid}"));
     }
 
     [Fact]

@@ -1,0 +1,46 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- RSK-08: label pipeline + LightGBM training console. Minimal dependency
+         surface by design (D1: no Python/Node) — hand-rolled arg parsing instead of
+         System.CommandLine (still pre-1.0), no ORM (Dapper, matching D9), the same
+         ClickHouse driver ANA-03 uses. -->
+    <PackageReference Include="ClickHouse.Client" Version="7.2.2" />
+    <PackageReference Include="Dapper" Version="2.1.35" />
+    <PackageReference Include="Microsoft.Data.SqlClient" Version="5.2.2" />
+    <PackageReference Include="Microsoft.Extensions.Configuration" Version="8.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Binder" Version="8.0.2" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.EnvironmentVariables" Version="8.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="8.0.1" />
+    <PackageReference Include="Microsoft.ML" Version="4.0.2" />
+    <PackageReference Include="Microsoft.ML.LightGbm" Version="4.0.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Zero-package POCO contract shared with serving (MlFeatureRow/MlFeatureMapper/
+         FraudFeatureVectorJson) — deliberately NOT TelemetryGuard.RiskEngine (keeps
+         the dependency surface minimal; Training never scores in-process).
+         TelemetryGuard.Analytics.Abstractions (also zero-package) supplies the
+         canonical LabelValues/LabelSources/LabelEvent/TenantId storage-contract
+         constants (ANA-01) — LabelBuilder must never hardcode/duplicate these strings. -->
+    <ProjectReference Include="..\TelemetryGuard.RiskEngine.Contracts\TelemetryGuard.RiskEngine.Contracts.csproj" />
+    <ProjectReference Include="..\TelemetryGuard.Analytics.Abstractions\TelemetryGuard.Analytics.Abstractions.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="appsettings.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <!-- No InternalsVisibleTo: every type TrainerSmokeTests/LabelResolverTests need
+       (Trainer, LabelResolver, TrainRunResult, RawLabelRow, ...) is public. Granting
+       it would make this project's top-level-statement Program class visible to
+       Tests.Unit too, colliding with TelemetryGuard.Api's WebApplicationFactory<Program> (CS0433). -->
+
+</Project>
