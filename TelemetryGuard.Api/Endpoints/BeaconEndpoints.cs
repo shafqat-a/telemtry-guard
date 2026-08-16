@@ -8,6 +8,7 @@ using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Options;
 using StackExchange.Redis;
 using TelemetryGuard.Analytics.Abstractions;
+using TelemetryGuard.Api.Attribution;
 using TelemetryGuard.Api.Edge;
 using TelemetryGuard.Api.Options;
 using TelemetryGuard.Api.Services;
@@ -270,10 +271,15 @@ public static partial class BeaconEndpoints
                 // hash write happens here (that stays API-02/API-03's job); only the
                 // snapshot ClickEvent gets the edge fields, for analytics completeness.
                 var edge = edgeSignals.Read(ctx);
+                // ANA-08: the beacon POST's Referer is the page URL (full path+query,
+                // because /i is same-origin with the page), so utm_* and click ids can be
+                // recovered here even for a visit that never went through the tracker.
+                var attribution = AttributionExtractor.Extract(ctx);
                 var evt = BuildSnapshot(
                     tenantContext.TenantId, k, sid, hash, ip, ua,
                     ctx.Request.Headers.Select(h => h.Key).ToArray(),
                     retentionDays, now.UtcDateTime, edge);
+                evt = evt.WithAttributionAndClickIds(attribution);
                 await sink.WriteBatchAsync(new[] { evt }, ct);
             }
 

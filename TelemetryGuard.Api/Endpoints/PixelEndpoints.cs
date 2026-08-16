@@ -5,6 +5,7 @@ using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Primitives;
 using StackExchange.Redis;
 using TelemetryGuard.Analytics.Abstractions;
+using TelemetryGuard.Api.Attribution;
 using TelemetryGuard.Api.Edge;
 using TelemetryGuard.Api.Options;
 using TelemetryGuard.Core.Tenancy;
@@ -183,6 +184,12 @@ public static partial class PixelEndpoints
             });
             var retentionDays = (ushort)(tenantRecord?.RetentionDays ?? retentionOpts.Value.DefaultDays);
 
+            // ANA-08: an <img> carries no click id of its own, but the page it sits on
+            // does — and Referer holds that page's full URL because this endpoint is
+            // same-origin with it. Cross-origin, the referrer policy trims it to the
+            // origin and every utm_* is lost.
+            var attribution = AttributionExtractor.Extract(ctx);
+
             var evt = new ClickEvent
             {
                 TenantId = tenant.TenantId,
@@ -205,6 +212,7 @@ public static partial class PixelEndpoints
                 RetentionDays = retentionDays,
                 TimestampUtc = now.UtcDateTime,
             };
+            evt = evt.WithAttributionAndClickIds(attribution);
             await sink.WriteBatchAsync(new[] { evt }, ct);
         }
         catch (Exception ex)

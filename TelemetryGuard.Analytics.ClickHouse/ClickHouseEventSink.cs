@@ -43,7 +43,12 @@ public sealed class ClickHouseEventSink : IEventSink, IHostedService
         // RSK-08 (0002_training_and_shadow.sql ALTERs): appended at the end — bulk-copy
         // ColumnNames is an explicit name/order whitelist, independent of the table's
         // physical column order, so appending here needs no reshuffle of the above.
-        "features", "shadow_score", "shadow_scorer_version"
+        "features", "shadow_score", "shadow_scorer_version",
+        // ANA-08 (0003_attribution.sql ALTERs): appended at the end, same reasoning.
+        "gbraid", "wbraid",
+        "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", "utm_id",
+        "cookie_fbc", "cookie_fbp", "cookie_gcl_aw", "cookie_ttp",
+        "attribution_channel", "landing_path", "landing_query_keys", "headers"
     };
 
     private static readonly Meter Meter = new("TelemetryGuard.Analytics.ClickHouse");
@@ -210,7 +215,13 @@ public sealed class ClickHouseEventSink : IEventSink, IHostedService
         e.ScorerVersion, (ushort?)e.FeatureSetVersion,
         e.RetentionDays,
         DateTime.SpecifyKind(e.TimestampUtc, DateTimeKind.Utc),
-        e.Features, (short?)e.ShadowScore, e.ShadowScorerVersion ?? ""
+        e.Features, (short?)e.ShadowScore, e.ShadowScorerVersion ?? "",
+        e.Gbraid, e.Wbraid,
+        e.UtmSource, e.UtmMedium, e.UtmCampaign, e.UtmTerm, e.UtmContent, e.UtmId,
+        e.CookieFbc, e.CookieFbp, e.CookieGclAw, e.CookieTtp,
+        e.AttributionChannel, e.LandingPath ?? "",
+        e.LandingQueryKeys as string[] ?? e.LandingQueryKeys.ToArray(),
+        e.Headers as Dictionary<string, string> ?? new Dictionary<string, string>(e.Headers)
     ];
 
     private static byte? B(bool? v) => v is null ? null : (byte)(v.Value ? 1 : 0);

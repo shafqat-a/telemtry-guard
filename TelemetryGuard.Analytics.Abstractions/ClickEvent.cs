@@ -24,6 +24,46 @@ public sealed record ClickEvent
     public string Ttclid { get; init; } = "";          // TikTok Ads
     public bool? ClickIdInvalid { get; init; }        // null = not applicable (organic)
 
+    // ---- attribution (ANA-08): which ad, on which platform, sent this visit ----
+    // Google Ads sends gbraid/wbraid INSTEAD of gclid on iOS and consent-limited
+    // traffic. Without them a growing share of paid Google clicks looks organic.
+    public string Gbraid { get; init; } = "";          // Google Ads, app->web, no user id
+    public string Wbraid { get; init; } = "";          // Google Ads, web->app, no user id
+
+    // UTM parameters exactly as received. utm_id is the campaign id in GA4's
+    // manual-tagging scheme; utm_content/utm_term usually carry the ad or keyword id.
+    public string UtmSource { get; init; } = "";
+    public string UtmMedium { get; init; } = "";
+    public string UtmCampaign { get; init; } = "";
+    public string UtmTerm { get; init; } = "";
+    public string UtmContent { get; init; } = "";
+    public string UtmId { get; init; } = "";
+
+    // Platform first-party attribution cookies. An ALLOWLIST, never the raw Cookie
+    // header: that header also carries session and auth cookies, and copying those
+    // into the event store would turn analytics into a credential store.
+    public string CookieFbc { get; init; } = "";       // Meta click id, persisted by the pixel
+    public string CookieFbp { get; init; } = "";       // Meta browser id
+    public string CookieGclAw { get; init; } = "";     // Google Ads click id
+    public string CookieTtp { get; init; } = "";       // TikTok pixel id
+
+    /// <summary>Derived channel: "google_ads" | "meta_ads" | "tiktok_ads" |
+    /// "microsoft_ads" | "paid_other" | "organic_search" | "referral" | "direct".
+    /// Stored rather than computed at query time so dashboards and rollups do not each
+    /// re-implement the precedence rules.</summary>
+    public string AttributionChannel { get; init; } = "";
+
+    /// <summary>Landing page path WITHOUT its query string. The query's parameter
+    /// NAMES are kept separately (see <see cref="LandingQueryKeys"/>) — same reasoning as
+    /// <see cref="HeaderNames"/>: shape is useful, arbitrary values may carry PII.</summary>
+    public string? LandingPath { get; init; }
+    public IReadOnlyList<string> LandingQueryKeys { get; init; } = Array.Empty<string>();
+
+    /// <summary>Allowlisted request header values (see AttributionExtractor). Cookie
+    /// and Authorization are never included.</summary>
+    public IReadOnlyDictionary<string, string> Headers { get; init; }
+        = new Dictionary<string, string>();
+
     // ---- HTTP layer ----
     public required string Ip { get; init; }           // textual IPv4 or IPv6
     public IReadOnlyList<string> HeaderNames { get; init; } = Array.Empty<string>(); // ordered as received

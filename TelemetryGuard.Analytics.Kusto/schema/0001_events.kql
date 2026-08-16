@@ -85,7 +85,25 @@
     timestamp: datetime,
     features: string,
     shadow_score: int,
-    shadow_scorer_version: string
+    shadow_scorer_version: string,
+    // ANA-08 attribution. Mirrors ClickHouse 0003_attribution.sql. The raw Cookie
+    // header and arbitrary query values are deliberately NOT stored — see that file.
+    gbraid: string,
+    wbraid: string,
+    utm_source: string,
+    utm_medium: string,
+    utm_campaign: string,
+    utm_term: string,
+    utm_content: string,
+    utm_id: string,
+    cookie_fbc: string,
+    cookie_fbp: string,
+    cookie_gcl_aw: string,
+    cookie_ttp: string,
+    attribution_channel: string,
+    landing_path: string,
+    landing_query_keys: dynamic,
+    headers: dynamic
 )
 
 // tg_labels: training labels (D18/D19). ClickHouse gives `weight` a DEFAULT of 1;
@@ -183,7 +201,23 @@
 '  {"Column":"timestamp","Properties":{"Path":"$.timestamp"}},'
 '  {"Column":"features","Properties":{"Path":"$.features"}},'
 '  {"Column":"shadow_score","Properties":{"Path":"$.shadow_score"}},'
-'  {"Column":"shadow_scorer_version","Properties":{"Path":"$.shadow_scorer_version"}}'
+'  {"Column":"shadow_scorer_version","Properties":{"Path":"$.shadow_scorer_version"}},'
+'  {"Column":"gbraid","Properties":{"Path":"$.gbraid"}},'
+'  {"Column":"wbraid","Properties":{"Path":"$.wbraid"}},'
+'  {"Column":"utm_source","Properties":{"Path":"$.utm_source"}},'
+'  {"Column":"utm_medium","Properties":{"Path":"$.utm_medium"}},'
+'  {"Column":"utm_campaign","Properties":{"Path":"$.utm_campaign"}},'
+'  {"Column":"utm_term","Properties":{"Path":"$.utm_term"}},'
+'  {"Column":"utm_content","Properties":{"Path":"$.utm_content"}},'
+'  {"Column":"utm_id","Properties":{"Path":"$.utm_id"}},'
+'  {"Column":"cookie_fbc","Properties":{"Path":"$.cookie_fbc"}},'
+'  {"Column":"cookie_fbp","Properties":{"Path":"$.cookie_fbp"}},'
+'  {"Column":"cookie_gcl_aw","Properties":{"Path":"$.cookie_gcl_aw"}},'
+'  {"Column":"cookie_ttp","Properties":{"Path":"$.cookie_ttp"}},'
+'  {"Column":"attribution_channel","Properties":{"Path":"$.attribution_channel"}},'
+'  {"Column":"landing_path","Properties":{"Path":"$.landing_path"}},'
+'  {"Column":"landing_query_keys","Properties":{"Path":"$.landing_query_keys"}},'
+'  {"Column":"headers","Properties":{"Path":"$.headers"}}'
 ']'
 
 .create-or-alter table tg_labels ingestion json mapping "tg_labels_json_mapping"

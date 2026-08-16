@@ -7,6 +7,7 @@ using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Primitives;
 using StackExchange.Redis;
 using TelemetryGuard.Analytics.Abstractions;
+using TelemetryGuard.Api.Attribution;
 using TelemetryGuard.Api.Edge;
 using TelemetryGuard.Api.Options;
 using TelemetryGuard.Core.Tenancy;
@@ -184,6 +185,14 @@ public static partial class TrackerEndpoints
             });
             var retentionDays = (ushort)(tenantRecord?.RetentionDays ?? retentionOpts.Value.DefaultDays);
 
+            // ANA-08: the ad platform's params (utm_*, gclid/gbraid/...) arrive on the
+            // tracker's OWN query string; the visitor's landing page is the campaign's
+            // configured URL, so report that as landing_path.
+            var attribution = AttributionExtractor.Extract(
+                ctx,
+                $"{ctx.Request.Scheme}://{ctx.Request.Host}{ctx.Request.Path}{ctx.Request.QueryString}")
+                with { LandingPath = LandingPathOf(campaign.LandingUrl) };
+
             var evt = new ClickEvent
             {
                 TenantId = tenant.TenantId,
@@ -211,6 +220,7 @@ public static partial class TrackerEndpoints
                 RetentionDays = retentionDays,
                 TimestampUtc = now.UtcDateTime,
             };
+            evt = evt.WithAttribution(attribution);
             await sink.WriteBatchAsync(new[] { evt }, ct);
 
             // 3b. Synthetic-bot labeling (SDK-06 contract, D18): Development-only
@@ -265,4 +275,8 @@ public static partial class TrackerEndpoints
         var s = values.ToString();
         return string.IsNullOrEmpty(s) ? null : s;
     }
+
+    /// <summary>Path of the campaign's landing URL, for the landing_path column.</summary>
+    private static string? LandingPathOf(string landingUrl) =>
+        Uri.TryCreate(landingUrl, UriKind.Absolute, out var uri) ? uri.AbsolutePath : null;
 }

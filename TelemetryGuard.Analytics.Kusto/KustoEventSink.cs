@@ -43,7 +43,12 @@ public sealed class KustoEventSink : IEventSink, IHostedService
         "device_sessions_last_hour", "device_ids_this_ip_hour",
         "score", "band", "action", "rule_hits", "scorer_version", "feature_set_version",
         "retention_days", "timestamp",
-        "features", "shadow_score", "shadow_scorer_version"
+        "features", "shadow_score", "shadow_scorer_version",
+        // ANA-08 attribution — same names and order as ClickHouseEventSink.ColumnNames.
+        "gbraid", "wbraid",
+        "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", "utm_id",
+        "cookie_fbc", "cookie_fbp", "cookie_gcl_aw", "cookie_ttp",
+        "attribution_channel", "landing_path", "landing_query_keys", "headers"
     };
 
     internal const string TableName = "tg_events";
@@ -235,6 +240,12 @@ public sealed class KustoEventSink : IEventSink, IHostedService
                     foreach (var item in arr) w.WriteStringValue(item);
                     w.WriteEndArray();
                     break;
+                case IReadOnlyDictionary<string, string> map:
+                    // Kusto `dynamic` column — a JSON object, not a string.
+                    w.WriteStartObject(name);
+                    foreach (var (key, value) in map) w.WriteString(key, value);
+                    w.WriteEndObject();
+                    break;
                 default:
                     throw new InvalidOperationException(
                         $"Unmapped value type {row[i]!.GetType()} for column '{name}'.");
@@ -270,6 +281,12 @@ public sealed class KustoEventSink : IEventSink, IHostedService
         e.ScorerVersion, e.FeatureSetVersion,
         (int)e.RetentionDays,
         DateTime.SpecifyKind(e.TimestampUtc, DateTimeKind.Utc),
-        e.Features, e.ShadowScore, e.ShadowScorerVersion ?? ""
+        e.Features, e.ShadowScore, e.ShadowScorerVersion ?? "",
+        e.Gbraid, e.Wbraid,
+        e.UtmSource, e.UtmMedium, e.UtmCampaign, e.UtmTerm, e.UtmContent, e.UtmId,
+        e.CookieFbc, e.CookieFbp, e.CookieGclAw, e.CookieTtp,
+        e.AttributionChannel, e.LandingPath ?? "",
+        e.LandingQueryKeys as string[] ?? e.LandingQueryKeys.ToArray(),
+        e.Headers
     ];
 }
