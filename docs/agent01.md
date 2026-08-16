@@ -1,5 +1,7 @@
 # Agent handoff — TelemetryGuard ⇄ iplegence ⇄ Bangladesh University website
 
+> **Superseded by [`handover.md`](handover.md)** — that file is the current state and covers the attribution work, the SDK change and the deployment, none of which existed when this was written. Kept for its narrower detail on the D24 provider model.
+
 Written 2026-08-16 by the agent that did the work below. Everything here is verified
 against the machine, not assumed. **No credentials are in this file** — see
 [Credentials](#credentials-ask-the-owner).
