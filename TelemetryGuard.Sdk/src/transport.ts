@@ -1,6 +1,7 @@
 import type { Envelope, TgEvent } from './types';
 import { state } from './state';
 import { seal } from './integrity';
+import { pageUrl, pageReferrer, readableCookies } from './page-context';
 
 const MAX_QUEUE = 10; // events per envelope before an immediate flush
 const FLUSH_DELAY_MS = 2000;
@@ -71,6 +72,11 @@ export function flush(reason: 'count' | 'timer' | 'hidden' | 'pagehide'): void {
       seq: state.seq,
       nonce: state.nonce,
       sent_at: Date.now(),
+      // SDK-09: what the server cannot observe cross-origin. Collected at flush time,
+      // so the URL is the page the batch is being flushed from.
+      u: pageUrl(),
+      r: pageReferrer(),
+      ck: readableCookies(),
       events,
     };
     send(env);

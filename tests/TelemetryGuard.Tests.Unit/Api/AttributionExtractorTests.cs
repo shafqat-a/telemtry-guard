@@ -191,6 +191,78 @@ public class AttributionExtractorTests
         Assert.Equal("google_ads", result.AttributionChannel);
     }
 
+    // ---------------------------------------------------- SDK-09 page context --
+
+    [Fact]
+    public void Cross_origin_recovers_attribution_from_what_the_sdk_reported()
+    {
+        // Cross-origin the browser trims Referer to the bare origin and sends no
+        // cookies, so everything below would otherwise be lost.
+        var ctx = Ctx("https://bu.edu.bd/");            // origin only — no path, no query
+        ctx.Request.Host = new HostString("tg.example");
+
+        var result = AttributionExtractor.Extract(ctx, client: new AttributionExtractor.ClientContext(
+            "https://bu.edu.bd/admissions?utm_source=facebook&utm_medium=paid_social&fbclid=XO_TEST",
+            "https://www.facebook.com/",
+            new Dictionary<string, string> { ["_ga"] = "GA1.1.X", ["_fbp"] = "fb.1.X" }));
+
+        Assert.Equal("facebook", result.UtmSource);
+        Assert.Equal("XO_TEST", result.Fbclid);
+        Assert.Equal("meta_ads", result.AttributionChannel);
+        Assert.Equal("/admissions", result.LandingPath);
+        Assert.Equal("GA1.1.X", result.Cookies["_ga"]);
+        Assert.Equal("fb.1.X", result.Cookies["_fbp"]);
+    }
+
+    [Fact]
+    public void Same_origin_prefers_what_the_server_observed()
+    {
+        // An informative Referer is a header the server saw; the SDK's report only
+        // fills gaps, so a forged page URL cannot override it.
+        var ctx = Ctx("https://bu.edu.bd/real?utm_source=google&utm_medium=cpc");
+        ctx.Request.Host = new HostString("bu.edu.bd");
+
+        var result = AttributionExtractor.Extract(ctx, client: new AttributionExtractor.ClientContext(
+            "https://bu.edu.bd/fake?utm_source=facebook&utm_medium=paid_social", null, null));
+
+        Assert.Equal("google", result.UtmSource);
+        Assert.Equal("/real", result.LandingPath);
+    }
+
+    [Fact]
+    public void Server_cookies_win_over_reported_ones_and_the_two_are_merged()
+    {
+        // Same-origin the request carries HttpOnly cookies no script can read; the SDK
+        // reports the rest. Both should end up on the row, server value winning a clash.
+        var ctx = Ctx("https://bu.edu.bd/x", cookies: [("wordpress_logged_in_a", "SERVER"), ("_ga", "SERVER_GA")]);
+        ctx.Request.Host = new HostString("bu.edu.bd");
+
+        var result = AttributionExtractor.Extract(ctx, client: new AttributionExtractor.ClientContext(
+            "https://bu.edu.bd/x", null,
+            new Dictionary<string, string> { ["_ga"] = "CLIENT_GA", ["_fbp"] = "CLIENT_FBP" }));
+
+        Assert.Equal("SERVER", result.Cookies["wordpress_logged_in_a"]);
+        Assert.Equal("SERVER_GA", result.Cookies["_ga"]);      // server wins the clash
+        Assert.Equal("CLIENT_FBP", result.Cookies["_fbp"]);    // client fills the gap
+    }
+
+    [Fact]
+    public void The_sdks_referrer_distinguishes_organic_search_from_direct()
+    {
+        // The request's own Referer is the tagged page itself, so without the SDK's
+        // document.referrer every untagged visit looks `direct`.
+        var ctx = Ctx("https://bu.edu.bd/programs");
+        ctx.Request.Host = new HostString("bu.edu.bd");
+
+        var fromSearch = AttributionExtractor.Extract(ctx, client: new AttributionExtractor.ClientContext(
+            "https://bu.edu.bd/programs", "https://www.google.com/search?q=bangladesh+university", null));
+        Assert.Equal("organic_search", fromSearch.AttributionChannel);
+
+        var typedIn = AttributionExtractor.Extract(ctx, client: new AttributionExtractor.ClientContext(
+            "https://bu.edu.bd/programs", "", null));      // empty referrer means direct
+        Assert.Equal("direct", typedIn.AttributionChannel);
+    }
+
     [Fact]
     public void Absurdly_long_values_are_truncated()
     {

@@ -274,7 +274,7 @@ public static partial class BeaconEndpoints
                 // ANA-08: the beacon POST's Referer is the page URL (full path+query,
                 // because /i is same-origin with the page), so utm_* and click ids can be
                 // recovered here even for a visit that never went through the tracker.
-                var attribution = AttributionExtractor.Extract(ctx);
+                var attribution = AttributionExtractor.Extract(ctx, client: ReadClientContext(body));
                 var evt = BuildSnapshot(
                     tenantContext.TenantId, k, sid, hash, ip, ua,
                     ctx.Request.Headers.Select(h => h.Key).ToArray(),
@@ -396,6 +396,41 @@ public static partial class BeaconEndpoints
     }
 
     private static string? NullIfEmpty(string s) => string.IsNullOrEmpty(s) ? null : s;
+
+    /// <summary>SDK-09 page context out of the envelope: `u` (location.href), `r`
+    /// (document.referrer) and `ck` (cookies readable by script). Absent for older
+    /// bundles and irrelevant same-origin, where the server observes all three itself —
+    /// AttributionExtractor prefers what it observed and uses these only to fill gaps.</summary>
+    private static AttributionExtractor.ClientContext? ReadClientContext(JsonElement body)
+    {
+        if (body.ValueKind != JsonValueKind.Object)
+            return null;
+
+        var pageUrl = body.TryGetProperty("u", out var u) && u.ValueKind == JsonValueKind.String
+            ? u.GetString() : null;
+        var referrer = body.TryGetProperty("r", out var r) && r.ValueKind == JsonValueKind.String
+            ? r.GetString() : null;
+
+        Dictionary<string, string>? cookies = null;
+        if (body.TryGetProperty("ck", out var ck) && ck.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var property in ck.EnumerateObject())
+            {
+                if (property.Value.ValueKind != JsonValueKind.String)
+                    continue;
+                var value = property.Value.GetString();
+                if (string.IsNullOrEmpty(value))
+                    continue;
+                cookies ??= new Dictionary<string, string>(StringComparer.Ordinal);
+                cookies[property.Name] = value;
+            }
+        }
+
+        if (pageUrl is null && referrer is null && cookies is null)
+            return null;
+
+        return new AttributionExtractor.ClientContext(pageUrl, referrer, cookies);
+    }
 
     private static void Log(ILoggerFactory factory, Exception? ex, string message, params object?[] args)
         => factory.CreateLogger("TelemetryGuard.Api.Endpoints.BeaconEndpoints")

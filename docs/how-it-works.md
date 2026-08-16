@@ -27,11 +27,15 @@ connection, and makes no server-to-server call. Everything happens between the
 **visitor's browser** and the API.
 
 `/tg` is the seam. nginx on the same host proxies `location ^~ /tg/` to
-`127.0.0.1:5120`, so to the browser the API looks like part of the website. That
-same-origin arrangement is not cosmetic — it is what makes cookies and the full landing
-URL (with its query string) available to ingestion at all. Mounted on its own hostname,
-`strict-origin-when-cross-origin` would trim `Referer` to the origin and every UTM would
-be lost on non-tracker traffic (D25).
+`127.0.0.1:5120`, so to the browser the API looks like part of the website. Same-origin
+means the server observes the landing URL (`Referer`) and the cookies itself, which is
+both simpler and unforgeable.
+
+The API can also run on a **different** origin — the SDK then reports the page URL,
+referrer and script-readable cookies in the beacon itself (SDK-09), because cross-origin
+the browser sends neither. Everything survives except `HttpOnly` cookies (a site's
+login/session cookies), which no script can read. Same-origin stays preferable: what the
+server observed cannot be forged by a bot.
 
 `data-endpoint` is required because the SDK otherwise derives its API base as
 `new URL(src).origin` — origin only, path discarded — which turns `/tg` into `https://host`

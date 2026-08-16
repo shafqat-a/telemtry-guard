@@ -80,13 +80,33 @@ public static class AttributionExtractor
         public static Result Empty { get; } = new();
     }
 
-    /// <summary>Extracts from an explicit landing URL (the tracker knows it directly)
-    /// or, when that is null/unusable, from the request's Referer.</summary>
-    public static Result Extract(HttpContext ctx, string? landingUrl = null)
+    /// <summary>What the SDK reported about the page (SDK-09). Only non-null on the
+    /// beacon path, and only load-bearing when the API is cross-origin with the page —
+    /// there the server sees neither the landing URL nor the cookies.</summary>
+    public sealed record ClientContext(
+        string? PageUrl,
+        string? Referrer,
+        IReadOnlyDictionary<string, string>? Cookies);
+
+    /// <summary>Extracts from an explicit landing URL (the tracker knows it directly),
+    /// the request's own Referer, or — when the server cannot see a useful one because
+    /// the API is on another origin — what the SDK reported.</summary>
+    public static Result Extract(HttpContext ctx, string? landingUrl = null, ClientContext? client = null)
     {
+        // Precedence for the landing URL:
+        //   1. an explicit URL (the tracker knows its destination)
+        //   2. the request's Referer IF informative — same-origin that is the full
+        //      path+query, and a header the server observed cannot be forged
+        //   3. what the SDK reported — cross-origin the Referer is trimmed to the bare
+        //      origin, so this is the only place the utm_* and click ids survive
         var url = landingUrl;
         if (string.IsNullOrWhiteSpace(url))
-            url = ctx.Request.Headers.Referer.ToString();
+        {
+            var headerReferer = ctx.Request.Headers.Referer.ToString();
+            url = IsInformative(headerReferer) ? headerReferer
+                : !string.IsNullOrWhiteSpace(client?.PageUrl) ? client!.PageUrl
+                : headerReferer;
+        }
 
         string? path = null;
         string? fullUrl = null;
@@ -119,6 +139,10 @@ public static class AttributionExtractor
                 headers[header.Key] = Truncate(value);
         }
 
+        // Cookies the SERVER saw come first — same-origin that includes HttpOnly ones
+        // (a site's login/session cookies), which no script can read. Then anything the
+        // SDK reported that is not already present: cross-origin the request carries no
+        // cookies at all, so this is the whole jar minus the HttpOnly ones.
         var cookies = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var cookie in ctx.Request.Cookies)
         {
@@ -126,6 +150,16 @@ public static class AttributionExtractor
                 break;
             if (!string.IsNullOrEmpty(cookie.Value))
                 cookies[cookie.Key] = Truncate(cookie.Value);
+        }
+        if (client?.Cookies is { Count: > 0 } reported)
+        {
+            foreach (var (name, value) in reported)
+            {
+                if (cookies.Count >= MaxEntries)
+                    break;
+                if (!string.IsNullOrEmpty(value) && !cookies.ContainsKey(name))
+                    cookies[name] = Truncate(value);
+            }
         }
 
         var gclid = Get(marketing, "gclid");
@@ -163,7 +197,12 @@ public static class AttributionExtractor
             AttributionChannel = Classify(
                 gclid, gbraid, wbraid, fbclid, ttclid, msclkid,
                 utmSource, utmMedium, cookieGclAw, cookieFbc,
-                ctx.Request.Headers.Referer.ToString(),
+                // document.referrer is the TRUE external referrer. The request's own
+                // Referer is the tagged page itself, which is why an untagged visit
+                // otherwise records as `direct` even when it came from a search engine.
+                // When the SDK reported page context at all its referrer is
+                // authoritative — including when empty, which means direct.
+                client?.PageUrl is not null ? (client.Referrer ?? "") : ctx.Request.Headers.Referer.ToString(),
                 ctx.Request.Host.Host),
             LandingUrl = fullUrl,
             LandingPath = path,
@@ -244,6 +283,12 @@ public static class AttributionExtractor
             || host.Contains("yahoo.") || host.Contains("yandex.") || host.Contains("baidu.")
             || host.Contains("ecosia.") || host.Contains("brave.");
     }
+
+    /// <summary>Whether a URL says more than "some page on this host" — i.e. it kept a
+    /// path or a query. `strict-origin-when-cross-origin` trims a cross-origin Referer to
+    /// exactly the bare origin, which is what this detects.</summary>
+    private static bool IsInformative(string value) =>
+        TryParse(value, out var uri) && (uri.Query.Length > 0 || uri.AbsolutePath.Length > 1);
 
     private static bool TryParse(string value, out Uri uri) =>
         Uri.TryCreate(value, UriKind.Absolute, out uri!)

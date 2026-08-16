@@ -9,7 +9,9 @@ import { fnv1aHex } from './util';
  *
  * WIRE-FORMAT CONTRACT (mirror exactly in API-04's C# verifier):
  * - Payload is UTF-8 JSON, single line, no whitespace, canonical key order
- *   k, sid, seq, nonce, sent_at, events, ending in ,"c":"<8 lowercase hex>"}
+ *   k, sid, seq, nonce, sent_at, u, r, ck, events, ending in ,"c":"<8 lowercase hex>"}
+ *   (u/r/ck are SDK-09 page context and are omitted by JSON.stringify when undefined;
+ *   the verifier never needs the field list — it hashes the prefix as serialized)
  * - Verify: locate the LAST occurrence of ,"c":"; prefix = payload[0..idx) + '}';
  *   recompute FNV-1a 32-bit (offset basis 0x811c9dc5, prime 0x01000193) over the
  *   UTF-8 bytes of prefix; compare to the hex value. Then independently check:
@@ -27,6 +29,9 @@ export function seal(env: Envelope): string {
     seq: env.seq,
     nonce: env.nonce,
     sent_at: env.sent_at,
+    u: env.u,
+    r: env.r,
+    ck: env.ck,
     events: env.events,
   };
   const json = JSON.stringify(ordered); // no whitespace; UTF-8 on the wire
