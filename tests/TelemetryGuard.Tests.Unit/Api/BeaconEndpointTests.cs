@@ -618,6 +618,69 @@ public sealed class BeaconEndpointTests
     }
 
     [Fact]
+    public async Task Post_SiteKeyFromEnvelopeOnly_IsAccepted_AsTheShippedSdkSendsIt()
+    {
+        // SDK-02 is the canonical wire contract and puts `k` INSIDE the envelope for
+        // POST /i — only /i/init and /decide take it as a query param. The server used to
+        // require the query form, so every real beacon was silently 204'd: bundle loads,
+        // /i/init succeeds, POST /i returns 204, and nothing is ever recorded.
+        using var app = new BeaconApp();
+        using var client = app.Client();
+
+        var req = new HttpRequestMessage(HttpMethod.Post, "/i")   // no ?k=
+        {
+            Content = new StringContent(
+                Envelope(0, """[{"e":"pv","t":1}]"""), Encoding.UTF8, "text/plain"),
+        };
+        req.Headers.TryAddWithoutValidation("User-Agent", "TestUA/1.0");
+
+        var resp = await client.SendAsync(req);
+
+        Assert.Equal(HttpStatusCode.NoContent, resp.StatusCode);
+        Assert.NotEmpty(app.Redis.Hashes);   // session aggregate written
+        Assert.NotEmpty(app.Sink.Events);    // first beacon always snapshots
+    }
+
+    [Fact]
+    public async Task Post_UnknownSiteKeyInEnvelopeOnly_StaysASuccessShapedDrop()
+    {
+        using var app = new BeaconApp();
+        using var client = app.Client();
+
+        var req = new HttpRequestMessage(HttpMethod.Post, "/i")
+        {
+            Content = new StringContent(
+                Envelope(0, """[{"e":"pv","t":1}]""", k: "who-dis"), Encoding.UTF8, "text/plain"),
+        };
+
+        var resp = await client.SendAsync(req);
+
+        Assert.Equal(HttpStatusCode.NoContent, resp.StatusCode);
+        Assert.Empty(app.Redis.Hashes);
+        Assert.Empty(app.Sink.Events);
+    }
+
+    [Fact]
+    public async Task Post_QuerySiteKeyStillWins_AndAMismatchedEnvelopeKeyIsStillDropped()
+    {
+        // The query form must keep working: it is what lets the tenant middleware (and
+        // the per-tenant rate-limit partition) resolve a beacon before the handler runs.
+        using var app = new BeaconApp();
+        using var client = app.Client();
+
+        var accepted = await client.SendAsync(Post(Envelope(0, """[{"e":"pv","t":1}]""")));
+        Assert.Equal(HttpStatusCode.NoContent, accepted.StatusCode);
+        Assert.NotEmpty(app.Redis.Hashes);
+
+        using var app2 = new BeaconApp();
+        using var client2 = app2.Client();
+        var mismatched = await client2.SendAsync(Post(
+            Envelope(0, """[{"e":"pv","t":1}]""", k: "tg_sk_someoneelse")));   // query != body
+        Assert.Equal(HttpStatusCode.NoContent, mismatched.StatusCode);
+        Assert.Empty(app2.Redis.Hashes);
+    }
+
+    [Fact]
     public async Task Post_UnknownSiteKey_SuccessShaped204_IndistinguishableFromAccepted()
     {
         using var app = new BeaconApp();

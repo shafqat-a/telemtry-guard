@@ -121,17 +121,6 @@ public static partial class BeaconEndpoints
     {
         var opts = beaconOpts.Value;
 
-        // Tenant resolution, first thing. Unknown key -> success-shaped 204,
-        // indistinguishable in status from an accepted beacon (anti-probing).
-        var k = ctx.Request.Query["k"].ToString();
-        var resolved = string.IsNullOrEmpty(k)
-            ? null
-            : await resolver.ResolveSiteKeyAsync(k, ct);
-        if (resolved is null)
-            return Results.NoContent();
-        tenantContext.Resolve(new TenantId(resolved.TenantId), resolved.SiteKey);
-        var tid = resolved.TenantId.ToString("D");
-
         // Body cap: 413 is the ONLY non-204 status this endpoint produces.
         if (ctx.Request.ContentLength > opts.MaxBodyBytes)
             return Results.StatusCode(StatusCodes.Status413PayloadTooLarge);
@@ -155,6 +144,9 @@ public static partial class BeaconEndpoints
         if (Encoding.UTF8.GetByteCount(rawBody) > opts.MaxBodyBytes)
             return Results.StatusCode(StatusCodes.Status413PayloadTooLarge);
 
+        // Set once the envelope's site key resolves; only used for logging before that.
+        var tid = "(unresolved)";
+
         // Everything after body-read: failures are logged and swallowed — 204 always.
         try
         {
@@ -165,9 +157,37 @@ public static partial class BeaconEndpoints
             }
             catch (JsonException)
             {
-                Log(loggerFactory, null, "Beacon drop: unparsable JSON for tenant {TenantId}", tid);
+                Log(loggerFactory, null, "Beacon drop: unparsable JSON");
                 return Results.NoContent();
             }
+
+            // Site key: query string first, then the envelope's own `k`. SDK-02 — the
+            // canonical wire contract — carries the key INSIDE the envelope for POST /i
+            // (only /i/init and /decide take it as a query param), so a body-only key is
+            // the normal case for the shipped SDK, not a fallback. The query form is kept
+            // because it is what lets TenantResolutionMiddleware (and therefore the
+            // per-tenant rate-limit partition) resolve a beacon before this handler runs.
+            //
+            // Resolution has to happen after the body read for that reason, which is safe:
+            // the size caps above are tenant-independent and already ran.
+            var k = ctx.Request.Query["k"].ToString();
+            if (string.IsNullOrEmpty(k)
+                && body.ValueKind == JsonValueKind.Object
+                && body.TryGetProperty("k", out var envelopeKey)
+                && envelopeKey.ValueKind == JsonValueKind.String)
+            {
+                k = envelopeKey.GetString() ?? string.Empty;
+            }
+
+            // Unknown key -> success-shaped 204, indistinguishable in status from an
+            // accepted beacon (anti-probing).
+            var resolved = string.IsNullOrEmpty(k)
+                ? null
+                : await resolver.ResolveSiteKeyAsync(k, ct);
+            if (resolved is null)
+                return Results.NoContent();
+            tenantContext.Resolve(new TenantId(resolved.TenantId), resolved.SiteKey);
+            tid = resolved.TenantId.ToString("D");
 
             // Validation (silent drops). seq >= 0: SDK-02 starts at 0 — the first
             // envelope of every session is seq:0 and MUST be accepted.

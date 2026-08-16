@@ -198,7 +198,14 @@ builder.Services.AddSingleton<IEdgeSignalReader, EdgeSignalReader>();
 builder.Services.Configure<ForwardedHeadersOptions>(o =>
 {
     o.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
-    o.ForwardLimit = 1;
+    // How many proxy hops to unwind. 1 is right for a single edge in front of Kestrel
+    // (the Cloudflare deployment, D13). Raise it ONLY to the exact number of proxies you
+    // actually operate, and list every one of them in TrustedProxyCidrs: each extra hop
+    // is one more X-Forwarded-For entry the middleware will accept, so a limit larger
+    // than the real chain lets a client prepend a forged address and be believed.
+    // Example — a platform edge in front of a local nginx that also appends
+    // ($proxy_add_x_forwarded_for) — needs ForwardLimit 2 and both CIDRs trusted.
+    o.ForwardLimit = Math.Max(1, builder.Configuration.GetValue("ForwardedHeaders:ForwardLimit", 1));
     o.KnownNetworks.Clear();
     o.KnownProxies.Clear();
     var cidrs = builder.Configuration.GetSection("ForwardedHeaders:TrustedProxyCidrs")
