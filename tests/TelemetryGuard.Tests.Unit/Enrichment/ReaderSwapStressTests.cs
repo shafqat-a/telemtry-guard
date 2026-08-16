@@ -1,11 +1,13 @@
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using TelemetryGuard.RiskEngine.Enrichment;
+using TelemetryGuard.RiskEngine.Enrichment.Providers;
 
 namespace TelemetryGuard.Tests.Unit.Enrichment;
 
-/// <summary>SwapReaders publishes a fully-formed ReaderSet atomically: a tight Enrich
-/// loop racing 10k swaps must never observe a torn/partial set or throw.</summary>
+/// <summary>The MaxMind provider's SwapReaders publishes a fully-formed ReaderSet
+/// atomically: a tight Enrich loop racing 10k swaps must never observe a torn/partial set
+/// or throw. (The iplegence provider's equivalent race lives in IplegenceProviderTests.)</summary>
 public class ReaderSwapStressTests
 {
     [Fact]
@@ -13,9 +15,14 @@ public class ReaderSwapStressTests
     {
         var dataDir = Path.Combine(Path.GetTempPath(), "tg-geo-swap-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(dataDir);
-        var service = new IpEnrichmentService(
-            Options.Create(new IpEnrichmentOptions { DataDir = dataDir }),
-            NullLogger<IpEnrichmentService>.Instance);
+        var provider = new MaxMindIpIntelligenceProvider(
+            Options.Create(new IpEnrichmentOptions
+            {
+                Provider = IpIntelligenceProviders.MaxMind,
+                DataDir = dataDir,
+            }),
+            NullLogger<MaxMindIpIntelligenceProvider>.Instance);
+        var service = new IpEnrichmentService(provider);
         try
         {
             var stop = false;
@@ -42,7 +49,7 @@ public class ReaderSwapStressTests
 
             for (var i = 0; i < 10_000; i++)
             {
-                service.SwapReaders(new ReaderSet
+                provider.SwapReaders(new ReaderSet
                 {
                     CityMtimeUtc = DateTime.UtcNow,
                     AsnMtimeUtc = DateTime.UtcNow,

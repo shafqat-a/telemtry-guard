@@ -3,35 +3,47 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using TelemetryGuard.RiskEngine.Contracts;
 using TelemetryGuard.RiskEngine.Enrichment;
+using TelemetryGuard.RiskEngine.Enrichment.Providers;
 
 namespace TelemetryGuard.Tests.Unit.Enrichment;
 
 /// <summary>Degradation principle (D13): with no database files on disk the service must
-/// construct, serve lookups with null fields, and never throw.</summary>
+/// construct, serve lookups with null fields, and never throw. Every provider (D24) owes
+/// the same guarantee, so the suite runs once per provider.</summary>
 public class MissingDatabaseTests : IDisposable
 {
     private readonly string _emptyDataDir;
-    private readonly IpEnrichmentService _service;
 
     public MissingDatabaseTests()
     {
         _emptyDataDir = Path.Combine(Path.GetTempPath(), "tg-geo-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(_emptyDataDir);
-        _service = new IpEnrichmentService(
-            Options.Create(new IpEnrichmentOptions { DataDir = _emptyDataDir }),
-            NullLogger<IpEnrichmentService>.Instance);
     }
 
-    public void Dispose()
+    public void Dispose() => Directory.Delete(_emptyDataDir, recursive: true);
+
+    public static TheoryData<string> Providers => new()
     {
-        _service.Dispose();
-        Directory.Delete(_emptyDataDir, recursive: true);
+        IpIntelligenceProviders.Iplegence,
+        IpIntelligenceProviders.MaxMind,
+    };
+
+    private IpEnrichmentService CreateService(string provider)
+    {
+        var options = Options.Create(new IpEnrichmentOptions { Provider = provider, DataDir = _emptyDataDir });
+        IIpIntelligenceProvider impl = provider == IpIntelligenceProviders.Iplegence
+            ? new IplegenceIpIntelligenceProvider(options, NullLogger<IplegenceIpIntelligenceProvider>.Instance)
+            : new MaxMindIpIntelligenceProvider(options, NullLogger<MaxMindIpIntelligenceProvider>.Instance);
+        return new IpEnrichmentService(impl);
     }
 
-    [Fact]
-    public void Public_ip_yields_null_fields_without_throwing()
+    [Theory]
+    [MemberData(nameof(Providers))]
+    public void Public_ip_yields_null_fields_without_throwing(string provider)
     {
-        var result = _service.Enrich("8.8.8.8");
+        using var service = CreateService(provider);
+
+        var result = service.Enrich("8.8.8.8");
 
         Assert.NotNull(result);
         Assert.Null(result.CountryCode);
@@ -48,11 +60,14 @@ public class MissingDatabaseTests : IDisposable
         Assert.False(result.IsPrivateRelay);
     }
 
-    [Fact]
-    public void Unparseable_ip_returns_empty()
+    [Theory]
+    [MemberData(nameof(Providers))]
+    public void Unparseable_ip_returns_empty(string provider)
     {
-        Assert.Same(IpEnrichment.Empty, _service.Enrich("not-an-ip"));
-        Assert.Same(IpEnrichment.Empty, _service.Enrich(""));
+        using var service = CreateService(provider);
+
+        Assert.Same(IpEnrichment.Empty, service.Enrich("not-an-ip"));
+        Assert.Same(IpEnrichment.Empty, service.Enrich(""));
     }
 
     [Theory]
@@ -64,32 +79,55 @@ public class MissingDatabaseTests : IDisposable
     [InlineData("169.254.1.1")]   // link-local
     [InlineData("::1")]           // IPv6 loopback
     [InlineData("fe80::1")]       // IPv6 link-local
-    public void Private_and_loopback_addresses_return_empty(string ip) =>
-        Assert.Same(IpEnrichment.Empty, _service.Enrich(ip));
-
-    [Fact]
-    public void Private_relay_flag_is_computed_even_with_no_databases()
+    public void Private_and_loopback_addresses_return_empty(string ip)
     {
+        using var iplegence = CreateService(IpIntelligenceProviders.Iplegence);
+        using var maxmind = CreateService(IpIntelligenceProviders.MaxMind);
+
+        Assert.Same(IpEnrichment.Empty, iplegence.Enrich(ip));
+        Assert.Same(IpEnrichment.Empty, maxmind.Enrich(ip));
+    }
+
+    [Theory]
+    [MemberData(nameof(Providers))]
+    public void Private_relay_flag_is_computed_even_with_no_databases(string provider)
+    {
+        using var service = CreateService(provider);
+
         // 172.224.226.5 sits inside an embedded Private Relay CIDR (172.224.226.0/27).
-        var result = _service.Enrich("172.224.226.5");
+        var result = service.Enrich("172.224.226.5");
         Assert.True(result.IsPrivateRelay);
         Assert.Null(result.CountryCode);
         Assert.Null(result.IsProxyOrVpn); // RAW flag stays null — carve-out belongs to RSK-04
     }
 
-    [Fact]
-    public void Empty_path_handles_100k_calls_under_a_second()
+    [Theory]
+    [MemberData(nameof(Providers))]
+    public void Empty_path_handles_100k_calls_under_a_second(string provider)
     {
+        using var service = CreateService(provider);
+
         // Warm-up (JIT).
-        _ = _service.Enrich("127.0.0.1");
-        _ = _service.Enrich("not-an-ip");
+        _ = service.Enrich("127.0.0.1");
+        _ = service.Enrich("not-an-ip");
 
         var sw = Stopwatch.StartNew();
         for (var i = 0; i < 100_000; i++)
-            _ = _service.Enrich("127.0.0.1");
+            _ = service.Enrich("127.0.0.1");
         sw.Stop();
 
         Assert.True(sw.Elapsed < TimeSpan.FromSeconds(1),
             $"100k Empty-path Enrich calls took {sw.Elapsed.TotalMilliseconds:F0} ms (budget 1000 ms)");
+    }
+
+    [Theory]
+    [MemberData(nameof(Providers))]
+    public void Disposing_twice_is_safe(string provider)
+    {
+        // The DI container disposes the provider singleton AND IpEnrichmentService
+        // disposes the provider it was given — that must not double-dispose readers.
+        var service = CreateService(provider);
+        service.Dispose();
+        service.Dispose();
     }
 }

@@ -2,6 +2,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using TelemetryGuard.RiskEngine.Contracts;
 using TelemetryGuard.RiskEngine.Enrichment;
+using TelemetryGuard.RiskEngine.Enrichment.Providers;
 using TelemetryGuard.RiskEngine.Features;
 using TelemetryGuard.RiskEngine.Pipeline;
 using TelemetryGuard.RiskEngine.Rules;
@@ -121,11 +122,12 @@ public sealed class ScoringPipelinePerfTests
         // Real compute path; enrichment with no database files (null path — degrades
         // to Empty fields exactly like a fresh install).
         using var enrichmentService = new IpEnrichmentService(
-            Options.Create(new IpEnrichmentOptions
-            {
-                DataDir = Path.Combine(Path.GetTempPath(), "tg-perf-no-geo-dbs"),
-            }),
-            NullLogger<IpEnrichmentService>.Instance);
+            new IplegenceIpIntelligenceProvider(
+                Options.Create(new IpEnrichmentOptions
+                {
+                    DataDir = Path.Combine(Path.GetTempPath(), "tg-perf-no-geo-dbs"),
+                }),
+                NullLogger<IplegenceIpIntelligenceProvider>.Instance));
         using var cachedEnrichment = new CachedIpEnrichmentService(enrichmentService);
 
         var pipeline = new ScoringPipeline(

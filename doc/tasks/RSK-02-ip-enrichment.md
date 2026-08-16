@@ -11,6 +11,14 @@ detail_level: full
 
 # RSK-02: IP enrichment (GeoIP, ASN, proxy, Tor, Private Relay)
 
+> **Amended by D24 (implemented).** The `IIpEnrichmentService` contract, `IpEnrichment`
+> shape, null semantics and degradation rules below are all still normative. What changed:
+> the lookup itself now sits behind `IIpIntelligenceProvider`, and the **default dataset is
+> iplegence's merged `Superior-IP.mmdb`** (`scripts/update-iplegence.sh`), not GeoLite2 +
+> IP2Proxy — that trio is retained as the `MaxMind` provider. `AsnType` classification and
+> the datacenter-ASN seed moved to `Enrichment/Providers/AsnClassifier`. Read D24 in
+> `doc/spec.md` and `doc/runbooks/iplegence-ip-intelligence.md` before touching this area.
+
 ## Objective
 
 Implement `IIpEnrichmentService` in `TelemetryGuard.RiskEngine`: a synchronous, in-process, microsecond-latency lookup that turns an IP address into an `IpEnrichment` record (country, city, coordinates, timezone, ASN, `AsnType` classification, proxy/VPN/Tor/datacenter flags, Apple Private Relay flag). Backed by memory-mapped MaxMind GeoLite2 databases and the IP2Proxy LITE database, refreshed weekly by a background service with an atomic reader swap, and by an embedded Apple Private Relay egress-range list. Missing database files must degrade to null fields (NaN downstream), never crash the service.

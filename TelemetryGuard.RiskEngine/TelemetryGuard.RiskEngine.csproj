@@ -8,6 +8,10 @@
   <ItemGroup>
     <PackageReference Include="DeviceDetector.NET" Version="6.4.2" />
     <PackageReference Include="IP2Proxy" Version="4.2.0" />
+    <!-- D24: the iplegence provider reads Superior-IP.mmdb with the raw MMDB reader and a
+         custom record type. It arrives transitively via MaxMind.GeoIP2, but it is a direct
+         dependency here, so it is declared directly. -->
+    <PackageReference Include="MaxMind.Db" Version="4.1.0" />
     <PackageReference Include="MaxMind.GeoIP2" Version="5.2.0" />
     <PackageReference Include="Microsoft.Extensions.Caching.Memory" Version="8.0.1" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="8.0.2" />
