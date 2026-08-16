@@ -22,9 +22,11 @@ public static class AttributionExtensions
             CookieGclAw = a.CookieGclAw,
             CookieTtp = a.CookieTtp,
             AttributionChannel = a.AttributionChannel,
+            LandingUrl = a.LandingUrl,
             LandingPath = a.LandingPath,
             LandingQueryKeys = a.LandingQueryKeys,
             Headers = a.Headers,
+            Cookies = a.Cookies,
         };
 
     /// <summary>As <see cref="WithAttribution"/>, and also fills the platform click-id

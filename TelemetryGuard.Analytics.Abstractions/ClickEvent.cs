@@ -39,9 +39,8 @@ public sealed record ClickEvent
     public string UtmContent { get; init; } = "";
     public string UtmId { get; init; } = "";
 
-    // Platform first-party attribution cookies. An ALLOWLIST, never the raw Cookie
-    // header: that header also carries session and auth cookies, and copying those
-    // into the event store would turn analytics into a credential store.
+    // Platform first-party attribution cookies, promoted to their own columns because
+    // reporting filters on them. The complete cookie jar is in Cookies below.
     public string CookieFbc { get; init; } = "";       // Meta click id, persisted by the pixel
     public string CookieFbp { get; init; } = "";       // Meta browser id
     public string CookieGclAw { get; init; } = "";     // Google Ads click id
@@ -53,15 +52,22 @@ public sealed record ClickEvent
     /// re-implement the precedence rules.</summary>
     public string AttributionChannel { get; init; } = "";
 
-    /// <summary>Landing page path WITHOUT its query string. The query's parameter
-    /// NAMES are kept separately (see <see cref="LandingQueryKeys"/>) — same reasoning as
-    /// <see cref="HeaderNames"/>: shape is useful, arbitrary values may carry PII.</summary>
+    /// <summary>Full landing URL including its query string.</summary>
+    public string? LandingUrl { get; init; }
+
+    /// <summary>Landing page path without the query, for cheap grouping by page.</summary>
     public string? LandingPath { get; init; }
     public IReadOnlyList<string> LandingQueryKeys { get; init; } = Array.Empty<string>();
 
-    /// <summary>Allowlisted request header values (see AttributionExtractor). Cookie
-    /// and Authorization are never included.</summary>
+    /// <summary>Every request header, verbatim (D25, owner decision: capture the whole
+    /// request). Includes Cookie and Authorization when present.</summary>
     public IReadOnlyDictionary<string, string> Headers { get; init; }
+        = new Dictionary<string, string>();
+
+    /// <summary>Every cookie sent with the request, verbatim — the identifier that lets a
+    /// visitor be followed across pages. Includes session and auth cookies, so read access
+    /// to this store is equivalent to holding them.</summary>
+    public IReadOnlyDictionary<string, string> Cookies { get; init; }
         = new Dictionary<string, string>();
 
     // ---- HTTP layer ----

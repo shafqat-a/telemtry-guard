@@ -16,13 +16,19 @@ namespace TelemetryGuard.Api.Attribution;
 ///                   the origin alone and every UTM is lost. That is a real constraint
 ///                   on where this API may be deployed, not a detail.
 ///
-/// Two deliberate limits on what is copied into the event store:
-///   * Cookies: an allowlist of the four platform attribution cookies. The raw Cookie
-///     header also carries session/auth cookies (on a WordPress site, every logged-in
-///     editor's) and must never be persisted alongside analytics.
-///   * Query values: only the marketing parameters get stored. Everything else is
-///     recorded by NAME only, mirroring how header names are already handled — a GET
-///     form post can put an email address in a query string.
+/// FULL-REQUEST CAPTURE (owner decision, D25): every request header and every cookie is
+/// stored verbatim, along with the full landing URL, so a visitor can be followed across
+/// pages using whatever identifier their own cookies carry. The marketing parameters and
+/// the four platform cookies additionally get their own columns because they are what
+/// reporting filters on; the raw maps are the record of everything else.
+///
+/// Consequences to keep in mind when granting access to tg_events: the cookie map
+/// contains session and auth cookies (on a WordPress site, every logged-in editor's),
+/// and the landing URL contains whatever a GET form put in the query string. Treat read
+/// access to the event store as equivalent to those credentials.
+///
+/// Values are capped per entry (see MaxValueLength) — an ingest guard against one
+/// crafted request bloating a row and the batch it rides in, not a filter.
 /// </summary>
 public static class AttributionExtractor
 {
@@ -33,14 +39,12 @@ public static class AttributionExtractor
         "gclid", "gbraid", "wbraid", "fbclid", "ttclid", "msclkid",
     }.ToFrozenSet(StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>Header values worth keeping for attribution and forensics. Cookie and
-    /// Authorization are absent by design and must stay absent.</summary>
-    private static readonly string[] HeaderAllowlist =
-    {
-        "Referer", "Origin", "Accept", "Accept-Encoding", "Accept-Language",
-        "Sec-Fetch-Site", "Sec-Fetch-Mode", "Sec-Fetch-Dest", "Sec-Fetch-User",
-        "Upgrade-Insecure-Requests", "DNT", "X-Requested-With", "Sec-CH-UA-Platform-Version",
-    };
+    /// <summary>Per-value cap. Ad platforms and auth cookies both emit long opaque
+    /// strings; this bounds one crafted request's effect on a row.</summary>
+    private const int MaxValueLength = 4096;
+
+    /// <summary>Cap on how many headers/cookies are recorded per request.</summary>
+    private const int MaxEntries = 64;
 
     /// <summary>Attribution cookies, by platform. Values are opaque click/browser ids.</summary>
     private const string FbcCookie = "_fbc";
@@ -67,9 +71,11 @@ public static class AttributionExtractor
         public string CookieGclAw { get; init; } = "";
         public string CookieTtp { get; init; } = "";
         public string AttributionChannel { get; init; } = "";
+        public string? LandingUrl { get; init; }
         public string? LandingPath { get; init; }
         public IReadOnlyList<string> LandingQueryKeys { get; init; } = Array.Empty<string>();
         public IReadOnlyDictionary<string, string> Headers { get; init; } = new Dictionary<string, string>();
+        public IReadOnlyDictionary<string, string> Cookies { get; init; } = new Dictionary<string, string>();
 
         public static Result Empty { get; } = new();
     }
@@ -83,12 +89,14 @@ public static class AttributionExtractor
             url = ctx.Request.Headers.Referer.ToString();
 
         string? path = null;
+        string? fullUrl = null;
         var queryKeys = Array.Empty<string>();
         var marketing = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
         if (!string.IsNullOrWhiteSpace(url) && TryParse(url, out var uri))
         {
             path = uri.AbsolutePath;
+            fullUrl = Truncate(uri.AbsoluteUri);   // query included — full-request capture
             var parsed = QueryHelpers.ParseQuery(uri.Query);
             queryKeys = parsed.Keys.ToArray();
             foreach (var (key, values) in parsed)
@@ -102,14 +110,22 @@ public static class AttributionExtractor
         }
 
         var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var name in HeaderAllowlist)
+        foreach (var header in ctx.Request.Headers)
         {
-            var value = ctx.Request.Headers[name].ToString();
-            if (string.IsNullOrEmpty(value))
-                continue;
-            var sanitized = Sanitize(name, value);
-            if (sanitized.Length > 0)
-                headers[name] = Truncate(sanitized);
+            if (headers.Count >= MaxEntries)
+                break;
+            var value = header.Value.ToString();
+            if (!string.IsNullOrEmpty(value))
+                headers[header.Key] = Truncate(value);
+        }
+
+        var cookies = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var cookie in ctx.Request.Cookies)
+        {
+            if (cookies.Count >= MaxEntries)
+                break;
+            if (!string.IsNullOrEmpty(cookie.Value))
+                cookies[cookie.Key] = Truncate(cookie.Value);
         }
 
         var gclid = Get(marketing, "gclid");
@@ -149,9 +165,11 @@ public static class AttributionExtractor
                 utmSource, utmMedium, cookieGclAw, cookieFbc,
                 ctx.Request.Headers.Referer.ToString(),
                 ctx.Request.Host.Host),
+            LandingUrl = fullUrl,
             LandingPath = path,
             LandingQueryKeys = queryKeys,
             Headers = headers,
+            Cookies = cookies,
         };
     }
 
@@ -206,28 +224,17 @@ public static class AttributionExtractor
         return IsSearchEngine(refererUri) ? "organic_search" : "referral";
     }
 
-    /// <summary>Header values are stored verbatim EXCEPT Referer, which is the landing
-    /// URL and therefore carries the same query string this class deliberately refuses to
-    /// persist (a GET form can put an email in it). Keep scheme+host+path; the query's
-    /// parameter names are already captured in LandingQueryKeys, and the marketing values
-    /// have their own columns. An unparseable Referer is dropped rather than stored raw.</summary>
-    private static string Sanitize(string name, string value)
-    {
-        if (!string.Equals(name, "Referer", StringComparison.OrdinalIgnoreCase))
-            return value;
-        return TryParse(value, out var uri) ? $"{uri.Scheme}://{uri.Authority}{uri.AbsolutePath}" : "";
-    }
-
     private static bool IsPaidMedium(string medium) =>
         medium.Length > 0 && medium.ToLowerInvariant() is
             "cpc" or "ppc" or "paid" or "paidsearch" or "paid_search" or "paidsocial"
             or "paid_social" or "cpm" or "display" or "banner" or "retargeting";
 
+    /// <summary>"google.com" -> "google", so utm_source spelling variants collapse.</summary>
     private static string NormalizeSource(string source)
     {
         var s = source.ToLowerInvariant();
         var dot = s.IndexOf('.');
-        return dot > 0 ? s[..dot] : s;   // "google.com" -> "google"
+        return dot > 0 ? s[..dot] : s;
     }
 
     private static bool IsSearchEngine(Uri uri)
@@ -248,7 +255,6 @@ public static class AttributionExtractor
     private static string Cookie(HttpContext ctx, string name) =>
         ctx.Request.Cookies.TryGetValue(name, out var v) && !string.IsNullOrEmpty(v) ? Truncate(v) : "";
 
-    /// <summary>Ad platforms emit long opaque ids; a cap keeps one crafted request from
-    /// bloating a row (and the batch it rides in).</summary>
-    private static string Truncate(string value) => value.Length <= 512 ? value : value[..512];
+    private static string Truncate(string value) =>
+        value.Length <= MaxValueLength ? value : value[..MaxValueLength];
 }

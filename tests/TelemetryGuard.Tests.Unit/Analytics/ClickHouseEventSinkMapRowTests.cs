@@ -32,9 +32,9 @@ public sealed class ClickHouseEventSinkMapRowTests
     };
 
     [Fact]
-    public void ColumnNames_HasAll87Columns_InContractOrder()
+    public void ColumnNames_HasAll89Columns_InContractOrder()
     {
-        Assert.Equal(87, ClickHouseEventSink.ColumnNames.Length);
+        Assert.Equal(89, ClickHouseEventSink.ColumnNames.Length);
         Assert.Equal(0, Array.IndexOf(ClickHouseEventSink.ColumnNames, "tenant_id"));
         Assert.Equal(66, Array.IndexOf(ClickHouseEventSink.ColumnNames, "retention_days"));
         Assert.Equal(67, Array.IndexOf(ClickHouseEventSink.ColumnNames, "timestamp"));
@@ -46,11 +46,11 @@ public sealed class ClickHouseEventSinkMapRowTests
     }
 
     [Fact]
-    public void MapRow_Produces87Values_MatchingColumnOrder()
+    public void MapRow_Produces89Values_MatchingColumnOrder()
     {
         var row = ClickHouseEventSink.MapRow(SampleEvent());
 
-        Assert.Equal(87, row.Length);
+        Assert.Equal(89, row.Length);
         Assert.Equal(TenantGuid, row[0]);                 // tenant_id
         Assert.Equal("tracker", row[3]);                  // kind wire string
         Assert.Equal((ushort)90, row[66]);                // retention_days

@@ -123,47 +123,46 @@ public class AttributionExtractorTests
         Assert.Equal("direct", AttributionExtractor.Extract(Ctx()).AttributionChannel);
 
     [Fact]
-    public void Session_and_auth_cookies_are_never_captured()
+    public void Every_cookie_is_captured_so_a_visitor_can_be_followed_across_pages()
     {
-        // The guardrail: a WordPress login cookie must not reach the event store,
-        // where anyone with read access could replay it.
+        // D25 (owner decision): the whole request is stored. The cookie jar is the
+        // identifier that links one visitor's pageviews together, so it is kept whole —
+        // session and auth cookies included. Read access to tg_events is therefore
+        // equivalent to holding them.
         var result = AttributionExtractor.Extract(Ctx(
             "https://bu.edu.bd/?utm_source=google",
             cookies:
             [
-                ("wordpress_logged_in_abc", "admin|1799999999|SECRETTOKEN"),
-                ("PHPSESSID", "s3cr3t"),
+                ("wordpress_logged_in_abc", "editor|1799999999|TOKEN"),
+                ("PHPSESSID", "s3ss10n"),
+                ("_ga", "GA1.1.1234567890.1699999999"),
                 ("_fbc", "fb.1.1699.CLICKID"),
             ]));
 
-        Assert.Equal("fb.1.1699.CLICKID", result.CookieFbc);   // allowlisted one kept
-        var everything = string.Join("|", result.Headers.Select(h => $"{h.Key}={h.Value}"));
-        Assert.DoesNotContain("SECRETTOKEN", everything);
-        Assert.DoesNotContain("PHPSESSID", everything);
-        Assert.DoesNotContain("s3cr3t", everything);
-        Assert.False(result.Headers.ContainsKey("Cookie"));
+        Assert.Equal("editor|1799999999|TOKEN", result.Cookies["wordpress_logged_in_abc"]);
+        Assert.Equal("s3ss10n", result.Cookies["PHPSESSID"]);
+        Assert.Equal("GA1.1.1234567890.1699999999", result.Cookies["_ga"]);
+        Assert.Equal("fb.1.1699.CLICKID", result.Cookies["_fbc"]);
+        // The platform cookies keep their own columns as well — reporting filters on them.
+        Assert.Equal("fb.1.1699.CLICKID", result.CookieFbc);
     }
 
     [Fact]
-    public void Non_marketing_query_values_are_recorded_by_name_only()
+    public void The_full_landing_url_is_kept_including_its_query()
     {
-        // A GET form can put an email in a query string; keep the shape, not the value.
         var result = AttributionExtractor.Extract(
-            Ctx("https://bu.edu.bd/apply?utm_source=google&email=student%40example.com&ssn=12345"));
+            Ctx("https://bu.edu.bd/apply?utm_source=google&program=bba&ref=poster7"));
 
         Assert.Equal("google", result.UtmSource);
-        Assert.Contains("email", result.LandingQueryKeys);
-        Assert.Contains("ssn", result.LandingQueryKeys);
-
-        var everything = string.Join("|", result.LandingQueryKeys)
-            + "|" + result.LandingPath
-            + "|" + string.Join("|", result.Headers.Values);
-        Assert.DoesNotContain("student@example.com", everything);
-        Assert.DoesNotContain("12345", everything);
+        Assert.Equal("https://bu.edu.bd/apply?utm_source=google&program=bba&ref=poster7",
+            result.LandingUrl);
+        Assert.Equal("/apply", result.LandingPath);          // grouping by page stays cheap
+        Assert.Contains("program", result.LandingQueryKeys);
+        Assert.Contains("ref", result.LandingQueryKeys);
     }
 
     [Fact]
-    public void Allowlisted_headers_are_captured_and_authorization_is_not()
+    public void Every_header_is_captured_verbatim()
     {
         var result = AttributionExtractor.Extract(Ctx(
             "https://bu.edu.bd/",
@@ -171,13 +170,13 @@ public class AttributionExtractorTests
             [
                 ("Sec-Fetch-Site", "cross-site"),
                 ("Accept-Language", "bn-BD,en;q=0.9"),
-                ("Authorization", "Bearer SUPERSECRET"),
+                ("X-Custom-Thing", "whatever"),
             ]));
 
         Assert.Equal("cross-site", result.Headers["Sec-Fetch-Site"]);
         Assert.Equal("bn-BD,en;q=0.9", result.Headers["Accept-Language"]);
-        Assert.False(result.Headers.ContainsKey("Authorization"));
-        Assert.DoesNotContain("SUPERSECRET", string.Join("|", result.Headers.Values));
+        Assert.Equal("whatever", result.Headers["X-Custom-Thing"]);
+        Assert.Equal("https://bu.edu.bd/", result.Headers["Referer"]);
     }
 
     [Fact]
@@ -195,10 +194,12 @@ public class AttributionExtractorTests
     [Fact]
     public void Absurdly_long_values_are_truncated()
     {
-        var huge = new string('x', 5000);
+        // A cap on value length is an ingest guard (one crafted request must not bloat a
+        // row and the batch it rides in), not a content filter.
+        var huge = new string('x', 9000);
         var result = AttributionExtractor.Extract(Ctx($"https://x.test/?utm_campaign={huge}"));
 
-        Assert.Equal(512, result.UtmCampaign.Length);
+        Assert.Equal(4096, result.UtmCampaign.Length);
     }
 
     [Fact]

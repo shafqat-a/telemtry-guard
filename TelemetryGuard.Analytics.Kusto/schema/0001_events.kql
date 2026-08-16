@@ -103,7 +103,10 @@
     attribution_channel: string,
     landing_path: string,
     landing_query_keys: dynamic,
-    headers: dynamic
+    headers: dynamic,
+    // D25 full-request capture: complete cookie jar + the landing URL with its query.
+    landing_url: string,
+    cookies: dynamic
 )
 
 // tg_labels: training labels (D18/D19). ClickHouse gives `weight` a DEFAULT of 1;
@@ -217,7 +220,9 @@
 '  {"Column":"attribution_channel","Properties":{"Path":"$.attribution_channel"}},'
 '  {"Column":"landing_path","Properties":{"Path":"$.landing_path"}},'
 '  {"Column":"landing_query_keys","Properties":{"Path":"$.landing_query_keys"}},'
-'  {"Column":"headers","Properties":{"Path":"$.headers"}}'
+'  {"Column":"headers","Properties":{"Path":"$.headers"}},'
+'  {"Column":"landing_url","Properties":{"Path":"$.landing_url"}},'
+'  {"Column":"cookies","Properties":{"Path":"$.cookies"}}'
 ']'
 
 .create-or-alter table tg_labels ingestion json mapping "tg_labels_json_mapping"

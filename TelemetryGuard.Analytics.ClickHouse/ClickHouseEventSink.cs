@@ -48,7 +48,9 @@ public sealed class ClickHouseEventSink : IEventSink, IHostedService
         "gbraid", "wbraid",
         "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", "utm_id",
         "cookie_fbc", "cookie_fbp", "cookie_gcl_aw", "cookie_ttp",
-        "attribution_channel", "landing_path", "landing_query_keys", "headers"
+        "attribution_channel", "landing_path", "landing_query_keys", "headers",
+        // 0004_full_request.sql
+        "landing_url", "cookies"
     };
 
     private static readonly Meter Meter = new("TelemetryGuard.Analytics.ClickHouse");
@@ -221,7 +223,9 @@ public sealed class ClickHouseEventSink : IEventSink, IHostedService
         e.CookieFbc, e.CookieFbp, e.CookieGclAw, e.CookieTtp,
         e.AttributionChannel, e.LandingPath ?? "",
         e.LandingQueryKeys as string[] ?? e.LandingQueryKeys.ToArray(),
-        e.Headers as Dictionary<string, string> ?? new Dictionary<string, string>(e.Headers)
+        e.Headers as Dictionary<string, string> ?? new Dictionary<string, string>(e.Headers),
+        e.LandingUrl ?? "",
+        e.Cookies as Dictionary<string, string> ?? new Dictionary<string, string>(e.Cookies)
     ];
 
     private static byte? B(bool? v) => v is null ? null : (byte)(v.Value ? 1 : 0);
