@@ -27,6 +27,11 @@ public sealed class BeaconOptions
     /// <summary>TTL of the per-session aggregate hash t:{tid}:sess:{sid}.</summary>
     public int SessionTtlSeconds { get; init; } = 1800;
 
+    /// <summary>Seconds of beacon inactivity before an SDK session is finalized.
+    /// Each accepted, non-replayed batch pushes the deadline forward so scoring
+    /// observes the complete browser session rather than its first page only.</summary>
+    public int FinalizeQuietSeconds { get; init; } = 30;
+
     /// <summary>Sink cadence: a kind-beacon ClickEvent snapshot is emitted on the
     /// first beacon, on fp/fs-bearing batches, and on every Nth beacon.</summary>
     public int SinkEveryNthBeacon { get; init; } = 10;

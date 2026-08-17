@@ -16,4 +16,9 @@ public sealed class EnforcementOptions
     /// <summary>"AutoEnforce" or "ApprovalQueue" — mirrors dbo.Tenants.EnforcementMode's
     /// two values (0/1) as a string for readability in config.</summary>
     public string DefaultMode { get; set; } = "AutoEnforce";
+
+    /// <summary>Observe-only safety switch. Scoring, verdict persistence, and reporting
+    /// continue unchanged, but browser-facing decisions always allow and never challenge.
+    /// Block verdicts may still enter an approval queue for operator review.</summary>
+    public bool ObserveOnly { get; set; }
 }

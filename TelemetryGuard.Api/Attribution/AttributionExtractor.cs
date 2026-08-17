@@ -71,6 +71,7 @@ public static class AttributionExtractor
         public string CookieGclAw { get; init; } = "";
         public string CookieTtp { get; init; } = "";
         public string AttributionChannel { get; init; } = "";
+        public string? DocumentReferrer { get; init; }
         public string? LandingUrl { get; init; }
         public string? LandingPath { get; init; }
         public IReadOnlyList<string> LandingQueryKeys { get; init; } = Array.Empty<string>();
@@ -204,6 +205,9 @@ public static class AttributionExtractor
                 // authoritative — including when empty, which means direct.
                 client?.PageUrl is not null ? (client.Referrer ?? "") : ctx.Request.Headers.Referer.ToString(),
                 ctx.Request.Host.Host),
+            DocumentReferrer = client?.PageUrl is not null
+                ? Truncate(client.Referrer ?? "")
+                : null,
             LandingUrl = fullUrl,
             LandingPath = path,
             LandingQueryKeys = queryKeys,

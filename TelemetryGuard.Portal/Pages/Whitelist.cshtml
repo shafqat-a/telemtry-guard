@@ -16,7 +16,7 @@
 }
 
 <section class="panel">
-    <form method="get" action="/whitelist" class="tg-filter-form">
+    <form method="get" action="@Url.Content("~/whitelist")" class="tg-filter-form">
         <label>
             Type
             <select name="Type">
@@ -67,11 +67,11 @@
         <p class="tg-filter-form">
             @if (Model.Offset > 0)
             {
-                <a href="/whitelist?type=@Model.Type&amp;offset=@Math.Max(0, Model.Offset.Value - 50)">Prev</a>
+                <a href="@Url.Content("~/whitelist")?type=@Model.Type&amp;offset=@Math.Max(0, Model.Offset.Value - 50)">Prev</a>
             }
             @if (Model.ShowNext)
             {
-                <a href="/whitelist?type=@Model.Type&amp;offset=@(Model.Offset + 50)">Next</a>
+                <a href="@Url.Content("~/whitelist")?type=@Model.Type&amp;offset=@(Model.Offset + 50)">Next</a>
             }
         </p>
     }

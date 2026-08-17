@@ -1,0 +1,118 @@
+{
+  "uid": "tg-bu-traffic-overview",
+  "title": "BU Traffic Overview",
+  "tags": ["telemetryguard", "traffic", "bu.edu.bd"],
+  "timezone": "browser",
+  "editable": true,
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "1m",
+  "time": { "from": "now-24h", "to": "now" },
+  "annotations": { "list": [] },
+  "templating": { "list": [] },
+  "panels": [
+    {
+      "id": 1, "type": "stat", "title": "Sessions — last 7 days",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "tg-clickhouse" },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "color": "blue", "value": null }] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "orientation": "auto", "textMode": "auto", "colorMode": "value", "graphMode": "area", "justifyMode": "auto" },
+      "targets": [{ "refId": "A", "editorType": "sql", "queryType": "table", "format": 1, "rawSql": "SELECT uniqExact(session_id) AS sessions FROM telemetry_guard.tg_events WHERE site_key = 'tg_sk_1uIiZzN3XsyoB3skHSvCyf' AND kind = 'beacon' AND timestamp >= now() - INTERVAL 7 DAY" }]
+    },
+    {
+      "id": 2, "type": "stat", "title": "Sessions — last 24 hours",
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "tg-clickhouse" },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "textMode": "auto" },
+      "targets": [{ "refId": "A", "editorType": "sql", "queryType": "table", "format": 1, "rawSql": "SELECT uniqExact(session_id) AS sessions FROM telemetry_guard.tg_events WHERE site_key = 'tg_sk_1uIiZzN3XsyoB3skHSvCyf' AND kind = 'beacon' AND timestamp >= now() - INTERVAL 24 HOUR" }]
+    },
+    {
+      "id": 3, "type": "stat", "title": "Sessions — last hour",
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "tg-clickhouse" },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "color": "purple", "value": null }] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "textMode": "auto" },
+      "targets": [{ "refId": "A", "editorType": "sql", "queryType": "table", "format": 1, "rawSql": "SELECT uniqExact(session_id) AS sessions FROM telemetry_guard.tg_events WHERE site_key = 'tg_sk_1uIiZzN3XsyoB3skHSvCyf' AND kind = 'beacon' AND timestamp >= now() - INTERVAL 1 HOUR" }]
+    },
+    {
+      "id": 4, "type": "stat", "title": "Blocked sessions — last 24 hours",
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "tg-clickhouse" },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 1 }] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "colorMode": "value", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "textMode": "auto" },
+      "targets": [{ "refId": "A", "editorType": "sql", "queryType": "table", "format": 1, "rawSql": "SELECT uniqExact(session_id) AS blocked_sessions FROM telemetry_guard.tg_events WHERE site_key = 'tg_sk_1uIiZzN3XsyoB3skHSvCyf' AND kind = 'verdict' AND band = 'block' AND timestamp >= now() - INTERVAL 24 HOUR" }]
+    },
+    {
+      "id": 5, "type": "timeseries", "title": "Sessions over time by initial source",
+      "description": "Each session is counted once and attributed using its earliest beacon in the selected dashboard range.",
+      "gridPos": { "h": 9, "w": 16, "x": 0, "y": 4 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "tg-clickhouse" },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "line", "lineInterpolation": "smooth", "lineWidth": 2, "fillOpacity": 20, "showPoints": "never", "stacking": { "mode": "normal", "group": "A" } } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["sum"] }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [{ "refId": "A", "editorType": "sql", "queryType": "timeseries", "format": 0, "rawSql": "SELECT toStartOfInterval(first_seen, INTERVAL 15 MINUTE) AS time, source, count() AS sessions FROM (SELECT session_id, min(timestamp) AS first_seen, argMin(if(attribution_channel = '', 'unknown', attribution_channel), timestamp) AS source FROM telemetry_guard.tg_events WHERE $__timeFilter(timestamp) AND site_key = 'tg_sk_1uIiZzN3XsyoB3skHSvCyf' AND kind = 'beacon' GROUP BY session_id) GROUP BY time, source ORDER BY time" }]
+    },
+    {
+      "id": 6, "type": "piechart", "title": "Source mix — selected range",
+      "gridPos": { "h": 9, "w": 8, "x": 16, "y": 4 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "tg-clickhouse" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "options": { "reduceOptions": { "values": false, "calcs": ["lastNotNull"], "fields": "" }, "pieType": "donut", "tooltip": { "mode": "single", "sort": "none" }, "legend": { "displayMode": "table", "placement": "bottom", "values": ["value", "percent"] } },
+      "targets": [{ "refId": "A", "editorType": "sql", "queryType": "table", "format": 1, "rawSql": "SELECT source, count() AS sessions FROM (SELECT session_id, argMin(if(attribution_channel = '', 'unknown', attribution_channel), timestamp) AS source FROM telemetry_guard.tg_events WHERE $__timeFilter(timestamp) AND site_key = 'tg_sk_1uIiZzN3XsyoB3skHSvCyf' AND kind = 'beacon' GROUP BY session_id) GROUP BY source ORDER BY sessions DESC" }]
+    },
+    {
+      "id": 7, "type": "table", "title": "Traffic by source — 7 days / 24 hours / 1 hour",
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 13 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "tg-clickhouse" },
+      "fieldConfig": { "defaults": { "custom": { "align": "auto", "cellOptions": { "type": "auto" } } }, "overrides": [] },
+      "options": { "showHeader": true, "cellHeight": "sm", "footer": { "show": false } },
+      "targets": [{ "refId": "A", "editorType": "sql", "queryType": "table", "format": 1, "rawSql": "SELECT source, countIf(first_seen >= now() - INTERVAL 7 DAY) AS last_7_days, countIf(first_seen >= now() - INTERVAL 24 HOUR) AS last_24_hours, countIf(first_seen >= now() - INTERVAL 1 HOUR) AS last_hour FROM (SELECT session_id, min(timestamp) AS first_seen, argMin(if(attribution_channel = '', 'unknown', attribution_channel), timestamp) AS source FROM telemetry_guard.tg_events WHERE site_key = 'tg_sk_1uIiZzN3XsyoB3skHSvCyf' AND kind = 'beacon' AND timestamp >= now() - INTERVAL 7 DAY GROUP BY session_id) GROUP BY source ORDER BY last_7_days DESC" }]
+    },
+    {
+      "id": 8, "type": "barchart", "title": "Most visited pages — selected range",
+      "description": "Unique sessions per path; one session visiting the same page repeatedly counts once.",
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 13 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "tg-clickhouse" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "options": { "orientation": "horizontal", "showValue": "always", "stacking": "none", "groupWidth": 0.7, "barWidth": 0.8, "legend": { "displayMode": "hidden", "placement": "bottom" }, "tooltip": { "mode": "single", "sort": "none" } },
+      "targets": [{ "refId": "A", "editorType": "sql", "queryType": "table", "format": 1, "rawSql": "SELECT if(landing_path = '', '/', landing_path) AS page, uniqExact(session_id) AS unique_sessions FROM telemetry_guard.tg_events WHERE $__timeFilter(timestamp) AND site_key = 'tg_sk_1uIiZzN3XsyoB3skHSvCyf' AND kind = 'beacon' GROUP BY page ORDER BY unique_sessions DESC LIMIT 15" }]
+    },
+    {
+      "id": 9, "type": "table", "title": "Top landing pages — selected range",
+      "description": "The earliest captured page for each session.",
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 22 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "tg-clickhouse" },
+      "fieldConfig": { "defaults": { "custom": { "align": "auto", "cellOptions": { "type": "auto" } } }, "overrides": [] },
+      "options": { "showHeader": true, "cellHeight": "sm", "footer": { "show": false } },
+      "targets": [{ "refId": "A", "editorType": "sql", "queryType": "table", "format": 1, "rawSql": "SELECT landing_page, count() AS sessions FROM (SELECT session_id, argMin(if(landing_path = '', '/', landing_path), timestamp) AS landing_page FROM telemetry_guard.tg_events WHERE $__timeFilter(timestamp) AND site_key = 'tg_sk_1uIiZzN3XsyoB3skHSvCyf' AND kind = 'beacon' GROUP BY session_id) GROUP BY landing_page ORDER BY sessions DESC LIMIT 15" }]
+    },
+    {
+      "id": 10, "type": "timeseries", "title": "Integrity failures and blocks",
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 22 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "tg-clickhouse" },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "line", "fillOpacity": 15, "lineWidth": 2, "showPoints": "never" } }, "overrides": [{ "matcher": { "id": "byName", "options": "blocked sessions" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }] }] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["sum"] }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [
+        { "refId": "A", "editorType": "sql", "queryType": "timeseries", "format": 0, "rawSql": "SELECT $__timeInterval(timestamp) AS time, 'failed beacons' AS metric, count() AS value FROM telemetry_guard.tg_events WHERE $__timeFilter(timestamp) AND site_key = 'tg_sk_1uIiZzN3XsyoB3skHSvCyf' AND kind = 'beacon' AND beacon_integrity_ok = 0 GROUP BY time ORDER BY time" },
+        { "refId": "B", "editorType": "sql", "queryType": "timeseries", "format": 0, "rawSql": "SELECT $__timeInterval(timestamp) AS time, 'blocked sessions' AS metric, uniqExact(session_id) AS value FROM telemetry_guard.tg_events WHERE $__timeFilter(timestamp) AND site_key = 'tg_sk_1uIiZzN3XsyoB3skHSvCyf' AND kind = 'verdict' AND band = 'block' GROUP BY time ORDER BY time" }
+      ]
+    },
+    {
+      "id": 11, "type": "table", "title": "Search and campaign origins — selected range",
+      "description": "Search engines normally hide the actual search phrase; document_referrer shows whatever the browser exposes.",
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 31 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "tg-clickhouse" },
+      "fieldConfig": { "defaults": { "custom": { "align": "auto", "cellOptions": { "type": "auto" } } }, "overrides": [] },
+      "options": { "showHeader": true, "cellHeight": "sm", "footer": { "show": false } },
+      "targets": [{ "refId": "A", "editorType": "sql", "queryType": "table", "format": 1, "rawSql": "SELECT source, referrer_host, utm_campaign, count() AS sessions FROM (SELECT session_id, argMin(if(attribution_channel = '', 'unknown', attribution_channel), timestamp) AS source, argMin(ifNull(domain(document_referrer), ''), timestamp) AS referrer_host, argMin(utm_campaign, timestamp) AS utm_campaign FROM telemetry_guard.tg_events WHERE $__timeFilter(timestamp) AND site_key = 'tg_sk_1uIiZzN3XsyoB3skHSvCyf' AND kind = 'beacon' GROUP BY session_id) GROUP BY source, referrer_host, utm_campaign ORDER BY sessions DESC LIMIT 20" }]
+    },
+    {
+      "id": 12, "type": "table", "title": "Recent sessions",
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 31 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "tg-clickhouse" },
+      "fieldConfig": { "defaults": { "custom": { "align": "auto", "cellOptions": { "type": "auto" } } }, "overrides": [{ "matcher": { "id": "byName", "options": "verdict" }, "properties": [{ "id": "custom.cellOptions", "value": { "type": "color-text" } }, { "id": "mappings", "value": [{ "type": "value", "options": { "allow": { "color": "green", "index": 0 }, "challenge": { "color": "yellow", "index": 1 }, "block": { "color": "red", "index": 2 }, "pending": { "color": "gray", "index": 3 } } }] }] }] },
+      "options": { "showHeader": true, "cellHeight": "sm", "footer": { "show": false } },
+      "targets": [{ "refId": "A", "editorType": "sql", "queryType": "table", "format": 1, "rawSql": "SELECT formatDateTime(max(timestamp), '%Y-%m-%d %H:%i:%S', 'Asia/Dhaka') AS last_seen_bdt, left(session_id, 8) AS session, replaceOne(argMin(toString(ip), timestamp), '::ffff:', '') AS ip, argMinIf(attribution_channel, timestamp, kind = 'beacon' AND attribution_channel != '') AS source, argMinIf(landing_path, timestamp, kind = 'beacon' AND landing_path != '') AS landing, countIf(kind = 'beacon') AS beacons, countIf(kind = 'beacon' AND beacon_integrity_ok = 0) AS integrity_failures, if(countIf(kind = 'verdict') > 0, argMaxIf(band, timestamp, kind = 'verdict'), 'pending') AS verdict FROM telemetry_guard.tg_events WHERE $__timeFilter(timestamp) AND site_key = 'tg_sk_1uIiZzN3XsyoB3skHSvCyf' GROUP BY session_id ORDER BY max(timestamp) DESC LIMIT 40" }]
+    }
+  ]
+}

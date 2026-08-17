@@ -122,6 +122,8 @@ public sealed class BeaconEndpointTests
         public readonly Dictionary<string, string> Strings = [];
         public readonly Dictionary<string, TimeSpan?> StringTtls = [];
         public readonly Dictionary<string, Dictionary<string, string>> Hashes = [];
+        public readonly Dictionary<string, Dictionary<string, double>> SortedSets = [];
+        public readonly Dictionary<string, HashSet<string>> Sets = [];
         public readonly List<(string Key, TimeSpan? Ttl)> Expires = [];
         private readonly object _gate = new();
 
@@ -162,6 +164,14 @@ public sealed class BeaconEndpointTests
                           : Array.Empty<HashEntry>();
               });
 
+            db.KeyExistsAsync(Arg.Any<RedisKey>(), Arg.Any<CommandFlags>())
+              .Returns(ci =>
+              {
+                  lock (_gate)
+                      return Hashes.ContainsKey(ci.ArgAt<RedisKey>(0).ToString())
+                          || Strings.ContainsKey(ci.ArgAt<RedisKey>(0).ToString());
+              });
+
             db.When(d => d.HashSetAsync(Arg.Any<RedisKey>(), Arg.Any<HashEntry[]>()))
               .Do(ci =>
               {
@@ -182,6 +192,35 @@ public sealed class BeaconEndpointTests
                   lock (_gate)
                       Expires.Add((ci.ArgAt<RedisKey>(0).ToString(), ci.ArgAt<TimeSpan?>(1)));
               });
+
+            db.SortedSetAddAsync(Arg.Any<RedisKey>(), Arg.Any<RedisValue>(), Arg.Any<double>(),
+                    Arg.Any<When>(), Arg.Any<CommandFlags>())
+              .Returns(ci => AddSorted(
+                  ci.ArgAt<RedisKey>(0).ToString(), ci.ArgAt<RedisValue>(1).ToString(),
+                  ci.ArgAt<double>(2), ci.ArgAt<When>(3)));
+
+            db.SetAddAsync(Arg.Any<RedisKey>(), Arg.Any<RedisValue>(), Arg.Any<CommandFlags>())
+              .Returns(ci =>
+              {
+                  lock (_gate)
+                  {
+                      var key = ci.ArgAt<RedisKey>(0).ToString();
+                      if (!Sets.TryGetValue(key, out var set)) Sets[key] = set = [];
+                      return set.Add(ci.ArgAt<RedisValue>(1).ToString());
+                  }
+              });
+        }
+
+        private bool AddSorted(string key, string member, double score, When when)
+        {
+            lock (_gate)
+            {
+                if (!SortedSets.TryGetValue(key, out var set)) SortedSets[key] = set = [];
+                if (when == When.NotExists && set.ContainsKey(member)) return false;
+                var added = !set.ContainsKey(member);
+                set[member] = score;
+                return added;
+            }
         }
 
         private bool SetString(string key, string value, TimeSpan? ttl, When when)
@@ -462,6 +501,33 @@ public sealed class BeaconEndpointTests
     }
 
     [Fact]
+    public async Task Post_AcceptedBatches_RegisterAndRefreshBeaconQuietPeriod_ReplayDoesNot()
+    {
+        using var app = new BeaconApp(new() { ["Beacon:FinalizeQuietSeconds"] = "30" });
+        using var client = app.Client();
+        var graceKey = $"t:{Tid}:grace";
+
+        await client.SendAsync(Post(Envelope(0, "[]")));
+        Assert.Equal(FixedNow.AddSeconds(30).ToUnixTimeSeconds(),
+            app.Redis.SortedSets[graceKey][HexSid]);
+        Assert.Contains(Tid, app.Redis.Sets["grace:tenants"]);
+        var context = app.Redis.Hashes[$"t:{Tid}:click:{HexSid}"];
+        Assert.Equal("beacon", context["kind"]);
+        Assert.Equal(RemoteIp.ToString(), context["ip"]);
+        Assert.Equal(SiteKey, context["site_key"]);
+
+        app.Clock.UtcNow = FixedNow.AddSeconds(12);
+        await client.SendAsync(Post(Envelope(1, "[]", sentAt: app.Clock.UtcNow.ToUnixTimeMilliseconds())));
+        Assert.Equal(FixedNow.AddSeconds(42).ToUnixTimeSeconds(),
+            app.Redis.SortedSets[graceKey][HexSid]);
+
+        app.Clock.UtcNow = FixedNow.AddSeconds(20);
+        await client.SendAsync(Post(Envelope(1, "[]", sentAt: app.Clock.UtcNow.ToUnixTimeMilliseconds())));
+        Assert.Equal(FixedNow.AddSeconds(42).ToUnixTimeSeconds(),
+            app.Redis.SortedSets[graceKey][HexSid]);
+    }
+
+    [Fact]
     public async Task Post_NonceRoundTrip_ThroughARealInitCall()
     {
         using var app = new BeaconApp();
@@ -521,9 +587,8 @@ public sealed class BeaconEndpointTests
     }
 
     /// <summary>INT-05: no Cloudflare fronting -> the beacon's own snapshot
-    /// ClickEvent carries null TlsJa3/TlsJa4/CfAsn (missing ≠ zero); no click-context
-    /// hash write happens on this path at all (that stays API-02/API-03's job) —
-    /// only t:{tid}:sess:{sid} is touched here.</summary>
+    /// ClickEvent carries null TlsJa3/TlsJa4/CfAsn (missing ≠ zero), while the
+    /// organic-beacon HTTP context is retained for later scoring.</summary>
     [Fact]
     public async Task EdgeSignals_Absent_SnapshotClickEventStaysNull_NoClickContextHashWritten()
     {
@@ -536,12 +601,12 @@ public sealed class BeaconEndpointTests
         Assert.Null(evt.TlsJa3);
         Assert.Null(evt.TlsJa4);
         Assert.Null(evt.CfAsn);
-        Assert.False(app.Redis.Hashes.ContainsKey($"t:{Tid}:click:{HexSid}"));
+        Assert.Equal("", app.Redis.Hashes[$"t:{Tid}:click:{HexSid}"]["tls_fp"]);
     }
 
     /// <summary>INT-05: Cloudflare-fronted + a Cloudflare-range direct peer -> the
     /// snapshot ClickEvent for THIS beacon POST carries TlsJa3/TlsJa4/CfAsn (analytics
-    /// completeness for the beacon path); still no click-context hash write.</summary>
+    /// completeness for the beacon path) and the fingerprint is retained for scoring.</summary>
     [Fact]
     public async Task EdgeSignals_Present_WhenCloudflareFronted_PopulatesTheSnapshotClickEvent()
     {
@@ -557,7 +622,8 @@ public sealed class BeaconEndpointTests
         Assert.Equal("cd08e31494f9531f560d64c695473da9", evt.TlsJa3);
         Assert.Null(evt.TlsJa4);
         Assert.Equal(13335u, evt.CfAsn);
-        Assert.False(app.Redis.Hashes.ContainsKey($"t:{Tid}:click:{HexSid}"));
+        Assert.Equal("cd08e31494f9531f560d64c695473da9",
+            app.Redis.Hashes[$"t:{Tid}:click:{HexSid}"]["tls_fp"]);
     }
 
     [Fact]

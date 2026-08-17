@@ -97,6 +97,9 @@ builder.Services.AddOptions<BeaconOptions>()
     .Validate(
         o => !string.IsNullOrEmpty(o.HmacSecret) && o.HmacSecret.Length >= 32,
         "Beacon:HmacSecret must be set and at least 32 characters (API-04).")
+    .Validate(
+        o => o.FinalizeQuietSeconds > 0 && o.FinalizeQuietSeconds < o.SessionTtlSeconds,
+        "Beacon:FinalizeQuietSeconds must be positive and shorter than SessionTtlSeconds.")
     .ValidateOnStart();
 
 // P2-02: registry-driven model selection (D18). When Scoring:ModelSource is

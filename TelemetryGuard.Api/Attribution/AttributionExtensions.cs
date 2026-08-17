@@ -22,6 +22,7 @@ public static class AttributionExtensions
             CookieGclAw = a.CookieGclAw,
             CookieTtp = a.CookieTtp,
             AttributionChannel = a.AttributionChannel,
+            DocumentReferrer = a.DocumentReferrer,
             LandingUrl = a.LandingUrl,
             LandingPath = a.LandingPath,
             LandingQueryKeys = a.LandingQueryKeys,

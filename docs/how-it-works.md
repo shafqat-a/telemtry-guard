@@ -153,20 +153,11 @@ feature extraction → T1 deterministic rules (which may only *raise* a score) �
 → band (`allow` 0–30 / `challenge` 31–70 / `block` 71–100) → verdict row.
 
 It is triggered by the **verdict finalizer**, a worker that sweeps `t:{tid}:grace` every
-second for sessions whose grace period has expired.
-
-> **The gap, stated plainly:** `t:{tid}:grace` is populated **only** by the tracker and
-> pixel endpoints. The beacon endpoint does not add to it. A visit that arrives organically
-> and is measured only by the JS SDK is therefore **captured but never scored** — and since
-> IP enrichment is wired into the scoring pipeline rather than the capture endpoints, its
-> `country` / `asn` / `asn_type` / proxy columns stay null too.
->
-> As of writing, BU has 19 beacon rows and 2 verdicts — both verdicts from pixel tests.
-> Both facts trace to one assumption: the system was built around *paid clicks arriving
-> through `/c`*, and a pure organic JS visit falls outside that loop.
->
-> Options: register a grace entry on a session's first beacon; enable form gating so the
-> SDK calls `/decide`; or accept the beacon rows as raw analytics.
+second for sessions whose grace period has expired. Tracker and pixel sessions use the
+tracker grace period. SDK-only sessions register on their first accepted beacon and move
+their deadline forward after each later accepted batch; after
+`Beacon:FinalizeQuietSeconds` (30 seconds by default) without activity, the worker scores
+and enriches the completed session. Replayed batches do not extend the deadline.
 
 The SDK also calls `POST /decide` directly when a page is configured to gate forms — that
 path returns an allow/challenge/block decision synchronously and can present a Cloudflare

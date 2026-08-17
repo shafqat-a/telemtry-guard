@@ -1,0 +1,68 @@
+# Local Docker deployment of the app layer: one-shot migrations, the API image,
+# and the customer portal — layered onto the FND-02 dev stack (same project, same
+# `tg` network, so the API reaches mssql/redis/clickhouse by service name).
+#
+#   docker compose -f docker-compose.yml -f docker-compose.app.yml up -d --build
+#
+# Endpoints once up:  API http://localhost:8090   portal http://localhost:8092
+# Seed a tenant (host-side, once): ./scripts/dev-seed.sh
+
+services:
+  migrate:
+    image: telemetryguard-api:local
+    build: { context: . }
+    entrypoint: ["/bin/sh", "-c"]
+    # Same image as the API (one tag can never deploy app vN against schema vN-1):
+    # SQL Server migrations first, then the ClickHouse schema.
+    command:
+      - >-
+        dotnet /app/migrator/TelemetryGuard.MigrationRunner.dll &&
+        dotnet /app/migrator/TelemetryGuard.MigrationRunner.dll --clickhouse
+    environment:
+      MIGRATIONS_CONNECTIONSTRING: Server=mssql,1433;Database=TelemetryGuard;User Id=sa;Password=${MSSQL_SA_PASSWORD};TrustServerCertificate=True
+      CLICKHOUSE_CONNECTIONSTRING: Host=clickhouse;Port=8123;Database=${CLICKHOUSE_DB:-telemetry_guard};Username=${CLICKHOUSE_USER:-tg};Password=${CLICKHOUSE_PASSWORD}
+    depends_on:
+      mssql: { condition: service_healthy }
+      clickhouse: { condition: service_healthy }
+    networks: [tg]
+    restart: "no"
+
+  api:
+    image: telemetryguard-api:local
+    build: { context: . }
+    container_name: tg-api
+    ports:
+      - "8090:8080"
+    environment:
+      ConnectionStrings__Main: Server=mssql,1433;Database=TelemetryGuard;User Id=sa;Password=${MSSQL_SA_PASSWORD};TrustServerCertificate=True
+      ConnectionStrings__Redis: "redis:6379"
+      Analytics__ClickHouse__ConnectionString: Host=clickhouse;Port=8123;Database=${CLICKHOUSE_DB:-telemetry_guard};Username=${CLICKHOUSE_USER:-tg};Password=${CLICKHOUSE_PASSWORD}
+      # API-04 startup validation refuses to boot without a real (>=32 char)
+      # beacon-integrity secret; generated into .env (gitignored) on first deploy.
+      Beacon__HmacSecret: ${TG_BEACON_HMAC_SECRET}
+      # D24: IP intelligence reads the host-side ./data/geo mount below. An empty or
+      # absent directory is fine — enrichment degrades to null fields (D13); run
+      # ./scripts/update-iplegence.sh to populate it, no container restart needed.
+      IpEnrichment__DataDir: /app/data/geo
+    volumes:
+      # Read-only: the refresh script writes on the host, the API only maps the files.
+      - ./data/geo:/app/data/geo:ro
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+    networks: [tg]
+    restart: unless-stopped
+
+  portal:
+    image: telemetryguard-portal:local
+    build: { context: ., target: portal }
+    container_name: tg-portal
+    ports:
+      - "8092:8080"
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      Portal__ApiBaseUrl: http://api:8080
+      Portal__PathBase: /portal
+    depends_on: [api]
+    networks: [tg]
+    restart: unless-stopped

@@ -69,12 +69,14 @@ public static partial class DecisionEndpoints
         IVerdictFinalizer finalizer,
         IConnectionMultiplexer redis,
         IOptions<ScoringBandOptions> bandOptions,
+        IOptions<EnforcementOptions> enforcementOptions,
         IOptions<TurnstileOptions> turnstileOptions,
         ILoggerFactory loggerFactory,
         CancellationToken ct)
     {
         var logger = loggerFactory.CreateLogger("TelemetryGuard.Api.Endpoints.DecisionEndpoints");
         var bands = bandOptions.Value;
+        var observeOnly = enforcementOptions.Value.ObserveOnly;
         var siteKeyForWidget = turnstileOptions.Value.SiteKey;
 
         // CORS: unlike /i and /c, the caller MUST be able to READ this response
@@ -144,6 +146,12 @@ public static partial class DecisionEndpoints
             logger.LogWarning(
                 "Decide: unknown session {SessionId} for tenant {TenantId}", sid, tenantId);
 
+            if (observeOnly)
+            {
+                TagActivity("allow", false);
+                return ActionResult("allow");
+            }
+
             if (string.IsNullOrEmpty(req.TurnstileToken))
             {
                 TagActivity("challenge", true);
@@ -168,6 +176,16 @@ public static partial class DecisionEndpoints
                 "Decide: locally-mapped band {LocalBand} differs from pipeline band {PipelineBand} " +
                 "for session {SessionId} (score {Score}) — expected only under a Scoring:Bands override.",
                 band, outcome.Band, sid, outcome.Result.Score);
+        }
+
+        // Monitoring mode deliberately separates detection from enforcement. Preserve
+        // the original score/band/rules in analytics, clean up the grace entry, and
+        // allow the visitor without invoking Turnstile or returning a block action.
+        if (observeOnly)
+        {
+            await FinalizeDecisionAsync(finalizer, redis, tenantId, sid, outcome, logger, ct);
+            TagActivity("allow", false);
+            return ActionResult("allow");
         }
 
         switch (band)

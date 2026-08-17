@@ -257,10 +257,12 @@ public class AttributionExtractorTests
         var fromSearch = AttributionExtractor.Extract(ctx, client: new AttributionExtractor.ClientContext(
             "https://bu.edu.bd/programs", "https://www.google.com/search?q=bangladesh+university", null));
         Assert.Equal("organic_search", fromSearch.AttributionChannel);
+        Assert.Equal("https://www.google.com/search?q=bangladesh+university", fromSearch.DocumentReferrer);
 
         var typedIn = AttributionExtractor.Extract(ctx, client: new AttributionExtractor.ClientContext(
             "https://bu.edu.bd/programs", "", null));      // empty referrer means direct
         Assert.Equal("direct", typedIn.AttributionChannel);
+        Assert.Equal("", typedIn.DocumentReferrer);
     }
 
     [Fact]

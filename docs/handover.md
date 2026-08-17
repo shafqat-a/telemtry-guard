@@ -247,34 +247,21 @@ so the next agent doesn't rediscover them or re-raise them as work.
 
 ---
 
-## 6. `tel.bu.edu.bd` — half done, and where it's stuck
+## 6. `tel.bu.edu.bd` — live
 
 The subdomain exists and resolves correctly: `tel.bu.edu.bd` → `103.139.235.67` (the edge).
 
-**Done on this host:** `/etc/nginx/sites-available/tel.bu.edu.bd.conf`, enabled and
-reloaded — serves the whole API at the **root** (`/i`, `/i/init`, `/sdk/tg.js`, no `/tg`
-prefix) by proxying to `127.0.0.1:5120`, with an ACME challenge location ready. Verified
-locally with a `Host:` header (`/healthz` 200, `/sdk/tg.js` 200). It is **inert** until the
-edge routes that hostname here.
+The backend vhost `/etc/nginx/sites-available/tel.bu.edu.bd.conf` serves the whole API at
+the **root** (`/i`, `/i/init`, `/sdk/tg.js`, no `/tg` prefix) through
+`127.0.0.1:5120`. OPNsense has a dedicated nginx HTTP Server for `tel.bu.edu.bd`, reusing
+the `dev1-pool` upstream to `192.168.9.11:80`.
 
-**Blocked on the edge, and the credentials do not help:** the OPNsense management plane is
-unreachable from `192.168.9.11`. `192.168.9.1:443` serves nginx's default page,
-`https://fw.cloudlabs.live/` returns 403, `/api/core/…` 404s, and ports 22 / 8443 / 4443 /
-10443 / 9443 / 8081 are all closed to this subnet. The GUI is bound to a management
-interface this VLAN cannot see.
-
-**Two steps remain, both on OPNsense, in this order:**
-
-1. **Route the hostname.** Services → Nginx: upstream to `192.168.9.11:80` (one likely
-   already exists for the buweb vhosts) and an HTTP Server with `server_name
-   tel.bu.edu.bd`. Do this first, even with the wrong cert attached.
-2. **Issue a certificate — the existing method will not work.** The edge automates
-   Let's Encrypt with **Cloudflare DNS-01**, but `bu.edu.bd` is on **Namecheap**
-   nameservers (`dns1/dns2.namecheaphosting.com`), so there is no DNS API to write to.
-   Use **HTTP-01** instead: port 80 for that name already lands on the edge, and
-   Let's Encrypt follows the 302 to HTTPS ignoring cert validity, so step 1 is enough.
-   Create a **separate** certificate rather than extending the shared
-   `fw.cloudlabs.live` SAN cert, so the working `cloudlabs.live` renewal is untouched.
+TLS uses a separate Let's Encrypt certificate for `tel.bu.edu.bd`, issued with the ACME
+plugin's `telemetry-http01` validation and automatic 60-day renewal. Its post-renewal
+automation reloads nginx. This deliberately does not modify the shared
+`fw.cloudlabs.live` SAN certificate. Verified publicly on 2026-08-16: `/healthz`,
+`/sdk/tg.js`, and production-key `/i/init` all return 200 with normal certificate
+verification.
 
 Then production sets `TG_ENDPOINT=https://tel.bu.edu.bd`.
 

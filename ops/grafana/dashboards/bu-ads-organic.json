@@ -1,0 +1,115 @@
+{
+  "uid": "tg-bu-ads-organic",
+  "title": "BU Ads & Organic Performance",
+  "tags": ["telemetryguard", "ads", "organic", "bu.edu.bd"],
+  "timezone": "browser",
+  "editable": true,
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "1m",
+  "time": { "from": "now-7d", "to": "now" },
+  "annotations": { "list": [] },
+  "templating": { "list": [] },
+  "panels": [
+    {
+      "id": 1, "type": "stat", "title": "Paid sessions",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "tg-clickhouse" },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "color": "blue", "value": null }] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "textMode": "auto" },
+      "targets": [{ "refId": "A", "editorType": "sql", "queryType": "table", "format": 1, "rawSql": "SELECT uniqExact(session_id) AS paid_sessions FROM telemetry_guard.tg_events WHERE $__timeFilter(timestamp) AND site_key = 'tg_sk_1uIiZzN3XsyoB3skHSvCyf' AND kind = 'beacon' AND attribution_channel IN ('meta_ads','tiktok_ads','google_ads','microsoft_ads','paid_other')" }]
+    },
+    {
+      "id": 2, "type": "stat", "title": "Organic-search sessions",
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "tg-clickhouse" },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "textMode": "auto" },
+      "targets": [{ "refId": "A", "editorType": "sql", "queryType": "table", "format": 1, "rawSql": "SELECT uniqExact(session_id) AS organic_sessions FROM telemetry_guard.tg_events WHERE $__timeFilter(timestamp) AND site_key = 'tg_sk_1uIiZzN3XsyoB3skHSvCyf' AND kind = 'beacon' AND attribution_channel = 'organic_search'" }]
+    },
+    {
+      "id": 3, "type": "stat", "title": "Average session time",
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "tg-clickhouse" },
+      "fieldConfig": { "defaults": { "unit": "s", "decimals": 1, "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "color": "orange", "value": null }] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "colorMode": "value", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "textMode": "auto" },
+      "targets": [{ "refId": "A", "editorType": "sql", "queryType": "table", "format": 1, "rawSql": "SELECT round(avg(duration_sec),1) AS avg_session_seconds FROM (SELECT session_id, dateDiff('second', min(timestamp), max(timestamp)) AS duration_sec FROM telemetry_guard.tg_events WHERE $__timeFilter(timestamp) AND site_key = 'tg_sk_1uIiZzN3XsyoB3skHSvCyf' AND kind = 'beacon' GROUP BY session_id)" }]
+    },
+    {
+      "id": 4, "type": "stat", "title": "Average page views / session",
+      "description": "Uses the SDK's cumulative pages_viewed value, with distinct captured paths as a minimum fallback.",
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "tg-clickhouse" },
+      "fieldConfig": { "defaults": { "unit": "none", "decimals": 2, "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "color": "purple", "value": null }] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "colorMode": "value", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "textMode": "auto" },
+      "targets": [{ "refId": "A", "editorType": "sql", "queryType": "table", "format": 1, "rawSql": "SELECT round(avg(page_views),2) AS avg_page_views FROM (SELECT session_id, greatest(max(if(isFinite(pages_viewed), pages_viewed, 0)), toFloat64(uniqExactIf(landing_path, landing_path != ''))) AS page_views FROM telemetry_guard.tg_events WHERE $__timeFilter(timestamp) AND site_key = 'tg_sk_1uIiZzN3XsyoB3skHSvCyf' AND kind = 'beacon' GROUP BY session_id)" }]
+    },
+    {
+      "id": 5, "type": "timeseries", "title": "Sessions over time by marketing source",
+      "description": "YouTube referrals and Google Ads are combined as YouTube / Google. Each session is counted once by its initial source.",
+      "gridPos": { "h": 9, "w": 16, "x": 0, "y": 4 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "tg-clickhouse" },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "line", "lineInterpolation": "smooth", "lineWidth": 2, "fillOpacity": 20, "showPoints": "never", "stacking": { "mode": "normal", "group": "A" } } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["sum"] }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [{ "refId": "A", "editorType": "sql", "queryType": "timeseries", "format": 0, "rawSql": "WITH s AS (SELECT session_id, min(timestamp) AS first_seen, argMin(attribution_channel,timestamp) AS source, argMin(ifNull(document_referrer,''),timestamp) AS doc_ref FROM telemetry_guard.tg_events WHERE $__timeFilter(timestamp) AND site_key='tg_sk_1uIiZzN3XsyoB3skHSvCyf' AND kind='beacon' GROUP BY session_id) SELECT toStartOfInterval(first_seen, INTERVAL 15 MINUTE) AS time, multiIf(source='meta_ads' OR positionCaseInsensitive(doc_ref,'facebook.')>0 OR positionCaseInsensitive(doc_ref,'instagram.')>0,'Facebook / Meta',source='tiktok_ads' OR positionCaseInsensitive(doc_ref,'tiktok.')>0,'TikTok',source='google_ads' OR positionCaseInsensitive(doc_ref,'youtube.')>0 OR positionCaseInsensitive(doc_ref,'youtu.be')>0,'YouTube / Google',source='organic_search','Organic Search',source='microsoft_ads','Microsoft Ads',source='direct','Direct',source='referral','Other Referral','Other') AS source_group, count() AS sessions FROM s GROUP BY time,source_group ORDER BY time" }]
+    },
+    {
+      "id": 6, "type": "piechart", "title": "Marketing source mix",
+      "gridPos": { "h": 9, "w": 8, "x": 16, "y": 4 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "tg-clickhouse" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "options": { "reduceOptions": { "values": false, "calcs": ["lastNotNull"], "fields": "" }, "pieType": "donut", "tooltip": { "mode": "single", "sort": "none" }, "legend": { "displayMode": "table", "placement": "bottom", "values": ["value", "percent"] } },
+      "targets": [{ "refId": "A", "editorType": "sql", "queryType": "table", "format": 1, "rawSql": "WITH s AS (SELECT session_id,argMin(attribution_channel,timestamp) AS source,argMin(ifNull(document_referrer,''),timestamp) AS doc_ref FROM telemetry_guard.tg_events WHERE $__timeFilter(timestamp) AND site_key='tg_sk_1uIiZzN3XsyoB3skHSvCyf' AND kind='beacon' GROUP BY session_id) SELECT multiIf(source='meta_ads' OR positionCaseInsensitive(doc_ref,'facebook.')>0 OR positionCaseInsensitive(doc_ref,'instagram.')>0,'Facebook / Meta',source='tiktok_ads' OR positionCaseInsensitive(doc_ref,'tiktok.')>0,'TikTok',source='google_ads' OR positionCaseInsensitive(doc_ref,'youtube.')>0 OR positionCaseInsensitive(doc_ref,'youtu.be')>0,'YouTube / Google',source='organic_search','Organic Search',source='microsoft_ads','Microsoft Ads',source='direct','Direct',source='referral','Other Referral','Other') AS source_group,count() AS sessions FROM s GROUP BY source_group ORDER BY sessions DESC" }]
+    },
+    {
+      "id": 7, "type": "table", "title": "Source performance comparison",
+      "description": "Blocks are detected verdicts only; TelemetryGuard is currently observe-only and does not block visitors.",
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 13 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "tg-clickhouse" },
+      "fieldConfig": { "defaults": { "custom": { "align": "auto", "cellOptions": { "type": "auto" } } }, "overrides": [{ "matcher": { "id": "byName", "options": "avg_duration_sec" }, "properties": [{ "id": "unit", "value": "s" }] }, { "matcher": { "id": "byName", "options": "bounce_pct" }, "properties": [{ "id": "unit", "value": "percent" }] }, { "matcher": { "id": "byName", "options": "integrity_failure_pct" }, "properties": [{ "id": "unit", "value": "percent" }] }] },
+      "options": { "showHeader": true, "cellHeight": "sm", "footer": { "show": false } },
+      "targets": [{ "refId": "A", "editorType": "sql", "queryType": "table", "format": 1, "rawSql": "WITH s AS (SELECT session_id,minIf(timestamp,kind='beacon') AS first_seen,maxIf(timestamp,kind='beacon') AS last_seen,argMinIf(attribution_channel,timestamp,kind='beacon') AS source,argMinIf(ifNull(document_referrer,''),timestamp,kind='beacon') AS doc_ref,greatest(maxIf(if(isFinite(pages_viewed),pages_viewed,0),kind='beacon'),toFloat64(uniqExactIf(landing_path,kind='beacon' AND landing_path!=''))) AS page_views,countIf(kind='beacon' AND beacon_integrity_ok=0)>0 AS integrity_failed,argMaxIf(band,timestamp,kind='verdict') AS verdict FROM telemetry_guard.tg_events WHERE $__timeFilter(timestamp) AND site_key='tg_sk_1uIiZzN3XsyoB3skHSvCyf' GROUP BY session_id), g AS (SELECT *,multiIf(source='meta_ads' OR positionCaseInsensitive(doc_ref,'facebook.')>0 OR positionCaseInsensitive(doc_ref,'instagram.')>0,'Facebook / Meta',source='tiktok_ads' OR positionCaseInsensitive(doc_ref,'tiktok.')>0,'TikTok',source='google_ads' OR positionCaseInsensitive(doc_ref,'youtube.')>0 OR positionCaseInsensitive(doc_ref,'youtu.be')>0,'YouTube / Google',source='organic_search','Organic Search',source='microsoft_ads','Microsoft Ads',source='direct','Direct',source='referral','Other Referral','Other') AS source_group FROM s) SELECT source_group,count() AS sessions,round(100*count()/sum(count()) OVER (),1) AS traffic_share_pct,round(avg(dateDiff('second',first_seen,last_seen)),1) AS avg_duration_sec,round(avg(page_views),2) AS avg_page_views,round(100*countIf(page_views<=1)/count(),1) AS bounce_pct,round(100*countIf(dateDiff('second',first_seen,last_seen)>=30 OR page_views>=2)/count(),1) AS engaged_pct,round(100*countIf(integrity_failed)/count(),1) AS integrity_failure_pct,countIf(verdict='block') AS detected_blocks FROM g GROUP BY source_group ORDER BY sessions DESC" }]
+    },
+    {
+      "id": 8, "type": "barchart", "title": "Average session time by source",
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 23 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "tg-clickhouse" },
+      "fieldConfig": { "defaults": { "unit": "s", "decimals": 1 }, "overrides": [] },
+      "options": { "orientation": "horizontal", "showValue": "always", "stacking": "none", "groupWidth": 0.7, "barWidth": 0.8, "legend": { "displayMode": "hidden", "placement": "bottom" }, "tooltip": { "mode": "single", "sort": "none" } },
+      "targets": [{ "refId": "A", "editorType": "sql", "queryType": "table", "format": 1, "rawSql": "WITH s AS (SELECT session_id,min(timestamp) AS first_seen,max(timestamp) AS last_seen,argMin(attribution_channel,timestamp) AS source,argMin(ifNull(document_referrer,''),timestamp) AS doc_ref FROM telemetry_guard.tg_events WHERE $__timeFilter(timestamp) AND site_key='tg_sk_1uIiZzN3XsyoB3skHSvCyf' AND kind='beacon' GROUP BY session_id) SELECT multiIf(source='meta_ads' OR positionCaseInsensitive(doc_ref,'facebook.')>0 OR positionCaseInsensitive(doc_ref,'instagram.')>0,'Facebook / Meta',source='tiktok_ads' OR positionCaseInsensitive(doc_ref,'tiktok.')>0,'TikTok',source='google_ads' OR positionCaseInsensitive(doc_ref,'youtube.')>0 OR positionCaseInsensitive(doc_ref,'youtu.be')>0,'YouTube / Google',source='organic_search','Organic Search',source='microsoft_ads','Microsoft Ads',source='direct','Direct',source='referral','Other Referral','Other') AS source_group,round(avg(dateDiff('second',first_seen,last_seen)),1) AS avg_session_seconds FROM s GROUP BY source_group ORDER BY avg_session_seconds DESC" }]
+    },
+    {
+      "id": 9, "type": "barchart", "title": "Average page views by source",
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 23 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "tg-clickhouse" },
+      "fieldConfig": { "defaults": { "unit": "none", "decimals": 2 }, "overrides": [] },
+      "options": { "orientation": "horizontal", "showValue": "always", "stacking": "none", "groupWidth": 0.7, "barWidth": 0.8, "legend": { "displayMode": "hidden", "placement": "bottom" }, "tooltip": { "mode": "single", "sort": "none" } },
+      "targets": [{ "refId": "A", "editorType": "sql", "queryType": "table", "format": 1, "rawSql": "WITH s AS (SELECT session_id,argMin(attribution_channel,timestamp) AS source,argMin(ifNull(document_referrer,''),timestamp) AS doc_ref,greatest(max(if(isFinite(pages_viewed),pages_viewed,0)),toFloat64(uniqExactIf(landing_path,landing_path!=''))) AS page_views FROM telemetry_guard.tg_events WHERE $__timeFilter(timestamp) AND site_key='tg_sk_1uIiZzN3XsyoB3skHSvCyf' AND kind='beacon' GROUP BY session_id) SELECT multiIf(source='meta_ads' OR positionCaseInsensitive(doc_ref,'facebook.')>0 OR positionCaseInsensitive(doc_ref,'instagram.')>0,'Facebook / Meta',source='tiktok_ads' OR positionCaseInsensitive(doc_ref,'tiktok.')>0,'TikTok',source='google_ads' OR positionCaseInsensitive(doc_ref,'youtube.')>0 OR positionCaseInsensitive(doc_ref,'youtu.be')>0,'YouTube / Google',source='organic_search','Organic Search',source='microsoft_ads','Microsoft Ads',source='direct','Direct',source='referral','Other Referral','Other') AS source_group,round(avg(page_views),2) AS avg_page_views FROM s GROUP BY source_group ORDER BY avg_page_views DESC" }]
+    },
+    {
+      "id": 10, "type": "table", "title": "Top landing pages by source",
+      "gridPos": { "h": 10, "w": 12, "x": 0, "y": 32 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "tg-clickhouse" },
+      "fieldConfig": { "defaults": { "custom": { "align": "auto", "cellOptions": { "type": "auto" } } }, "overrides": [] },
+      "options": { "showHeader": true, "cellHeight": "sm", "footer": { "show": false } },
+      "targets": [{ "refId": "A", "editorType": "sql", "queryType": "table", "format": 1, "rawSql": "WITH s AS (SELECT session_id,argMin(attribution_channel,timestamp) AS source,argMin(ifNull(document_referrer,''),timestamp) AS doc_ref,argMin(if(landing_path='','/',landing_path),timestamp) AS landing_page FROM telemetry_guard.tg_events WHERE $__timeFilter(timestamp) AND site_key='tg_sk_1uIiZzN3XsyoB3skHSvCyf' AND kind='beacon' GROUP BY session_id) SELECT multiIf(source='meta_ads' OR positionCaseInsensitive(doc_ref,'facebook.')>0 OR positionCaseInsensitive(doc_ref,'instagram.')>0,'Facebook / Meta',source='tiktok_ads' OR positionCaseInsensitive(doc_ref,'tiktok.')>0,'TikTok',source='google_ads' OR positionCaseInsensitive(doc_ref,'youtube.')>0 OR positionCaseInsensitive(doc_ref,'youtu.be')>0,'YouTube / Google',source='organic_search','Organic Search',source='microsoft_ads','Microsoft Ads',source='direct','Direct',source='referral','Other Referral','Other') AS source_group,landing_page,count() AS sessions FROM s GROUP BY source_group,landing_page ORDER BY sessions DESC LIMIT 30" }]
+    },
+    {
+      "id": 11, "type": "table", "title": "Campaign and referrer performance",
+      "gridPos": { "h": 10, "w": 12, "x": 12, "y": 32 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "tg-clickhouse" },
+      "fieldConfig": { "defaults": { "custom": { "align": "auto", "cellOptions": { "type": "auto" } } }, "overrides": [] },
+      "options": { "showHeader": true, "cellHeight": "sm", "footer": { "show": false } },
+      "targets": [{ "refId": "A", "editorType": "sql", "queryType": "table", "format": 1, "rawSql": "SELECT attribution_channel AS source,if(utm_campaign='','(not tagged)',utm_campaign) AS campaign,if(ifNull(document_referrer,'')='','(not exposed)',domain(document_referrer)) AS referrer_host,uniqExact(session_id) AS sessions,round(avg(if(isFinite(time_on_page_sec),time_on_page_sec,0)),1) AS avg_time_on_page_sec FROM telemetry_guard.tg_events WHERE $__timeFilter(timestamp) AND site_key='tg_sk_1uIiZzN3XsyoB3skHSvCyf' AND kind='beacon' AND attribution_channel IN ('meta_ads','tiktok_ads','google_ads','microsoft_ads','paid_other','organic_search') GROUP BY source,campaign,referrer_host ORDER BY sessions DESC LIMIT 30" }]
+    },
+    {
+      "id": 12, "type": "table", "title": "Top referring websites",
+      "description": "The external website recorded by the browser when the visitor first arrived. Direct/hidden includes typed URLs, bookmarks, apps, and browsers that suppress the referrer.",
+      "gridPos": { "h": 11, "w": 24, "x": 0, "y": 42 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "tg-clickhouse" },
+      "fieldConfig": { "defaults": { "custom": { "align": "auto", "cellOptions": { "type": "auto" } } }, "overrides": [{ "matcher": { "id": "byName", "options": "traffic_share_pct" }, "properties": [{ "id": "unit", "value": "percent" }] }, { "matcher": { "id": "byName", "options": "avg_session_seconds" }, "properties": [{ "id": "unit", "value": "s" }] }] },
+      "options": { "showHeader": true, "cellHeight": "sm", "footer": { "show": false } },
+      "targets": [{ "refId": "A", "editorType": "sql", "queryType": "table", "format": 1, "rawSql": "WITH sessions AS (SELECT session_id,min(timestamp) AS first_seen,max(timestamp) AS last_seen,argMin(attribution_channel,timestamp) AS channel,argMin(ifNull(document_referrer,''),timestamp) AS doc_ref,argMin(if(landing_path='','/',landing_path),timestamp) AS landing_page,greatest(max(if(isFinite(pages_viewed),pages_viewed,0)),toFloat64(uniqExactIf(landing_path,landing_path!=''))) AS page_views FROM telemetry_guard.tg_events WHERE $__timeFilter(timestamp) AND site_key='tg_sk_1uIiZzN3XsyoB3skHSvCyf' AND kind='beacon' GROUP BY session_id), attributed AS (SELECT *,if(doc_ref='' OR domain(doc_ref)='','(direct / hidden)',lower(replaceRegexpOne(domain(doc_ref),'^www\\.',''))) AS referring_site FROM sessions) SELECT referring_site,argMin(channel,first_seen) AS channel,count() AS sessions,round(100*count()/sum(count()) OVER (),1) AS traffic_share_pct,round(avg(dateDiff('second',first_seen,last_seen)),1) AS avg_session_seconds,round(avg(page_views),2) AS avg_page_views,argMax(landing_page,first_seen) AS latest_landing_page,max(first_seen) AS latest_visit FROM attributed GROUP BY referring_site ORDER BY sessions DESC,latest_visit DESC LIMIT 50" }]
+    }
+  ]
+}

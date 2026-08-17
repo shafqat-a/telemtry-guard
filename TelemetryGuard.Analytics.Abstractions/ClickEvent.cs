@@ -79,6 +79,9 @@ public sealed record ClickEvent
     public string? SecChUaPlatform { get; init; }
     public string? AcceptLanguage { get; init; }
     public string? Referrer { get; init; }
+    /// <summary>The page's document.referrer as reported by the browser SDK. Unlike
+    /// Referrer, this preserves the external source when telemetry is cross-origin.</summary>
+    public string? DocumentReferrer { get; init; }
     public string? TlsJa3 { get; init; }               // null unless Cloudflare-fronted (D13)
     public string? TlsJa4 { get; init; }
     public uint? CfAsn { get; init; }                  // ASN as reported by Cloudflare header

@@ -13,13 +13,13 @@
         @if (User.Identity?.IsAuthenticated == true)
         {
             <nav class="tg-nav">
-                <a href="/">Dashboard</a>
-                <a href="/review">Review &amp; override</a>
-                <a href="/enforcement">Approval queue</a>
-                <a href="/whitelist">Whitelist</a>
+                <a href="@Url.Content("~/")">Dashboard</a>
+                <a href="@Url.Content("~/review")">Review &amp; override</a>
+                <a href="@Url.Content("~/enforcement")">Approval queue</a>
+                <a href="@Url.Content("~/whitelist")">Whitelist</a>
             </nav>
             <span class="tg-key-hint">Signed in @PortalAuth.HintFor(User)</span>
-            <form method="post" action="/signout" class="tg-signout-form">
+            <form method="post" action="@Url.Content("~/signout")" class="tg-signout-form">
                 @Html.AntiForgeryToken()
                 <button type="submit">Sign out</button>
             </form>

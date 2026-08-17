@@ -262,15 +262,58 @@ public static partial class BeaconEndpoints
             // Periodic sink snapshot: first beacon, fp-bearing, fs-bearing, or
             // every Nth. Sink enqueue only — never blocks on ClickHouse (ANA-03).
             var nBeacons = SessionAggregator.GetLong(hash, "n_beacons") ?? 0;
+            var edge = edgeSignals.Read(ctx);
+
+            // Preserve the HTTP identity needed by the scoring pipeline after this
+            // request has ended. Never overwrite tracker/pixel context: those paths
+            // carry paid-click and campaign semantics that an SDK beacon cannot infer.
+            var clickKey = $"t:{tid}:click:{sid}";
+            if (result.EventsAggregated && !await db.KeyExistsAsync(clickKey))
+            {
+                await db.HashSetAsync(clickKey,
+                [
+                    new("kind", "beacon"),
+                    new("ts", nowMs),
+                    new("ip", ip),
+                    new("ua", ua ?? ""),
+                    new("ch_ua", NullIfEmpty(ctx.Request.Headers["Sec-CH-UA"].ToString()) ?? ""),
+                    new("ch_mobile", NullIfEmpty(ctx.Request.Headers["Sec-CH-UA-Mobile"].ToString()) ?? ""),
+                    new("ch_platform", NullIfEmpty(ctx.Request.Headers["Sec-CH-UA-Platform"].ToString()) ?? ""),
+                    new("accept_language", NullIfEmpty(ctx.Request.Headers.AcceptLanguage.ToString()) ?? ""),
+                    new("referrer", NullIfEmpty(ctx.Request.Headers.Referer.ToString()) ?? ""),
+                    new("header_order", string.Join(',', ctx.Request.Headers.Select(h => h.Key))),
+                    new("site_key", k),
+                    new("campaign_id", ""),
+                    new("click_id_type", ""),
+                    new("click_id", ""),
+                    new("click_id_invalid", ""),
+                    new("tls_fp", edge.Ja4 ?? edge.Ja3 ?? ""),
+                ]);
+                await db.KeyExpireAsync(clickKey, TimeSpan.FromSeconds(opts.SessionTtlSeconds));
+            }
+
+            // SDK-only sessions have no tracker/pixel request to put them on the
+            // verdict worker's grace queue. Register the first accepted batch with
+            // NX so an existing tracker deadline keeps its original semantics; later
+            // accepted batches move an SDK session's deadline forward, making this a
+            // quiet-period timer. Replays do not keep a session alive indefinitely.
+            if (result.EventsAggregated)
+            {
+                var deadline = now.ToUnixTimeSeconds() + opts.FinalizeQuietSeconds;
+                await db.SortedSetAddAsync(
+                    $"t:{tid}:grace", sid, deadline,
+                    nBeacons == 1 ? When.NotExists : When.Always);
+                await db.SetAddAsync("grace:tenants", tid);
+            }
+
             if (nBeacons == 1 || result.SawFp || result.SawFs
                 || (opts.SinkEveryNthBeacon > 0 && nBeacons % opts.SinkEveryNthBeacon == 0))
             {
                 var retentionDays = await ResolveRetentionDaysAsync(
                     ctx, cache, retentionOpts.Value, tid, ct);
-                // INT-05: this beacon POST is its own HTTP request — no click-context
-                // hash write happens here (that stays API-02/API-03's job); only the
-                // snapshot ClickEvent gets the edge fields, for analytics completeness.
-                var edge = edgeSignals.Read(ctx);
+                // INT-05: this beacon POST is its own HTTP request, so its snapshot
+                // receives edge fields directly as well as the minimal scoring context
+                // retained above.
                 // ANA-08: the beacon POST's Referer is the page URL (full path+query,
                 // because /i is same-origin with the page), so utm_* and click ids can be
                 // recovered here even for a visit that never went through the tracker.

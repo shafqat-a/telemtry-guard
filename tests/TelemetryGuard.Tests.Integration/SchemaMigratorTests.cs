@@ -37,13 +37,19 @@ public sealed class SchemaMigratorTests(ClickHouseSchemaFixture fixture)
     [Fact]
     public async Task Apply_IsIdempotent_SingleScriptJournaledOnce()
     {
-        // RSK-08 added 0002_training_and_shadow.sql (ALTERs only, runs after 0001).
-        Assert.Equal(new[] { "0001_events.sql", "0002_training_and_shadow.sql" }, fixture.FirstRunApplied);
+        Assert.Equal(new[]
+        {
+            "0001_events.sql",
+            "0002_training_and_shadow.sql",
+            "0003_attribution.sql",
+            "0004_full_request.sql",
+            "0005_document_referrer.sql",
+        }, fixture.FirstRunApplied);
 
         var secondRun = await new SchemaMigrator(fixture.ConnectionString).ApplyAsync();
         Assert.Empty(secondRun);
 
-        Assert.Equal(2UL, await ScalarAsync<ulong>("SELECT count() FROM tg_schema_migrations"));
+        Assert.Equal(5UL, await ScalarAsync<ulong>("SELECT count() FROM tg_schema_migrations"));
         Assert.Equal((byte)1, await ScalarAsync<byte>("EXISTS TABLE tg_events"));
         Assert.Equal((byte)1, await ScalarAsync<byte>("EXISTS TABLE tg_labels"));
     }

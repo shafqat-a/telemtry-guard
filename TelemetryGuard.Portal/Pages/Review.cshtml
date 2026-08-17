@@ -16,7 +16,7 @@
 }
 
 <section class="panel">
-    <form method="get" action="/review" class="tg-filter-form">
+    <form method="get" action="@Url.Content("~/review")" class="tg-filter-form">
         <label>
             From
             <input type="date" name="From" value="@Model.From?.ToString("yyyy-MM-dd")" />

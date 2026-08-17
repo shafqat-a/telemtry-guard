@@ -150,6 +150,7 @@ public sealed class DecisionEndpointTests
                     ["ConnectionStrings:Redis"] = "localhost:1,connectTimeout=250,abortConnect=false",
                     ["Analytics:ClickHouse:ConnectionString"] = "Host=localhost;Port=1;Database=telemetry_guard",
                     ["Turnstile:SiteKey"] = WidgetSiteKey,
+                    ["Enforcement:ObserveOnly"] = "false",
                 };
                 if (settings is not null)
                     foreach (var (k, v) in settings) overrides[k] = v;
@@ -222,6 +223,23 @@ public sealed class DecisionEndpointTests
 
         if (expectedAction == "challenge")
             Assert.Equal(WidgetSiteKey, json.GetProperty("turnstileSiteKey").GetString());
+    }
+
+    [Fact]
+    public async Task ObserveOnly_BlockVerdict_IsPersistedButVisitorIsAllowed()
+    {
+        using var app = new DecideApp(new() { ["Enforcement:ObserveOnly"] = "true" });
+        var outcome = Outcome(90);
+        app.Pipeline.Respond = (_, _) => outcome;
+        using var client = app.Client();
+
+        var resp = await client.SendAsync(Post($"/decide?k={SiteKey}", Body(Sid)));
+        var json = await ReadJson(resp);
+
+        Assert.Equal("allow", json.GetProperty("action").GetString());
+        Assert.Single(app.Finalizer.Calls);
+        Assert.Same(outcome, app.Finalizer.Calls[0].Outcome);
+        Assert.Equal(0, app.Turnstile.Calls);
     }
 
     [Fact]

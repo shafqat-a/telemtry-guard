@@ -1,4 +1,5 @@
 using Dapper;
+using System.Text.Json;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -200,6 +201,76 @@ public sealed class GraceWorkerTests(SqlServerFixture fx)
         Assert.False(string.IsNullOrEmpty(evt.ScorerVersion));
         Assert.Equal(1, evt.FeatureSetVersion);
         Assert.InRange(evt.RetentionDays, (ushort)30, (ushort)180);
+    }
+
+    [Fact]
+    public async Task BeaconOnlySession_GraceWorker_EmitsVerdictWithBeaconAndEnrichmentFeatures()
+    {
+        var (provider, pipeline, sink) = BuildProvider();
+        await using var _ = provider;
+
+        var tid = SqlServerFixture.TenantA.ToString("D");
+        var sid = $"s{Guid.NewGuid():N}";
+        var db = fx.Redis.GetDatabase();
+        var ip = "203.0.113.77";
+        var features = new FraudFeatureVector
+        {
+            HasJsBeacon = true,
+            IpProxyOrVpn = true,
+            IpDatacenterAsn = true,
+        };
+        pipeline.Responses[sid] = new ScoringOutcome(
+            new ScoreResult(45, [], "test-scorer", FraudFeatureVector.FeatureSetVersion),
+            VerdictBand.Challenge, Whitelisted: false, DurationMs: 1, Features: features);
+
+        // The exact state produced by a first organic POST /i: aggregate + HTTP
+        // context, then a quiet-period deadline discovered by the worker.
+        await db.HashSetAsync($"t:{tid}:sess:{sid}",
+        [
+            new("has_beacon", "1"),
+            new("n_beacons", "1"),
+            new("n_pv", "1"),
+        ]);
+        await db.HashSetAsync($"t:{tid}:click:{sid}",
+        [
+            new("kind", "beacon"),
+            new("ip", ip),
+            new("ua", "IntegrationBrowser/1.0"),
+            new("site_key", SqlServerFixture.SiteKeyA),
+        ]);
+        await db.SortedSetAddAsync(
+            $"t:{tid}:grace", sid, DateTimeOffset.UtcNow.AddSeconds(-1).ToUnixTimeSeconds());
+        await db.SetAddAsync("grace:tenants", tid);
+
+        var worker = new VerdictFinalizerService(
+            fx.Redis, provider.GetRequiredService<IServiceScopeFactory>(),
+            SystemClock.Instance, NullLogger<VerdictFinalizerService>.Instance);
+        await worker.StartAsync(CancellationToken.None);
+        ClickEvent? verdict;
+        try
+        {
+            verdict = await PollAsync(
+                () => Task.FromResult(sink.Events.SingleOrDefault(e => e.SessionId == sid)),
+                e => e is not null,
+                TimeSpan.FromSeconds(8));
+        }
+        finally
+        {
+            await worker.StopAsync(CancellationToken.None);
+        }
+
+        Assert.NotNull(verdict);
+        Assert.Equal(EventKind.Verdict, verdict!.Kind);
+        Assert.True(verdict.HasJsBeacon);
+        Assert.Equal(ip, verdict.Ip);
+        Assert.Equal(SqlServerFixture.SiteKeyA, verdict.SiteKey);
+        Assert.Equal("challenge", verdict.Band);
+        var persistedFeatures = JsonSerializer.Deserialize<FraudFeatureVector>(
+            verdict.Features, FraudFeatureVectorJson.Options);
+        Assert.NotNull(persistedFeatures);
+        Assert.True(persistedFeatures!.IpProxyOrVpn);
+        Assert.True(persistedFeatures.IpDatacenterAsn);
+        Assert.Null(await db.SortedSetScoreAsync($"t:{tid}:grace", sid));
     }
 
     [Fact]
