@@ -105,7 +105,7 @@ public sealed class VerdictFinalizerTests
         public Task UpsertFlaggedSourceAsync(FlaggedSourceDailyRow row, CancellationToken ct)
             => throw new NotSupportedException();
         public Task<IReadOnlyList<VerdictDailySummaryRow>> GetDailySummariesAsync(
-            Guid campaignId, DateOnly from, DateOnly to, CancellationToken ct) => throw new NotSupportedException();
+            Guid? campaignId, DateOnly from, DateOnly to, CancellationToken ct) => throw new NotSupportedException();
         public Task<IReadOnlyList<FlaggedSourceDailyRow>> GetTopFlaggedSourcesAsync(
             DateOnly from, DateOnly to, int limit, CancellationToken ct) => throw new NotSupportedException();
     }

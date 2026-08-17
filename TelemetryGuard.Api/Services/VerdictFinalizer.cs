@@ -232,7 +232,10 @@ public sealed class VerdictFinalizer(
                 Challenged: band == VerdictBand.Challenge ? 1 : 0,
                 Blocked: band == VerdictBand.Block ? 1 : 0,
                 ScoreSum: result.Score,
-                Events: 1), ct).ConfigureAwait(false);
+                Events: 1)
+            {
+                ScoreDistribution = ScoreDistribution.ForScore(result.Score),
+            }, ct).ConfigureAwait(false);
         }
         catch (Exception ex)
         {

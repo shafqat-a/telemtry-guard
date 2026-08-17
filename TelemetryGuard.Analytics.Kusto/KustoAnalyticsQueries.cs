@@ -63,6 +63,18 @@ public sealed class KustoAnalyticsQueries(
             challenged        = countif(['kind'] == 'verdict' and band == 'challenge'),
             blocked           = countif(['kind'] == 'verdict' and band == 'block'),
             score_sum         = sumif(tolong(score), ['kind'] == 'verdict' and isnotnull(score)),
+            score_sum_sq      = sumif(tolong(score) * tolong(score), ['kind'] == 'verdict' and isnotnull(score)),
+            score_bucket_00   = countif(['kind'] == 'verdict' and score between (0 .. 9)),
+            score_bucket_10   = countif(['kind'] == 'verdict' and score between (10 .. 19)),
+            score_bucket_20   = countif(['kind'] == 'verdict' and score between (20 .. 29)),
+            score_bucket_30   = countif(['kind'] == 'verdict' and score between (30 .. 39)),
+            score_bucket_40   = countif(['kind'] == 'verdict' and score between (40 .. 49)),
+            score_bucket_50   = countif(['kind'] == 'verdict' and score between (50 .. 59)),
+            score_bucket_60   = countif(['kind'] == 'verdict' and score between (60 .. 69)),
+            score_bucket_70   = countif(['kind'] == 'verdict' and score between (70 .. 79)),
+            score_bucket_80   = countif(['kind'] == 'verdict' and score between (80 .. 89)),
+            score_bucket_90   = countif(['kind'] == 'verdict' and score between (90 .. 99)),
+            score_bucket_100  = countif(['kind'] == 'verdict' and score == 100),
             scored_with_score = countif(['kind'] == 'verdict' and isnotnull(score)),
             no_js_beacon      = countif(['kind'] == 'verdict' and has_js_beacon == false)
             by day = startofday(timestamp)
@@ -82,6 +94,18 @@ public sealed class KustoAnalyticsQueries(
             blocked_events = countif(band == 'block'),
             total_events   = count(),
             score_sum      = sumif(tolong(score), isnotnull(score)),
+            score_sum_sq   = sumif(tolong(score) * tolong(score), band in ('challenge', 'block') and isnotnull(score)),
+            score_bucket_00  = countif(band in ('challenge', 'block') and score between (0 .. 9)),
+            score_bucket_10  = countif(band in ('challenge', 'block') and score between (10 .. 19)),
+            score_bucket_20  = countif(band in ('challenge', 'block') and score between (20 .. 29)),
+            score_bucket_30  = countif(band in ('challenge', 'block') and score between (30 .. 39)),
+            score_bucket_40  = countif(band in ('challenge', 'block') and score between (40 .. 49)),
+            score_bucket_50  = countif(band in ('challenge', 'block') and score between (50 .. 59)),
+            score_bucket_60  = countif(band in ('challenge', 'block') and score between (60 .. 69)),
+            score_bucket_70  = countif(band in ('challenge', 'block') and score between (70 .. 79)),
+            score_bucket_80  = countif(band in ('challenge', 'block') and score between (80 .. 89)),
+            score_bucket_90  = countif(band in ('challenge', 'block') and score between (90 .. 99)),
+            score_bucket_100 = countif(band in ('challenge', 'block') and score == 100),
             scored         = countif(isnotnull(score)),
             first_seen     = min(timestamp),
             last_seen      = max(timestamp)
@@ -122,6 +146,18 @@ public sealed class KustoAnalyticsQueries(
             challenged        = countif(band == 'challenge'),
             blocked           = countif(band == 'block'),
             score_sum         = sumif(tolong(score), isnotnull(score)),
+            score_sum_sq      = sumif(tolong(score) * tolong(score), isnotnull(score)),
+            score_bucket_00   = countif(score between (0 .. 9)),
+            score_bucket_10   = countif(score between (10 .. 19)),
+            score_bucket_20   = countif(score between (20 .. 29)),
+            score_bucket_30   = countif(score between (30 .. 39)),
+            score_bucket_40   = countif(score between (40 .. 49)),
+            score_bucket_50   = countif(score between (50 .. 59)),
+            score_bucket_60   = countif(score between (60 .. 69)),
+            score_bucket_70   = countif(score between (70 .. 79)),
+            score_bucket_80   = countif(score between (80 .. 89)),
+            score_bucket_90   = countif(score between (90 .. 99)),
+            score_bucket_100  = countif(score == 100),
             scored_with_score = countif(isnotnull(score)),
             no_js_beacon      = countif(has_js_beacon == false)
             by day = startofday(timestamp), placement
@@ -144,6 +180,18 @@ public sealed class KustoAnalyticsQueries(
             challenged        = countif(['kind'] == 'verdict' and band == 'challenge'),
             blocked           = countif(['kind'] == 'verdict' and band == 'block'),
             score_sum         = sumif(tolong(score), ['kind'] == 'verdict' and isnotnull(score)),
+            score_sum_sq      = sumif(tolong(score) * tolong(score), ['kind'] == 'verdict' and isnotnull(score)),
+            score_bucket_00   = countif(['kind'] == 'verdict' and score between (0 .. 9)),
+            score_bucket_10   = countif(['kind'] == 'verdict' and score between (10 .. 19)),
+            score_bucket_20   = countif(['kind'] == 'verdict' and score between (20 .. 29)),
+            score_bucket_30   = countif(['kind'] == 'verdict' and score between (30 .. 39)),
+            score_bucket_40   = countif(['kind'] == 'verdict' and score between (40 .. 49)),
+            score_bucket_50   = countif(['kind'] == 'verdict' and score between (50 .. 59)),
+            score_bucket_60   = countif(['kind'] == 'verdict' and score between (60 .. 69)),
+            score_bucket_70   = countif(['kind'] == 'verdict' and score between (70 .. 79)),
+            score_bucket_80   = countif(['kind'] == 'verdict' and score between (80 .. 89)),
+            score_bucket_90   = countif(['kind'] == 'verdict' and score between (90 .. 99)),
+            score_bucket_100  = countif(['kind'] == 'verdict' and score == 100),
             scored_with_score = countif(['kind'] == 'verdict' and isnotnull(score)),
             no_js_beacon      = countif(['kind'] == 'verdict' and has_js_beacon == false)
             by day = startofday(timestamp), site_key
@@ -179,10 +227,11 @@ public sealed class KustoAnalyticsQueries(
     public async Task<CampaignFraudReport> GetCampaignReportAsync(string campaignId, DateRange range, CancellationToken ct)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(campaignId);
+        var storedCampaignId = campaignId == CampaignScopes.Campaignless ? "" : campaignId;
 
         var props = NewProps();
         props.SetParameter("tenantId", tenant.TenantId.Value);
-        props.SetParameter("campaign", campaignId);
+        props.SetParameter("campaign", storedCampaignId);
         props.SetParameter("fromTs", range.FromUtc);
         props.SetParameter("toTs", range.ToUtc);
 
@@ -206,7 +255,10 @@ public sealed class KustoAnalyticsQueries(
                     // identical value without depending on Kusto's empty-scope avg
                     // semantics. Missing != zero: 0 scored rows => NaN, never 0.0.
                     AvgScore: scoredWithScore == 0 ? double.NaN : (double)scoreSum / scoredWithScore,
-                    NoJsBeaconCount: Convert.ToInt64(r["no_js_beacon"])));
+                    NoJsBeaconCount: Convert.ToInt64(r["no_js_beacon"]))
+                {
+                    ScoreDistribution = ReadDistribution(r),
+                });
             }
         }
 
@@ -218,7 +270,11 @@ public sealed class KustoAnalyticsQueries(
         return new CampaignFraudReport(campaignId, range,
             days.Sum(d => d.TotalEvents), totalScored,
             days.Sum(d => d.Allowed), days.Sum(d => d.Challenged), days.Sum(d => d.Blocked),
-            avg, days.Sum(d => d.NoJsBeaconCount), days);
+            avg, days.Sum(d => d.NoJsBeaconCount), days)
+        {
+            ScoreDistribution = days.Aggregate(
+                ScoreDistribution.Empty, (sum, day) => sum + day.ScoreDistribution),
+        };
     }
 
     public async Task<IReadOnlyList<FlaggedSource>> GetTopFlaggedSourcesAsync(DateRange range, int limit, CancellationToken ct)
@@ -246,7 +302,10 @@ public sealed class KustoAnalyticsQueries(
                 ScoreSum: scoreSum,
                 AvgScore: scored == 0 ? double.NaN : (double)scoreSum / scored,
                 FirstSeenUtc: KustoValueMapping.AsUtc(r["first_seen"]),
-                LastSeenUtc: KustoValueMapping.AsUtc(r["last_seen"])));
+                LastSeenUtc: KustoValueMapping.AsUtc(r["last_seen"]))
+            {
+                ScoreDistribution = ReadDistribution(r),
+            });
         }
         return sources;
     }
@@ -278,7 +337,10 @@ public sealed class KustoAnalyticsQueries(
                 Blocked: Convert.ToInt64(r["blocked"]),
                 ScoreSum: scoreSum,
                 AvgScore: scoredWithScore == 0 ? double.NaN : (double)scoreSum / scoredWithScore,
-                NoJsBeaconCount: Convert.ToInt64(r["no_js_beacon"])));
+                NoJsBeaconCount: Convert.ToInt64(r["no_js_beacon"]))
+            {
+                ScoreDistribution = ReadDistribution(r),
+            });
         }
         return rows;
     }
@@ -306,7 +368,10 @@ public sealed class KustoAnalyticsQueries(
                 Blocked: Convert.ToInt64(r["blocked"]),
                 ScoreSum: scoreSum,
                 AvgScore: scoredWithScore == 0 ? double.NaN : (double)scoreSum / scoredWithScore,
-                NoJsBeaconCount: Convert.ToInt64(r["no_js_beacon"])));
+                NoJsBeaconCount: Convert.ToInt64(r["no_js_beacon"]))
+            {
+                ScoreDistribution = ReadDistribution(r),
+            });
         }
         return rows;
     }
@@ -317,4 +382,21 @@ public sealed class KustoAnalyticsQueries(
         props.SetOption(ClientRequestProperties.OptionServerTimeout, TimeSpan.FromSeconds(options.Value.QueryTimeoutSeconds));
         return props;
     }
+
+    private static ScoreDistribution ReadDistribution(System.Data.IDataRecord row) =>
+        ScoreDistribution.FromCounts(
+            [
+                Convert.ToInt64(row["score_bucket_00"]),
+                Convert.ToInt64(row["score_bucket_10"]),
+                Convert.ToInt64(row["score_bucket_20"]),
+                Convert.ToInt64(row["score_bucket_30"]),
+                Convert.ToInt64(row["score_bucket_40"]),
+                Convert.ToInt64(row["score_bucket_50"]),
+                Convert.ToInt64(row["score_bucket_60"]),
+                Convert.ToInt64(row["score_bucket_70"]),
+                Convert.ToInt64(row["score_bucket_80"]),
+                Convert.ToInt64(row["score_bucket_90"]),
+                Convert.ToInt64(row["score_bucket_100"]),
+            ],
+            KustoValueMapping.ToInt64OrZero(row["score_sum_sq"]));
 }

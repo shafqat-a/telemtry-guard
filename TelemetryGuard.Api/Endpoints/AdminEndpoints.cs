@@ -3,6 +3,7 @@ using System.Net;
 using System.Text.RegularExpressions;
 using StackExchange.Redis;
 using TelemetryGuard.Api.Auth;
+using TelemetryGuard.Analytics.Abstractions;
 using TelemetryGuard.Core.Tenancy;
 using TelemetryGuard.Core.Time;
 using TelemetryGuard.Data.Models;
@@ -140,8 +141,13 @@ public static partial class AdminEndpoints
         string? campaignId, string? from, string? to,
         IVerdictSummaryRepository summaries, CancellationToken ct)
     {
-        if (campaignId is null || !Guid.TryParse(campaignId, out var campaignGuid))
-            return ValidationProblem("campaignId", "campaignId is required and must be a GUID.");
+        Guid? campaignGuid = null;
+        if (campaignId is not null)
+        {
+            if (!Guid.TryParse(campaignId, out var parsedCampaignGuid))
+                return ValidationProblem("campaignId", "campaignId must be a GUID when supplied.");
+            campaignGuid = parsedCampaignGuid;
+        }
 
         if (from is null || !TryParseDate(from, out var fromDate))
             return ValidationProblem("from", "from is required and must be yyyy-MM-dd.");
@@ -164,9 +170,12 @@ public static partial class AdminEndpoints
     }
 
     private static SummaryDayResponse ToSummaryDay(VerdictDailySummaryRow r)
-        => new(
+        => new SummaryDayResponse(
             r.Date, r.Events, r.Allowed, r.Challenged, r.Blocked,
-            r.Events == 0 ? null : Math.Round((double)r.ScoreSum / r.Events, 1));
+            r.Events == 0 ? null : Math.Round((double)r.ScoreSum / r.Events, 1))
+        {
+            ScoreHistogram = ToHistogram(r.ScoreDistribution),
+        };
 
     // ----------------------------------------------------- integration status --
 
@@ -240,10 +249,14 @@ public static partial class AdminEndpoints
         var rows = await summaries.GetTopFlaggedSourcesAsync(fromDate, toDate, effectiveLimit, ct);
         return Results.Ok(new FlaggedSourcesReportResponse(
             fromDate, toDate,
-            rows.Select(r => new FlaggedSourceResponse(
-                    r.Date, r.SourceType, r.Value, r.FlaggedCount, r.BlockedCount, r.ScoreSum))
-                .ToList()));
+            rows.Select(ToFlaggedSource).ToList()));
     }
+
+    private static FlaggedSourceResponse ToFlaggedSource(FlaggedSourceDailyRow r) =>
+        new(r.Date, r.SourceType, r.Value, r.FlaggedCount, r.BlockedCount, r.ScoreSum)
+        {
+            ScoreHistogram = ToHistogram(r.ScoreDistribution),
+        };
 
     // -------------------------------------------------------- publishers --
     // P2-01: D23 reads of dbo.PublisherDailySummaries / dbo.SiteDailySummaries
@@ -276,7 +289,10 @@ public static partial class AdminEndpoints
             r.Events == 0 ? null : Math.Round((double)flagged / r.Events, 4),
             r.Events == 0 ? null : Math.Round((double)r.ScoreSum / r.Events, 1),
             r.NoJsBeaconCount, r.Events < LowVolumePlacementEvents,
-            r.FirstDay, r.LastDay);
+            r.FirstDay, r.LastDay)
+        {
+            ScoreHistogram = ToHistogram(r.ScoreDistribution),
+        };
     }
 
     private static async Task<IResult> GetSiteReportAsync(
@@ -298,10 +314,19 @@ public static partial class AdminEndpoints
     }
 
     private static SiteReportDayResponse ToSiteReportDay(SiteDailySummaryRow r)
-        => new(
+        => new SiteReportDayResponse(
             r.Date, r.SiteKey, r.TotalEvents, r.Events, r.Allowed, r.Challenged, r.Blocked,
             r.Events == 0 ? null : Math.Round((double)r.ScoreSum / r.Events, 1),
-            r.NoJsBeaconCount);
+            r.NoJsBeaconCount)
+        {
+            ScoreHistogram = ToHistogram(r.ScoreDistribution),
+        };
+
+    private static ScoreHistogramResponse ToHistogram(ScoreDistribution distribution) => new(
+        ScoreDistribution.BucketWidth,
+        ScoreDistribution.Edges,
+        distribution.Counts,
+        distribution.SumSq);
 
     // ------------------------------------------------------------- helpers --
 

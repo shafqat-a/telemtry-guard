@@ -71,6 +71,7 @@ public sealed class ClickHouseAnalyticsQueries(
     public async Task<CampaignFraudReport> GetCampaignReportAsync(string campaignId, DateRange range, CancellationToken ct)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(campaignId);
+        var storedCampaignId = campaignId == CampaignScopes.Campaignless ? "" : campaignId;
 
         await using var conn = new ClickHouseConnection(_cs);
         await conn.OpenAsync(ct);
@@ -85,6 +86,18 @@ public sealed class ClickHouseAnalyticsQueries(
                 countIf(kind = 'verdict' AND band = 'challenge')    AS challenged,
                 countIf(kind = 'verdict' AND band = 'block')        AS blocked,
                 sumIf(score, kind = 'verdict' AND isNotNull(score)) AS score_sum,
+                sumIf(toInt64(score) * toInt64(score), kind = 'verdict' AND isNotNull(score)) AS score_sum_sq,
+                countIf(kind = 'verdict' AND score BETWEEN 0 AND 9)    AS score_bucket_00,
+                countIf(kind = 'verdict' AND score BETWEEN 10 AND 19) AS score_bucket_10,
+                countIf(kind = 'verdict' AND score BETWEEN 20 AND 29) AS score_bucket_20,
+                countIf(kind = 'verdict' AND score BETWEEN 30 AND 39) AS score_bucket_30,
+                countIf(kind = 'verdict' AND score BETWEEN 40 AND 49) AS score_bucket_40,
+                countIf(kind = 'verdict' AND score BETWEEN 50 AND 59) AS score_bucket_50,
+                countIf(kind = 'verdict' AND score BETWEEN 60 AND 69) AS score_bucket_60,
+                countIf(kind = 'verdict' AND score BETWEEN 70 AND 79) AS score_bucket_70,
+                countIf(kind = 'verdict' AND score BETWEEN 80 AND 89) AS score_bucket_80,
+                countIf(kind = 'verdict' AND score BETWEEN 90 AND 99) AS score_bucket_90,
+                countIf(kind = 'verdict' AND score = 100)             AS score_bucket_100,
                 avgIf(score, kind = 'verdict' AND isNotNull(score)) AS avg_score,
                 countIf(kind = 'verdict' AND has_js_beacon = 0)     AS no_js_beacon
             FROM tg_events
@@ -96,7 +109,7 @@ public sealed class ClickHouseAnalyticsQueries(
             ORDER BY day
             """;
         cmd.AddParameter("tenantId", tenant.TenantId.Value);
-        cmd.AddParameter("campaignId", campaignId);
+        cmd.AddParameter("campaignId", storedCampaignId);
         cmd.AddParameter("fromTs", range.FromUtc);
         cmd.AddParameter("toTs", range.ToUtc);
 
@@ -114,7 +127,10 @@ public sealed class ClickHouseAnalyticsQueries(
                     Blocked: Convert.ToInt64(r["blocked"]),
                     ScoreSum: ToInt64OrZero(r["score_sum"]),          // 0 when no scored rows (mergeable sum)
                     AvgScore: ToDoubleOrNaN(r["avg_score"]),          // NaN when no scored rows — never 0
-                    NoJsBeaconCount: Convert.ToInt64(r["no_js_beacon"])));
+                    NoJsBeaconCount: Convert.ToInt64(r["no_js_beacon"]))
+                {
+                    ScoreDistribution = ReadDistribution(r),
+                });
             }
         }
 
@@ -124,7 +140,11 @@ public sealed class ClickHouseAnalyticsQueries(
         return new CampaignFraudReport(campaignId, range,
             days.Sum(d => d.TotalEvents), totalScored,
             days.Sum(d => d.Allowed), days.Sum(d => d.Challenged), days.Sum(d => d.Blocked),
-            avg, days.Sum(d => d.NoJsBeaconCount), days);
+            avg, days.Sum(d => d.NoJsBeaconCount), days)
+        {
+            ScoreDistribution = days.Aggregate(
+                ScoreDistribution.Empty, (sum, day) => sum + day.ScoreDistribution),
+        };
     }
 
     public async Task<IReadOnlyList<FlaggedSource>> GetTopFlaggedSourcesAsync(DateRange range, int limit, CancellationToken ct)
@@ -142,6 +162,18 @@ public sealed class ClickHouseAnalyticsQueries(
                 countIf(band = 'block')                    AS blocked_events,
                 count()                                    AS total_events,
                 sumIf(score, isNotNull(score))             AS score_sum,
+                sumIf(toInt64(score) * toInt64(score), band IN ('challenge', 'block') AND isNotNull(score)) AS score_sum_sq,
+                countIf(band IN ('challenge', 'block') AND score BETWEEN 0 AND 9)    AS score_bucket_00,
+                countIf(band IN ('challenge', 'block') AND score BETWEEN 10 AND 19) AS score_bucket_10,
+                countIf(band IN ('challenge', 'block') AND score BETWEEN 20 AND 29) AS score_bucket_20,
+                countIf(band IN ('challenge', 'block') AND score BETWEEN 30 AND 39) AS score_bucket_30,
+                countIf(band IN ('challenge', 'block') AND score BETWEEN 40 AND 49) AS score_bucket_40,
+                countIf(band IN ('challenge', 'block') AND score BETWEEN 50 AND 59) AS score_bucket_50,
+                countIf(band IN ('challenge', 'block') AND score BETWEEN 60 AND 69) AS score_bucket_60,
+                countIf(band IN ('challenge', 'block') AND score BETWEEN 70 AND 79) AS score_bucket_70,
+                countIf(band IN ('challenge', 'block') AND score BETWEEN 80 AND 89) AS score_bucket_80,
+                countIf(band IN ('challenge', 'block') AND score BETWEEN 90 AND 99) AS score_bucket_90,
+                countIf(band IN ('challenge', 'block') AND score = 100)             AS score_bucket_100,
                 avgIf(score, isNotNull(score))             AS avg_score,
                 min(timestamp)                             AS first_seen,
                 max(timestamp)                             AS last_seen
@@ -173,7 +205,10 @@ public sealed class ClickHouseAnalyticsQueries(
                 ScoreSum: ToInt64OrZero(r["score_sum"]),
                 AvgScore: ToDoubleOrNaN(r["avg_score"]),
                 FirstSeenUtc: AsUtc(r["first_seen"]),
-                LastSeenUtc: AsUtc(r["last_seen"])));
+                LastSeenUtc: AsUtc(r["last_seen"]))
+            {
+                ScoreDistribution = ReadDistribution(r),
+            });
         }
         return sources;
     }
@@ -200,6 +235,18 @@ public sealed class ClickHouseAnalyticsQueries(
                 countIf(v.band = 'challenge')          AS challenged,
                 countIf(v.band = 'block')              AS blocked,
                 sumIf(v.score, isNotNull(v.score))     AS score_sum,
+                sumIf(toInt64(v.score) * toInt64(v.score), isNotNull(v.score)) AS score_sum_sq,
+                countIf(v.score BETWEEN 0 AND 9)    AS score_bucket_00,
+                countIf(v.score BETWEEN 10 AND 19) AS score_bucket_10,
+                countIf(v.score BETWEEN 20 AND 29) AS score_bucket_20,
+                countIf(v.score BETWEEN 30 AND 39) AS score_bucket_30,
+                countIf(v.score BETWEEN 40 AND 49) AS score_bucket_40,
+                countIf(v.score BETWEEN 50 AND 59) AS score_bucket_50,
+                countIf(v.score BETWEEN 60 AND 69) AS score_bucket_60,
+                countIf(v.score BETWEEN 70 AND 79) AS score_bucket_70,
+                countIf(v.score BETWEEN 80 AND 89) AS score_bucket_80,
+                countIf(v.score BETWEEN 90 AND 99) AS score_bucket_90,
+                countIf(v.score = 100)             AS score_bucket_100,
                 avgIf(v.score, isNotNull(v.score))     AS avg_score,
                 countIf(v.has_js_beacon = 0)           AS no_js_beacon
             FROM tg_events AS v
@@ -245,7 +292,10 @@ public sealed class ClickHouseAnalyticsQueries(
                 Blocked: Convert.ToInt64(r["blocked"]),
                 ScoreSum: ToInt64OrZero(r["score_sum"]),
                 AvgScore: ToDoubleOrNaN(r["avg_score"]),
-                NoJsBeaconCount: Convert.ToInt64(r["no_js_beacon"])));
+                NoJsBeaconCount: Convert.ToInt64(r["no_js_beacon"]))
+            {
+                ScoreDistribution = ReadDistribution(r),
+            });
         }
         return rows;
     }
@@ -269,6 +319,18 @@ public sealed class ClickHouseAnalyticsQueries(
                 countIf(kind = 'verdict' AND band = 'challenge')    AS challenged,
                 countIf(kind = 'verdict' AND band = 'block')        AS blocked,
                 sumIf(score, kind = 'verdict' AND isNotNull(score)) AS score_sum,
+                sumIf(toInt64(score) * toInt64(score), kind = 'verdict' AND isNotNull(score)) AS score_sum_sq,
+                countIf(kind = 'verdict' AND score BETWEEN 0 AND 9)    AS score_bucket_00,
+                countIf(kind = 'verdict' AND score BETWEEN 10 AND 19) AS score_bucket_10,
+                countIf(kind = 'verdict' AND score BETWEEN 20 AND 29) AS score_bucket_20,
+                countIf(kind = 'verdict' AND score BETWEEN 30 AND 39) AS score_bucket_30,
+                countIf(kind = 'verdict' AND score BETWEEN 40 AND 49) AS score_bucket_40,
+                countIf(kind = 'verdict' AND score BETWEEN 50 AND 59) AS score_bucket_50,
+                countIf(kind = 'verdict' AND score BETWEEN 60 AND 69) AS score_bucket_60,
+                countIf(kind = 'verdict' AND score BETWEEN 70 AND 79) AS score_bucket_70,
+                countIf(kind = 'verdict' AND score BETWEEN 80 AND 89) AS score_bucket_80,
+                countIf(kind = 'verdict' AND score BETWEEN 90 AND 99) AS score_bucket_90,
+                countIf(kind = 'verdict' AND score = 100)             AS score_bucket_100,
                 avgIf(score, kind = 'verdict' AND isNotNull(score)) AS avg_score,
                 countIf(kind = 'verdict' AND has_js_beacon = 0)     AS no_js_beacon
             FROM tg_events
@@ -297,7 +359,10 @@ public sealed class ClickHouseAnalyticsQueries(
                 Blocked: Convert.ToInt64(r["blocked"]),
                 ScoreSum: ToInt64OrZero(r["score_sum"]),
                 AvgScore: ToDoubleOrNaN(r["avg_score"]),
-                NoJsBeaconCount: Convert.ToInt64(r["no_js_beacon"])));
+                NoJsBeaconCount: Convert.ToInt64(r["no_js_beacon"]))
+            {
+                ScoreDistribution = ReadDistribution(r),
+            });
         }
         return rows;
     }
@@ -312,6 +377,23 @@ public sealed class ClickHouseAnalyticsQueries(
 
     /// <summary>Missing != zero (§7): empty-scope averages surface as NaN, never 0.</summary>
     private static double ToDoubleOrNaN(object value) => value is DBNull ? double.NaN : Convert.ToDouble(value);
+
+    private static ScoreDistribution ReadDistribution(System.Data.Common.DbDataReader reader) =>
+        ScoreDistribution.FromCounts(
+            [
+                Convert.ToInt64(reader["score_bucket_00"]),
+                Convert.ToInt64(reader["score_bucket_10"]),
+                Convert.ToInt64(reader["score_bucket_20"]),
+                Convert.ToInt64(reader["score_bucket_30"]),
+                Convert.ToInt64(reader["score_bucket_40"]),
+                Convert.ToInt64(reader["score_bucket_50"]),
+                Convert.ToInt64(reader["score_bucket_60"]),
+                Convert.ToInt64(reader["score_bucket_70"]),
+                Convert.ToInt64(reader["score_bucket_80"]),
+                Convert.ToInt64(reader["score_bucket_90"]),
+                Convert.ToInt64(reader["score_bucket_100"]),
+            ],
+            ToInt64OrZero(reader["score_sum_sq"]));
 
     private static DateTime AsUtc(object value) =>
         DateTime.SpecifyKind(Convert.ToDateTime(value), DateTimeKind.Utc);

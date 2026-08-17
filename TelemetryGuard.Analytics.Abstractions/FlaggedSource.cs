@@ -15,4 +15,7 @@ public sealed record FlaggedSource(
     long ScoreSum,             // sum of scores over scored events; 0 when none
     double AvgScore,           // NaN when no scored events
     DateTime FirstSeenUtc,
-    DateTime LastSeenUtc);
+    DateTime LastSeenUtc)
+{
+    public ScoreDistribution ScoreDistribution { get; init; } = ScoreDistribution.Empty;
+}

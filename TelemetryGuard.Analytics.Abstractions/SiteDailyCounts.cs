@@ -19,4 +19,7 @@ public sealed record SiteDailyCounts(
     long Blocked,
     long ScoreSum,             // 0 when none (mergeable)
     double AvgScore,           // NaN when ScoredEvents == 0
-    long NoJsBeaconCount);
+    long NoJsBeaconCount)
+{
+    public ScoreDistribution ScoreDistribution { get; init; } = ScoreDistribution.Empty;
+}

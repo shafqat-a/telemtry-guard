@@ -137,7 +137,7 @@ public sealed class AdminEndpointTests
 
     private sealed class FakeVerdictSummaryRepository : IVerdictSummaryRepository
     {
-        public (Guid CampaignId, DateOnly From, DateOnly To)? LastCall;
+        public (Guid? CampaignId, DateOnly From, DateOnly To)? LastCall;
         public IReadOnlyList<VerdictDailySummaryRow> Rows = [];
 
         public (DateOnly From, DateOnly To, int Limit)? LastFlaggedSourcesCall;
@@ -148,7 +148,7 @@ public sealed class AdminEndpointTests
         public Task IncrementDailySummaryAsync(VerdictDailySummaryRow delta, CancellationToken ct) => throw new NotSupportedException();
 
         public Task<IReadOnlyList<VerdictDailySummaryRow>> GetDailySummariesAsync(
-            Guid campaignId, DateOnly from, DateOnly to, CancellationToken ct)
+            Guid? campaignId, DateOnly from, DateOnly to, CancellationToken ct)
         {
             LastCall = (campaignId, from, to);
             return Task.FromResult(Rows);
@@ -606,7 +606,12 @@ public sealed class AdminEndpointTests
         using var app = new AdminApp();
         app.Summaries.Rows = new List<VerdictDailySummaryRow>
         {
-            new(TenantGuid, CampaignGuid, new DateOnly(2026, 8, 1), 90, 20, 10, 3288, 120), // 3288/120 = 27.4
+            new VerdictDailySummaryRow(
+                TenantGuid, CampaignGuid, new DateOnly(2026, 8, 1), 90, 20, 10, 3288, 120)
+            {
+                ScoreDistribution = new ScoreDistribution(
+                    10, 11, 12, 13, 14, 15, 16, 9, 8, 7, 5, 123456),
+            }, // 3288/120 = 27.4
         };
         using var client = app.Client();
 
@@ -626,6 +631,13 @@ public sealed class AdminEndpointTests
         Assert.Equal(20, row.GetProperty("challenged").GetInt32());
         Assert.Equal(10, row.GetProperty("blocked").GetInt32());
         Assert.Equal(27.4, row.GetProperty("avgScore").GetDouble());
+        var histogram = row.GetProperty("scoreHistogram");
+        Assert.Equal(10, histogram.GetProperty("bucketWidth").GetInt32());
+        Assert.Equal(new[] { 0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100 },
+            histogram.GetProperty("edges").EnumerateArray().Select(x => x.GetInt32()).ToArray());
+        Assert.Equal(new long[] { 10, 11, 12, 13, 14, 15, 16, 9, 8, 7, 5 },
+            histogram.GetProperty("counts").EnumerateArray().Select(x => x.GetInt64()).ToArray());
+        Assert.Equal(123456, histogram.GetProperty("sumSq").GetInt64());
 
         Assert.Equal((CampaignGuid, new DateOnly(2026, 8, 1), new DateOnly(2026, 8, 12)), app.Summaries.LastCall);
     }
@@ -661,15 +673,17 @@ public sealed class AdminEndpointTests
     }
 
     [Fact]
-    public async Task GetSummary_MissingCampaignId_Returns400()
+    public async Task GetSummary_MissingCampaignId_ReturnsTenantWideRows()
     {
         using var app = new AdminApp();
         using var client = app.Client();
 
         var resp = await client.GetAsync("/admin/reports/summary?from=2026-08-01&to=2026-08-12");
 
-        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
-        Assert.Equal("application/problem+json", resp.Content.Headers.ContentType?.MediaType);
+        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+        var json = await ReadJson(resp);
+        Assert.Equal(JsonValueKind.Null, json.GetProperty("campaignId").ValueKind);
+        Assert.Equal((null, new DateOnly(2026, 8, 1), new DateOnly(2026, 8, 12)), app.Summaries.LastCall);
     }
 
     [Fact]
