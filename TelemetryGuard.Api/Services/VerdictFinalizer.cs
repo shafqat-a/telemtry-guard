@@ -45,16 +45,38 @@ public sealed class VerdictFinalizer(
     IExclusionQueueRepository exclusions,
     IVerdictSummaryRepository summaries,
     ILabelSink labelSink,
-    ITenantRepository tenants,
+    ITenantPolicyProvider policyProvider,
     ICampaignRepository campaigns,
     IConnectionMultiplexer redis,
     IClock clock,
     IMemoryCache cache,
     ITenantContext tenant,
-    IOptions<ScoringBandOptions> bandOptions,
     IOptions<RetentionOptions> retentionOptions,
     ILogger<VerdictFinalizer> logger) : IVerdictFinalizer
 {
+    // Compatibility constructor retained for existing hosts/tests while policy
+    // reads are centralized through TenantPolicyProvider internally.
+    public VerdictFinalizer(
+        IScoringPipeline pipeline,
+        IEventSink sink,
+        IExclusionQueueRepository exclusions,
+        IVerdictSummaryRepository summaries,
+        ILabelSink labelSink,
+        ITenantRepository tenants,
+        ICampaignRepository campaigns,
+        IConnectionMultiplexer redis,
+        IClock clock,
+        IMemoryCache cache,
+        ITenantContext tenant,
+        IOptions<ScoringBandOptions> bandOptions,
+        IOptions<RetentionOptions> retentionOptions,
+        ILogger<VerdictFinalizer> logger)
+        : this(pipeline, sink, exclusions, summaries, labelSink,
+            new TenantPolicyProvider(tenants, tenant, cache, bandOptions,
+                Options.Create(new EnforcementOptions())),
+            campaigns, redis, clock, cache, tenant, retentionOptions, logger)
+    { }
+
     public async Task FinalizeAsync(
         TenantId tenantId, string sessionId, FinalizeTrigger trigger,
         ScoringOutcome? precomputed, CancellationToken ct)
@@ -92,7 +114,6 @@ public sealed class VerdictFinalizer(
         }
 
         var result = outcome.Result;
-        var band = MapBand(result.Score, bandOptions.Value);
 
         // Click context (site key / ip / campaign) + beacon presence, one Redis batch.
         var clickKey = $"t:{tid}:click:{sessionId}";
@@ -118,14 +139,10 @@ public sealed class VerdictFinalizer(
 
         // Tenant config (RetentionDays + EnforcementMode), 60 s cached under the SAME
         // key/TTL the ingest endpoints use, so the cache entry is shared, not duplicated.
-        TenantRecord? tenantRecord = null;
+        EffectiveTenantPolicy? policy = null;
         try
         {
-            tenantRecord = await cache.GetOrCreateAsync($"tenantcfg:{tid}", entry =>
-            {
-                entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(60);
-                return tenants.GetCurrentAsync(ct);
-            }).ConfigureAwait(false);
+            policy = await policyProvider.GetAsync(ct).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -134,7 +151,12 @@ public sealed class VerdictFinalizer(
                 "(retention={DefaultDays}d, EnforcementMode=AutoEnforce).",
                 tenantId, retentionOptions.Value.DefaultDays);
         }
-        var retentionDays = (ushort)(tenantRecord?.RetentionDays ?? retentionOptions.Value.DefaultDays);
+        var retentionDays = (ushort)(policy?.Tenant.RetentionDays is > 0 and var configuredDays
+            ? configuredDays
+            : retentionOptions.Value.DefaultDays);
+        var band = policy is null
+            ? MapBand(result.Score, 30, 70)
+            : MapBand(result.Score, policy.AllowMax, policy.ChallengeMax);
 
         // ---- Step 5: verdict event (D18/D20 stamps). Sink call is an enqueue only —
         // never await ClickHouse round trips on the finalize path (spec §4).
@@ -159,6 +181,7 @@ public sealed class VerdictFinalizer(
                 HasJsBeacon = hasJsBeacon,
                 Score = result.Score,
                 Band = BandWire(band),
+                Action = policy?.ObserveOnly == true ? VerdictBands.Allow : BandWire(band),
                 RuleHits = result.RuleHits,
                 ScorerVersion = result.ScorerVersion,
                 FeatureSetVersion = result.FeatureSetVersion,
@@ -208,8 +231,8 @@ public sealed class VerdictFinalizer(
                     // can never auto-approve a platform exclusion, even if a later
                     // provisioning/operator action flips EnforcementMode back to
                     // AutoEnforce. Browser decisions and Turnstile are unaffected.
-                    var status = tenantRecord?.ExternalAuthority == true
-                        || tenantRecord?.EnforcementMode == 1
+                    var status = policy?.ExternalAuthority == true
+                        || policy?.EnforcementMode == 1
                         ? ExclusionStatuses.Pending
                         : ExclusionStatuses.Approved;
                     await exclusions.EnqueueAsync(new ExclusionQueueInsert(
@@ -272,9 +295,9 @@ public sealed class VerdictFinalizer(
     // hardcoded BandMapper constants baked into RSK-07's outcome.Band (same
     // rationale as API-05's /decide: a tenant/test override of the thresholds
     // must still drive enforcement/summary decisions here).
-    private static VerdictBand MapBand(int score, ScoringBandOptions bands)
-        => score <= bands.AllowMax ? VerdictBand.Allow
-         : score <= bands.ChallengeMax ? VerdictBand.Challenge
+    private static VerdictBand MapBand(int score, int allowMax, int challengeMax)
+        => score <= allowMax ? VerdictBand.Allow
+         : score <= challengeMax ? VerdictBand.Challenge
          : VerdictBand.Block;
 
     private static string BandWire(VerdictBand band) => band switch

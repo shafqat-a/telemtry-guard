@@ -20,7 +20,7 @@ public sealed class ClickHouseLabelSink : ILabelSink, IHostedService
 {
     // MUST match schema/0001_events.sql tg_labels column order (ANA-02) exactly.
     internal static readonly string[] ColumnNames =
-        { "tenant_id", "session_id", "label", "label_source", "created_at" };
+        { "tenant_id", "session_id", "label", "label_source", "created_at", "weight" };
 
     private static readonly Meter Meter = new("TelemetryGuard.Analytics.ClickHouse");
     private static readonly Counter<long> Enqueued        = Meter.CreateCounter<long>("tg.labels.enqueued");
@@ -160,6 +160,6 @@ public sealed class ClickHouseLabelSink : ILabelSink, IHostedService
     internal static object?[] MapRow(LabelEvent l) =>
     [
         l.TenantId.Value, l.SessionId, l.Label, l.LabelSource,
-        DateTime.SpecifyKind(l.CreatedAtUtc, DateTimeKind.Utc)
+        DateTime.SpecifyKind(l.CreatedAtUtc, DateTimeKind.Utc), l.Weight
     ];
 }

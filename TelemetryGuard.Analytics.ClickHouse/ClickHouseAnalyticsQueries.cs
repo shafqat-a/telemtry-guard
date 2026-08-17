@@ -367,6 +367,72 @@ public sealed class ClickHouseAnalyticsQueries(
         return rows;
     }
 
+    public async Task<VerdictEvidence?> GetVerdictEvidenceAsync(string sessionId, CancellationToken ct)
+    {
+        await using var conn = new ClickHouseConnection(_cs);
+        await conn.OpenAsync(ct);
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = VerdictSelect +
+            " WHERE tenant_id = {tenantId:UUID} AND kind = 'verdict' AND session_id = {sid:String}" +
+            " ORDER BY timestamp DESC LIMIT 1";
+        cmd.AddParameter("tenantId", tenant.TenantId.Value);
+        cmd.AddParameter("sid", sessionId);
+        await using var r = await cmd.ExecuteReaderAsync(ct);
+        return await r.ReadAsync(ct) ? ReadEvidence(r) : null;
+    }
+
+    public async Task<VerdictEvidencePage> GetVerdictEvidencePageAsync(
+        DateRange range, VerdictCursor? cursor, int limit, CancellationToken ct)
+    {
+        await using var conn = new ClickHouseConnection(_cs);
+        await conn.OpenAsync(ct);
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = VerdictSelect +
+            " WHERE tenant_id = {tenantId:UUID} AND kind = 'verdict'" +
+            " AND timestamp >= {fromTs:DateTime64(3)} AND timestamp < {toTs:DateTime64(3)}" +
+            " AND ({hasCursor:UInt8} = 0 OR (timestamp, session_id) > ({cursorTs:DateTime64(3)}, {cursorSid:String}))" +
+            " ORDER BY timestamp ASC, session_id ASC LIMIT {take:Int32}";
+        cmd.AddParameter("tenantId", tenant.TenantId.Value);
+        cmd.AddParameter("fromTs", range.FromUtc);
+        cmd.AddParameter("toTs", range.ToUtc);
+        cmd.AddParameter("hasCursor", cursor is null ? (byte)0 : (byte)1);
+        cmd.AddParameter("cursorTs", cursor?.TimestampUtc ?? range.FromUtc);
+        cmd.AddParameter("cursorSid", cursor?.SessionId ?? "");
+        cmd.AddParameter("take", limit + 1);
+        var rows = new List<VerdictEvidence>();
+        await using var r = await cmd.ExecuteReaderAsync(ct);
+        while (await r.ReadAsync(ct)) rows.Add(ReadEvidence(r));
+        var more = rows.Count > limit;
+        if (more) rows.RemoveAt(rows.Count - 1);
+        return new VerdictEvidencePage(rows, more);
+    }
+
+    private const string VerdictSelect =
+        "SELECT timestamp, session_id, score, band, action, rule_hits, scorer_version, " +
+        "feature_set_version, shadow_score, shadow_scorer_version, features FROM tg_events";
+
+    private static VerdictEvidence ReadEvidence(System.Data.Common.DbDataReader r) => new(
+        AsUtc(r["timestamp"]),
+        Convert.ToString(r["session_id"]) ?? "",
+        Convert.ToInt32(r["score"]),
+        Convert.ToString(r["band"]) ?? "",
+        Convert.ToString(r["action"]) ?? "",
+        ParseRuleHits(r["rule_hits"]),
+        Convert.ToString(r["scorer_version"]) ?? "",
+        Convert.ToInt32(r["feature_set_version"]),
+        r["shadow_score"] is DBNull ? null : Convert.ToInt32(r["shadow_score"]),
+        r["shadow_scorer_version"] is DBNull ? null : Convert.ToString(r["shadow_scorer_version"]),
+        Convert.ToString(r["features"]) ?? "{}");
+
+    private static IReadOnlyList<string> ParseRuleHits(object value)
+    {
+        if (value is IEnumerable<string> values) return values.ToArray();
+        var text = Convert.ToString(value);
+        if (string.IsNullOrWhiteSpace(text)) return [];
+        try { return System.Text.Json.JsonSerializer.Deserialize<string[]>(text) ?? []; }
+        catch (System.Text.Json.JsonException) { return []; }
+    }
+
     /// <summary>IPv4 inputs must compare equal to stored IPv4-mapped IPv6 values —
     /// same normalization as the ANA-03 writer.</summary>
     private static string NormalizeIp(string ip) => ClickHouseEventSink.ToIpV6(ip).ToString();

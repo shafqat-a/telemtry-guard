@@ -198,6 +198,30 @@ public sealed class KustoAnalyticsQueries(
         | order by day asc, site_key asc
         """;
 
+    internal const string VerdictEvidenceKql =
+        """
+        declare query_parameters(tenantId: guid, sid: string);
+        tg_events
+        | where tenant_id == tenantId and ['kind'] == 'verdict' and session_id == sid
+        | top 1 by timestamp desc
+        | project timestamp, session_id, score, band, action, rule_hits, scorer_version,
+                  feature_set_version, shadow_score, shadow_scorer_version, features
+        """;
+
+    internal const string VerdictEvidencePageKql =
+        """
+        declare query_parameters(tenantId: guid, fromTs: datetime, toTs: datetime,
+                                 hasCursor: bool, cursorTs: datetime, cursorSid: string, lim: long);
+        tg_events
+        | where tenant_id == tenantId and ['kind'] == 'verdict'
+            and timestamp >= fromTs and timestamp < toTs
+            and (not(hasCursor) or timestamp > cursorTs or (timestamp == cursorTs and session_id > cursorSid))
+        | order by timestamp asc, session_id asc
+        | take lim
+        | project timestamp, session_id, score, band, action, rule_hits, scorer_version,
+                  feature_set_version, shadow_score, shadow_scorer_version, features
+        """;
+
     public async Task<IpVelocityStats> GetIpVelocityAsync(string ip, TimeSpan window, CancellationToken ct)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(ip);
@@ -374,6 +398,56 @@ public sealed class KustoAnalyticsQueries(
             });
         }
         return rows;
+    }
+
+    public async Task<VerdictEvidence?> GetVerdictEvidenceAsync(string sessionId, CancellationToken ct)
+    {
+        var props = NewProps();
+        props.SetParameter("tenantId", tenant.TenantId.Value);
+        props.SetParameter("sid", sessionId);
+        using var r = await executor.ExecuteQueryAsync(VerdictEvidenceKql, props, ct).ConfigureAwait(false);
+        return r.Read() ? ReadEvidence(r) : null;
+    }
+
+    public async Task<VerdictEvidencePage> GetVerdictEvidencePageAsync(
+        DateRange range, VerdictCursor? cursor, int limit, CancellationToken ct)
+    {
+        var props = NewProps();
+        props.SetParameter("tenantId", tenant.TenantId.Value);
+        props.SetParameter("fromTs", range.FromUtc);
+        props.SetParameter("toTs", range.ToUtc);
+        props.SetParameter("hasCursor", cursor is not null);
+        props.SetParameter("cursorTs", cursor?.TimestampUtc ?? range.FromUtc);
+        props.SetParameter("cursorSid", cursor?.SessionId ?? "");
+        props.SetParameter("lim", (long)limit + 1);
+        var rows = new List<VerdictEvidence>();
+        using var r = await executor.ExecuteQueryAsync(VerdictEvidencePageKql, props, ct).ConfigureAwait(false);
+        while (r.Read()) rows.Add(ReadEvidence(r));
+        var more = rows.Count > limit;
+        if (more) rows.RemoveAt(rows.Count - 1);
+        return new VerdictEvidencePage(rows, more);
+    }
+
+    private static VerdictEvidence ReadEvidence(System.Data.IDataRecord r) => new(
+        KustoValueMapping.AsUtc(r["timestamp"]),
+        Convert.ToString(r["session_id"]) ?? "",
+        Convert.ToInt32(r["score"]),
+        Convert.ToString(r["band"]) ?? "",
+        Convert.ToString(r["action"]) ?? "",
+        ParseRuleHits(r["rule_hits"]),
+        Convert.ToString(r["scorer_version"]) ?? "",
+        Convert.ToInt32(r["feature_set_version"]),
+        r["shadow_score"] is DBNull ? null : Convert.ToInt32(r["shadow_score"]),
+        r["shadow_scorer_version"] is DBNull ? null : Convert.ToString(r["shadow_scorer_version"]),
+        Convert.ToString(r["features"]) ?? "{}");
+
+    private static IReadOnlyList<string> ParseRuleHits(object value)
+    {
+        if (value is IEnumerable<string> values) return values.ToArray();
+        var text = Convert.ToString(value);
+        if (string.IsNullOrWhiteSpace(text)) return [];
+        try { return System.Text.Json.JsonSerializer.Deserialize<string[]>(text) ?? []; }
+        catch (System.Text.Json.JsonException) { return []; }
     }
 
     private ClientRequestProperties NewProps()

@@ -204,6 +204,6 @@ public sealed class KustoLabelSink : ILabelSink, IHostedService
     [
         l.TenantId.Value, l.SessionId, l.Label, l.LabelSource,
         DateTime.SpecifyKind(l.CreatedAtUtc, DateTimeKind.Utc),
-        1.0f   // ClickHouse gets this from `weight Float32 DEFAULT 1`; Kusto has no defaults.
+        l.Weight
     ];
 }

@@ -10,7 +10,8 @@ public sealed record LabelEvent(
     string SessionId,
     string Label,          // LabelValues constants
     string LabelSource,    // LabelSources constants
-    DateTime CreatedAtUtc);
+    DateTime CreatedAtUtc,
+    float Weight = 1.0f);
 
 /// <summary>Canonical label value strings (storage contract).</summary>
 public static class LabelValues
@@ -26,4 +27,5 @@ public static class LabelSources
     public const string SyntheticBot = "synthetic_bot";
     public const string Conversion = "conversion";
     public const string ReviewScreen = "review_screen";
+    public const string MarketIqReview = "marketiq_review";
 }

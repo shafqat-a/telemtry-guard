@@ -6,8 +6,7 @@ namespace TelemetryGuard.Tests.Unit.Analytics;
 /// <summary>
 /// Textual invariants over every KQL string KustoAnalyticsQueries owns, exposed
 /// as `internal const string` fields precisely so they are assertable without a
-/// cluster (step 11c). Five today (the three ANA-01 methods plus the two P2-01
-/// interlock methods, which had already landed at this branch point).
+/// cluster (step 11c). Seven today, including the two MarketIQ evidence reads.
 /// D11 must be provable from the TEXT, not just behaviorally: every query filters
 /// tenant_id, and the placement join filters it on BOTH sides.
 /// </summary>
@@ -19,12 +18,12 @@ public sealed class KustoAnalyticsQueriesKqlTests
         .ToDictionary(f => f.Name, f => (string)f.GetRawConstantValue()!);
 
     [Fact]
-    public void ExactlyFiveKqlConstants_Exist_AtThisBranchPoint()
+    public void ExactlySevenKqlConstants_Exist_AtThisBranchPoint()
     {
         // Three ANA-01 methods + GetTopPlacementsDailyAsync + GetSiteDailyCountsAsync
         // (P2-01 interlock) — count what's actually there rather than hardcoding an
         // assumption that would silently stop catching a missing query.
-        Assert.Equal(5, KqlConstants.Count);
+        Assert.Equal(7, KqlConstants.Count);
     }
 
     [Fact]

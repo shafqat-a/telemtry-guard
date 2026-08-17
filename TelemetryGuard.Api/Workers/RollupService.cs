@@ -8,6 +8,7 @@ using TelemetryGuard.Core.Time;
 using TelemetryGuard.Data;
 using TelemetryGuard.Data.Models;
 using TelemetryGuard.Data.Repositories;
+using TelemetryGuard.Api.Services;
 
 namespace TelemetryGuard.Api.Workers;
 
@@ -103,6 +104,7 @@ public sealed class RollupService(
         var watermarks  = sp.GetRequiredService<IRollupWatermarkRepository>(); // DAT-06, scoped
         var connFactory = sp.GetRequiredService<ITenantConnectionFactory>();   // DAT-03, campaigns query
         var publishers  = sp.GetRequiredService<IPublisherSummaryRepository>(); // P2-01, scoped
+        var webhooks     = sp.GetService<IWebhookPublisher>();
 
         var now = clock.UtcNow.UtcDateTime;
         var rollupName = options.Value.RollupName;
@@ -222,6 +224,14 @@ public sealed class RollupService(
 
         await watermarks.SetAsync(rollupName, now, ct);  // advance ONLY after all upserts succeeded
         RowsUpserted.Add(rows);
+        if (webhooks is not null)
+            await webhooks.PublishAsync("rollup.completed", $"{rollupName}:{now:O}", new
+            {
+                tenantId = tid,
+                rollup = rollupName,
+                completedUtc = now,
+                rowsUpserted = rows,
+            }, ct);
     }
 
     /// <summary>

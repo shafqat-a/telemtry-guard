@@ -126,18 +126,19 @@ public sealed class ClickHouseEventSinkMapRowTests
     public void LabelSink_MapRow_MatchesTgLabelsColumns()
     {
         Assert.Equal(
-            new[] { "tenant_id", "session_id", "label", "label_source", "created_at" },
+            new[] { "tenant_id", "session_id", "label", "label_source", "created_at", "weight" },
             ClickHouseLabelSink.ColumnNames);
 
         var created = new DateTime(2026, 8, 12, 11, 0, 0, DateTimeKind.Utc);
         var row = ClickHouseLabelSink.MapRow(new LabelEvent(
             new TenantId(TenantGuid), "sess-2", LabelValues.Fraud, LabelSources.T1Rule, created));
 
-        Assert.Equal(5, row.Length);
+        Assert.Equal(6, row.Length);
         Assert.Equal(TenantGuid, row[0]);
         Assert.Equal("sess-2", row[1]);
         Assert.Equal("fraud", row[2]);
         Assert.Equal("t1_rule", row[3]);
         Assert.Equal(created, row[4]);
+        Assert.Equal(1.0f, row[5]);
     }
 }
