@@ -366,6 +366,29 @@ public sealed class VerdictFinalizerTests
     }
 
     [Fact]
+    public async Task BlockBand_ExternalAuthority_OverridesAutoEnforceToPending()
+    {
+        var h = new Harness();
+        var campaignId = Guid.NewGuid();
+        h.Tenants.Record = new TenantRecord(
+            TenantGuid, "Acme", 0, 90, 0, DateTime.UtcNow)
+        {
+            ExternalAuthority = true,
+        };
+        h.Campaigns.Campaigns[campaignId] = new CampaignRecord(
+            TenantGuid, campaignId, "google", null, "https://a.example.com", null, 0, DateTime.UtcNow);
+        h.Redis.SeedClickHash(Sid,
+            new HashEntry("ip", "198.51.100.7"), new HashEntry("campaign_id", campaignId.ToString("D")));
+        h.Pipeline.Respond = (_, _) => Outcome(87, ["ip_datacenter_asn"]);
+        var sut = h.Build();
+
+        await sut.FinalizeAsync(TestTenantId, Sid, FinalizeTrigger.GraceExpired, null, CancellationToken.None);
+
+        Assert.Equal(ExclusionStatuses.Pending, Assert.Single(h.Exclusions.Entries).Status);
+        Assert.Equal(VerdictBands.Block, Assert.Single(h.Sink.Events).Band);
+    }
+
+    [Fact]
     public async Task BlockBand_CampaignLess_PlatformIsOther()
     {
         var h = new Harness();

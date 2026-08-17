@@ -204,7 +204,12 @@ public sealed class VerdictFinalizer(
                     // Approval flow implemented by INT-02: /admin/enforcement endpoints
                     // transition pending->approved|rejected. AutoEnforce (default)
                     // enqueues straight to 'approved' for INT-03/INT-04 sync pickup.
-                    var status = tenantRecord?.EnforcementMode == 1
+                    // REQ-07: ownership outranks mode. An externally-governed tenant
+                    // can never auto-approve a platform exclusion, even if a later
+                    // provisioning/operator action flips EnforcementMode back to
+                    // AutoEnforce. Browser decisions and Turnstile are unaffected.
+                    var status = tenantRecord?.ExternalAuthority == true
+                        || tenantRecord?.EnforcementMode == 1
                         ? ExclusionStatuses.Pending
                         : ExclusionStatuses.Approved;
                     await exclusions.EnqueueAsync(new ExclusionQueueInsert(

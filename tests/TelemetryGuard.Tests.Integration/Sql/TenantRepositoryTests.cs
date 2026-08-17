@@ -28,6 +28,11 @@ public sealed class TenantRepositoryTests(SqlServerFixture fx)
         Assert.Equal((byte)0, tenant.Status);
         Assert.Equal(90, tenant.RetentionDays);      // D20 default
         Assert.Equal((byte)0, tenant.EnforcementMode); // D21 AutoEnforce default
+        Assert.False(tenant.ExternalAuthority);       // REQ-07 backwards-compatible default
+        Assert.Null(tenant.AllowMax);
+        Assert.Null(tenant.ChallengeMax);
+        Assert.Null(tenant.ObserveOnly);
+        Assert.Null(tenant.PolicyUpdatedUtc);
     }
 
     [Fact]

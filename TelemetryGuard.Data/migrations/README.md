@@ -23,3 +23,4 @@
 | 0008 | PublisherDailySummaries + SiteDailySummaries (publisher/site aggregates) + RLS | P2-01 |
 | 0009 | ModelRegistry (model lifecycle: candidate/shadow/active/rejected/retired) — platform table, deliberately outside RLS | P2-02 |
 | 0010 | Score histograms and sum-of-squares on all four daily rollups | REQ-01 |
+| 0011 | Per-tenant policy overrides, ExternalAuthority, and policy audit | REQ-07 / REQ-06 |

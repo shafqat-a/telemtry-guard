@@ -1,7 +1,33 @@
 namespace TelemetryGuard.Data.Models;
 
-public sealed record TenantRecord(
-    Guid TenantId, string Name, byte Status, int RetentionDays, byte EnforcementMode, DateTime CreatedUtc);
+public sealed record TenantRecord
+{
+    public TenantRecord() { }
+
+    public TenantRecord(
+        Guid tenantId, string name, byte status, int retentionDays,
+        byte enforcementMode, DateTime createdUtc)
+    {
+        TenantId = tenantId;
+        Name = name;
+        Status = status;
+        RetentionDays = retentionDays;
+        EnforcementMode = enforcementMode;
+        CreatedUtc = createdUtc;
+    }
+
+    public Guid TenantId { get; init; }
+    public string Name { get; init; } = string.Empty;
+    public byte Status { get; init; }
+    public int RetentionDays { get; init; }
+    public byte EnforcementMode { get; init; }
+    public DateTime CreatedUtc { get; init; }
+    public byte? AllowMax { get; init; }
+    public byte? ChallengeMax { get; init; }
+    public bool? ObserveOnly { get; init; }
+    public bool ExternalAuthority { get; init; }
+    public DateTime? PolicyUpdatedUtc { get; init; }
+}
 
 public sealed record SiteRecord(
     Guid TenantId, string SiteKey, string Domain, string IntegrationMode, DateTime CreatedUtc);

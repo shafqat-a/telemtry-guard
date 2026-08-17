@@ -17,7 +17,8 @@ internal sealed class TenantRepository(ITenantConnectionFactory connections, ITe
         await using var conn = await connections.OpenAsync(ct);
         return await conn.QuerySingleOrDefaultAsync<TenantRecord>(new CommandDefinition(
             """
-            SELECT TenantId, Name, Status, RetentionDays, EnforcementMode, CreatedUtc
+            SELECT TenantId, Name, Status, RetentionDays, EnforcementMode, CreatedUtc,
+                   AllowMax, ChallengeMax, ObserveOnly, ExternalAuthority, PolicyUpdatedUtc
             FROM dbo.Tenants WHERE TenantId = @TenantId;
             """,
             new { TenantId = tenant.TenantId.Value },
