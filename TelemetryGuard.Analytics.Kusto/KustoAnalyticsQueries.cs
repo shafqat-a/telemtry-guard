@@ -1,6 +1,7 @@
 using Kusto.Data.Common;
 using Microsoft.Extensions.Options;
 using TelemetryGuard.Analytics.Abstractions;
+using TelemetryGuard.Core.Analytics;
 using TelemetryGuard.Core.Tenancy;
 using TelemetryGuard.Core.Time;
 
@@ -64,7 +65,19 @@ public sealed class KustoAnalyticsQueries(
             blocked           = countif(['kind'] == 'verdict' and band == 'block'),
             score_sum         = sumif(tolong(score), ['kind'] == 'verdict' and isnotnull(score)),
             scored_with_score = countif(['kind'] == 'verdict' and isnotnull(score)),
-            no_js_beacon      = countif(['kind'] == 'verdict' and has_js_beacon == false)
+            no_js_beacon      = countif(['kind'] == 'verdict' and has_js_beacon == false),
+            score_bucket_00   = countif(['kind'] == 'verdict' and score >= 0  and score < 10),
+            score_bucket_10   = countif(['kind'] == 'verdict' and score >= 10 and score < 20),
+            score_bucket_20   = countif(['kind'] == 'verdict' and score >= 20 and score < 30),
+            score_bucket_30   = countif(['kind'] == 'verdict' and score >= 30 and score < 40),
+            score_bucket_40   = countif(['kind'] == 'verdict' and score >= 40 and score < 50),
+            score_bucket_50   = countif(['kind'] == 'verdict' and score >= 50 and score < 60),
+            score_bucket_60   = countif(['kind'] == 'verdict' and score >= 60 and score < 70),
+            score_bucket_70   = countif(['kind'] == 'verdict' and score >= 70 and score < 80),
+            score_bucket_80   = countif(['kind'] == 'verdict' and score >= 80 and score < 90),
+            score_bucket_90   = countif(['kind'] == 'verdict' and score >= 90 and score < 100),
+            score_bucket_100  = countif(['kind'] == 'verdict' and score == 100),
+            score_sum_sq      = sumif(tolong(score) * tolong(score), ['kind'] == 'verdict' and isnotnull(score))
             by day = startofday(timestamp)
         | order by day asc
         """;
@@ -84,7 +97,19 @@ public sealed class KustoAnalyticsQueries(
             score_sum      = sumif(tolong(score), isnotnull(score)),
             scored         = countif(isnotnull(score)),
             first_seen     = min(timestamp),
-            last_seen      = max(timestamp)
+            last_seen      = max(timestamp),
+            score_bucket_00  = countif(score >= 0  and score < 10),
+            score_bucket_10  = countif(score >= 10 and score < 20),
+            score_bucket_20  = countif(score >= 20 and score < 30),
+            score_bucket_30  = countif(score >= 30 and score < 40),
+            score_bucket_40  = countif(score >= 40 and score < 50),
+            score_bucket_50  = countif(score >= 50 and score < 60),
+            score_bucket_60  = countif(score >= 60 and score < 70),
+            score_bucket_70  = countif(score >= 70 and score < 80),
+            score_bucket_80  = countif(score >= 80 and score < 90),
+            score_bucket_90  = countif(score >= 90 and score < 100),
+            score_bucket_100 = countif(score == 100),
+            score_sum_sq     = sumif(tolong(score) * tolong(score), isnotnull(score))
             by source_value = ip
         | where flagged_events > 0
         | order by blocked_events desc, flagged_events desc
@@ -123,7 +148,19 @@ public sealed class KustoAnalyticsQueries(
             blocked           = countif(band == 'block'),
             score_sum         = sumif(tolong(score), isnotnull(score)),
             scored_with_score = countif(isnotnull(score)),
-            no_js_beacon      = countif(has_js_beacon == false)
+            no_js_beacon      = countif(has_js_beacon == false),
+            score_bucket_00   = countif(score >= 0  and score < 10),
+            score_bucket_10   = countif(score >= 10 and score < 20),
+            score_bucket_20   = countif(score >= 20 and score < 30),
+            score_bucket_30   = countif(score >= 30 and score < 40),
+            score_bucket_40   = countif(score >= 40 and score < 50),
+            score_bucket_50   = countif(score >= 50 and score < 60),
+            score_bucket_60   = countif(score >= 60 and score < 70),
+            score_bucket_70   = countif(score >= 70 and score < 80),
+            score_bucket_80   = countif(score >= 80 and score < 90),
+            score_bucket_90   = countif(score >= 90 and score < 100),
+            score_bucket_100  = countif(score == 100),
+            score_sum_sq      = sumif(tolong(score) * tolong(score), isnotnull(score))
             by day = startofday(timestamp), placement
         | order by day asc, scored_events desc, placement asc
         | partition by day (top lim by scored_events desc)
@@ -145,7 +182,19 @@ public sealed class KustoAnalyticsQueries(
             blocked           = countif(['kind'] == 'verdict' and band == 'block'),
             score_sum         = sumif(tolong(score), ['kind'] == 'verdict' and isnotnull(score)),
             scored_with_score = countif(['kind'] == 'verdict' and isnotnull(score)),
-            no_js_beacon      = countif(['kind'] == 'verdict' and has_js_beacon == false)
+            no_js_beacon      = countif(['kind'] == 'verdict' and has_js_beacon == false),
+            score_bucket_00   = countif(['kind'] == 'verdict' and score >= 0  and score < 10),
+            score_bucket_10   = countif(['kind'] == 'verdict' and score >= 10 and score < 20),
+            score_bucket_20   = countif(['kind'] == 'verdict' and score >= 20 and score < 30),
+            score_bucket_30   = countif(['kind'] == 'verdict' and score >= 30 and score < 40),
+            score_bucket_40   = countif(['kind'] == 'verdict' and score >= 40 and score < 50),
+            score_bucket_50   = countif(['kind'] == 'verdict' and score >= 50 and score < 60),
+            score_bucket_60   = countif(['kind'] == 'verdict' and score >= 60 and score < 70),
+            score_bucket_70   = countif(['kind'] == 'verdict' and score >= 70 and score < 80),
+            score_bucket_80   = countif(['kind'] == 'verdict' and score >= 80 and score < 90),
+            score_bucket_90   = countif(['kind'] == 'verdict' and score >= 90 and score < 100),
+            score_bucket_100  = countif(['kind'] == 'verdict' and score == 100),
+            score_sum_sq      = sumif(tolong(score) * tolong(score), ['kind'] == 'verdict' and isnotnull(score))
             by day = startofday(timestamp), site_key
         | order by day asc, site_key asc
         """;
@@ -206,7 +255,8 @@ public sealed class KustoAnalyticsQueries(
                     // identical value without depending on Kusto's empty-scope avg
                     // semantics. Missing != zero: 0 scored rows => NaN, never 0.0.
                     AvgScore: scoredWithScore == 0 ? double.NaN : (double)scoreSum / scoredWithScore,
-                    NoJsBeaconCount: Convert.ToInt64(r["no_js_beacon"])));
+                    NoJsBeaconCount: Convert.ToInt64(r["no_js_beacon"]),
+                    ScoreHistogram: KustoValueMapping.ReadScoreHistogram(col => r[col])));
             }
         }
 
@@ -215,10 +265,11 @@ public sealed class KustoAnalyticsQueries(
         var totalScored = days.Sum(d => d.ScoredEvents);
         var totalScoreSum = days.Sum(d => d.ScoreSum);
         var avg = totalScored == 0 ? double.NaN : (double)totalScoreSum / totalScored;
+        var totalHistogram = days.Aggregate(ScoreHistogramCounts.Empty, (acc, d) => acc + d.ScoreHistogram);
         return new CampaignFraudReport(campaignId, range,
             days.Sum(d => d.TotalEvents), totalScored,
             days.Sum(d => d.Allowed), days.Sum(d => d.Challenged), days.Sum(d => d.Blocked),
-            avg, days.Sum(d => d.NoJsBeaconCount), days);
+            avg, days.Sum(d => d.NoJsBeaconCount), days, totalHistogram);
     }
 
     public async Task<IReadOnlyList<FlaggedSource>> GetTopFlaggedSourcesAsync(DateRange range, int limit, CancellationToken ct)
@@ -246,7 +297,8 @@ public sealed class KustoAnalyticsQueries(
                 ScoreSum: scoreSum,
                 AvgScore: scored == 0 ? double.NaN : (double)scoreSum / scored,
                 FirstSeenUtc: KustoValueMapping.AsUtc(r["first_seen"]),
-                LastSeenUtc: KustoValueMapping.AsUtc(r["last_seen"])));
+                LastSeenUtc: KustoValueMapping.AsUtc(r["last_seen"]),
+                ScoreHistogram: KustoValueMapping.ReadScoreHistogram(col => r[col])));
         }
         return sources;
     }
@@ -278,7 +330,8 @@ public sealed class KustoAnalyticsQueries(
                 Blocked: Convert.ToInt64(r["blocked"]),
                 ScoreSum: scoreSum,
                 AvgScore: scoredWithScore == 0 ? double.NaN : (double)scoreSum / scoredWithScore,
-                NoJsBeaconCount: Convert.ToInt64(r["no_js_beacon"])));
+                NoJsBeaconCount: Convert.ToInt64(r["no_js_beacon"]),
+                ScoreHistogram: KustoValueMapping.ReadScoreHistogram(col => r[col])));
         }
         return rows;
     }
@@ -306,7 +359,8 @@ public sealed class KustoAnalyticsQueries(
                 Blocked: Convert.ToInt64(r["blocked"]),
                 ScoreSum: scoreSum,
                 AvgScore: scoredWithScore == 0 ? double.NaN : (double)scoreSum / scoredWithScore,
-                NoJsBeaconCount: Convert.ToInt64(r["no_js_beacon"])));
+                NoJsBeaconCount: Convert.ToInt64(r["no_js_beacon"]),
+                ScoreHistogram: KustoValueMapping.ReadScoreHistogram(col => r[col])));
         }
         return rows;
     }

@@ -1,4 +1,5 @@
 using Dapper;
+using TelemetryGuard.Core.Analytics;
 using TelemetryGuard.Core.Tenancy;
 using TelemetryGuard.Data.Models;
 
@@ -31,10 +32,19 @@ internal sealed class PublisherSummaryRepository(ITenantConnectionFactory connec
                 ON t.TenantId = s.TenantId AND t.[Date] = s.[Date] AND t.Placement = s.Placement
             WHEN MATCHED THEN UPDATE SET
                 Events = @Events, Allowed = @Allowed, Challenged = @Challenged, Blocked = @Blocked,
-                ScoreSum = @ScoreSum, NoJsBeaconCount = @NoJsBeaconCount, UpdatedUtc = SYSUTCDATETIME()
+                ScoreSum = @ScoreSum, NoJsBeaconCount = @NoJsBeaconCount,
+                ScoreBucket00 = @ScoreBucket00, ScoreBucket10 = @ScoreBucket10, ScoreBucket20 = @ScoreBucket20,
+                ScoreBucket30 = @ScoreBucket30, ScoreBucket40 = @ScoreBucket40, ScoreBucket50 = @ScoreBucket50,
+                ScoreBucket60 = @ScoreBucket60, ScoreBucket70 = @ScoreBucket70, ScoreBucket80 = @ScoreBucket80,
+                ScoreBucket90 = @ScoreBucket90, ScoreBucket100 = @ScoreBucket100, ScoreSumSq = @ScoreSumSq,
+                UpdatedUtc = SYSUTCDATETIME()
             WHEN NOT MATCHED THEN INSERT
-                (TenantId, [Date], Placement, Events, Allowed, Challenged, Blocked, ScoreSum, NoJsBeaconCount)
-                VALUES (@TenantId, @Date, @Placement, @Events, @Allowed, @Challenged, @Blocked, @ScoreSum, @NoJsBeaconCount);
+                (TenantId, [Date], Placement, Events, Allowed, Challenged, Blocked, ScoreSum, NoJsBeaconCount,
+                 ScoreBucket00, ScoreBucket10, ScoreBucket20, ScoreBucket30, ScoreBucket40, ScoreBucket50,
+                 ScoreBucket60, ScoreBucket70, ScoreBucket80, ScoreBucket90, ScoreBucket100, ScoreSumSq)
+                VALUES (@TenantId, @Date, @Placement, @Events, @Allowed, @Challenged, @Blocked, @ScoreSum, @NoJsBeaconCount,
+                 @ScoreBucket00, @ScoreBucket10, @ScoreBucket20, @ScoreBucket30, @ScoreBucket40, @ScoreBucket50,
+                 @ScoreBucket60, @ScoreBucket70, @ScoreBucket80, @ScoreBucket90, @ScoreBucket100, @ScoreSumSq);
             """,
             new
             {
@@ -47,6 +57,18 @@ internal sealed class PublisherSummaryRepository(ITenantConnectionFactory connec
                 row.Blocked,
                 row.ScoreSum,
                 row.NoJsBeaconCount,
+                ScoreBucket00 = row.ScoreHistogram.Bucket00,
+                ScoreBucket10 = row.ScoreHistogram.Bucket10,
+                ScoreBucket20 = row.ScoreHistogram.Bucket20,
+                ScoreBucket30 = row.ScoreHistogram.Bucket30,
+                ScoreBucket40 = row.ScoreHistogram.Bucket40,
+                ScoreBucket50 = row.ScoreHistogram.Bucket50,
+                ScoreBucket60 = row.ScoreHistogram.Bucket60,
+                ScoreBucket70 = row.ScoreHistogram.Bucket70,
+                ScoreBucket80 = row.ScoreHistogram.Bucket80,
+                ScoreBucket90 = row.ScoreHistogram.Bucket90,
+                ScoreBucket100 = row.ScoreHistogram.Bucket100,
+                ScoreSumSq = row.ScoreHistogram.SumSq,
             },
             cancellationToken: ct));
     }
@@ -68,10 +90,19 @@ internal sealed class PublisherSummaryRepository(ITenantConnectionFactory connec
             WHEN MATCHED THEN UPDATE SET
                 TotalEvents = @TotalEvents, Events = @Events, Allowed = @Allowed,
                 Challenged = @Challenged, Blocked = @Blocked, ScoreSum = @ScoreSum,
-                NoJsBeaconCount = @NoJsBeaconCount, UpdatedUtc = SYSUTCDATETIME()
+                NoJsBeaconCount = @NoJsBeaconCount,
+                ScoreBucket00 = @ScoreBucket00, ScoreBucket10 = @ScoreBucket10, ScoreBucket20 = @ScoreBucket20,
+                ScoreBucket30 = @ScoreBucket30, ScoreBucket40 = @ScoreBucket40, ScoreBucket50 = @ScoreBucket50,
+                ScoreBucket60 = @ScoreBucket60, ScoreBucket70 = @ScoreBucket70, ScoreBucket80 = @ScoreBucket80,
+                ScoreBucket90 = @ScoreBucket90, ScoreBucket100 = @ScoreBucket100, ScoreSumSq = @ScoreSumSq,
+                UpdatedUtc = SYSUTCDATETIME()
             WHEN NOT MATCHED THEN INSERT
-                (TenantId, [Date], SiteKey, TotalEvents, Events, Allowed, Challenged, Blocked, ScoreSum, NoJsBeaconCount)
-                VALUES (@TenantId, @Date, @SiteKey, @TotalEvents, @Events, @Allowed, @Challenged, @Blocked, @ScoreSum, @NoJsBeaconCount);
+                (TenantId, [Date], SiteKey, TotalEvents, Events, Allowed, Challenged, Blocked, ScoreSum, NoJsBeaconCount,
+                 ScoreBucket00, ScoreBucket10, ScoreBucket20, ScoreBucket30, ScoreBucket40, ScoreBucket50,
+                 ScoreBucket60, ScoreBucket70, ScoreBucket80, ScoreBucket90, ScoreBucket100, ScoreSumSq)
+                VALUES (@TenantId, @Date, @SiteKey, @TotalEvents, @Events, @Allowed, @Challenged, @Blocked, @ScoreSum, @NoJsBeaconCount,
+                 @ScoreBucket00, @ScoreBucket10, @ScoreBucket20, @ScoreBucket30, @ScoreBucket40, @ScoreBucket50,
+                 @ScoreBucket60, @ScoreBucket70, @ScoreBucket80, @ScoreBucket90, @ScoreBucket100, @ScoreSumSq);
             """,
             new
             {
@@ -85,6 +116,18 @@ internal sealed class PublisherSummaryRepository(ITenantConnectionFactory connec
                 row.Blocked,
                 row.ScoreSum,
                 row.NoJsBeaconCount,
+                ScoreBucket00 = row.ScoreHistogram.Bucket00,
+                ScoreBucket10 = row.ScoreHistogram.Bucket10,
+                ScoreBucket20 = row.ScoreHistogram.Bucket20,
+                ScoreBucket30 = row.ScoreHistogram.Bucket30,
+                ScoreBucket40 = row.ScoreHistogram.Bucket40,
+                ScoreBucket50 = row.ScoreHistogram.Bucket50,
+                ScoreBucket60 = row.ScoreHistogram.Bucket60,
+                ScoreBucket70 = row.ScoreHistogram.Bucket70,
+                ScoreBucket80 = row.ScoreHistogram.Bucket80,
+                ScoreBucket90 = row.ScoreHistogram.Bucket90,
+                ScoreBucket100 = row.ScoreHistogram.Bucket100,
+                ScoreSumSq = row.ScoreHistogram.SumSq,
             },
             cancellationToken: ct));
     }
@@ -110,7 +153,19 @@ internal sealed class PublisherSummaryRepository(ITenantConnectionFactory connec
                 SUM(ScoreSum)        AS ScoreSum,
                 SUM(NoJsBeaconCount) AS NoJsBeaconCount,
                 MIN([Date])          AS FirstDay,
-                MAX([Date])          AS LastDay
+                MAX([Date])          AS LastDay,
+                SUM(ScoreBucket00)   AS ScoreBucket00,
+                SUM(ScoreBucket10)   AS ScoreBucket10,
+                SUM(ScoreBucket20)   AS ScoreBucket20,
+                SUM(ScoreBucket30)   AS ScoreBucket30,
+                SUM(ScoreBucket40)   AS ScoreBucket40,
+                SUM(ScoreBucket50)   AS ScoreBucket50,
+                SUM(ScoreBucket60)   AS ScoreBucket60,
+                SUM(ScoreBucket70)   AS ScoreBucket70,
+                SUM(ScoreBucket80)   AS ScoreBucket80,
+                SUM(ScoreBucket90)   AS ScoreBucket90,
+                SUM(ScoreBucket100)  AS ScoreBucket100,
+                SUM(ScoreSumSq)      AS ScoreSumSq
             FROM dbo.PublisherDailySummaries
             WHERE TenantId = @TenantId AND [Date] BETWEEN @From AND @To
             GROUP BY Placement
@@ -134,7 +189,9 @@ internal sealed class PublisherSummaryRepository(ITenantConnectionFactory connec
         var rows = await conn.QueryAsync<SiteDailySummaryDbRow>(new CommandDefinition(
             """
             SELECT TenantId, [Date], SiteKey, TotalEvents, Events, Allowed, Challenged,
-                   Blocked, ScoreSum, NoJsBeaconCount
+                   Blocked, ScoreSum, NoJsBeaconCount,
+                   ScoreBucket00, ScoreBucket10, ScoreBucket20, ScoreBucket30, ScoreBucket40, ScoreBucket50,
+                   ScoreBucket60, ScoreBucket70, ScoreBucket80, ScoreBucket90, ScoreBucket100, ScoreSumSq
             FROM dbo.SiteDailySummaries
             WHERE TenantId = @TenantId AND [Date] BETWEEN @From AND @To
             ORDER BY [Date], SiteKey;
@@ -162,10 +219,25 @@ internal sealed class PublisherSummaryRepository(ITenantConnectionFactory connec
         public int NoJsBeaconCount { get; init; }
         public DateTime FirstDay { get; init; }
         public DateTime LastDay { get; init; }
+        public int ScoreBucket00 { get; init; }
+        public int ScoreBucket10 { get; init; }
+        public int ScoreBucket20 { get; init; }
+        public int ScoreBucket30 { get; init; }
+        public int ScoreBucket40 { get; init; }
+        public int ScoreBucket50 { get; init; }
+        public int ScoreBucket60 { get; init; }
+        public int ScoreBucket70 { get; init; }
+        public int ScoreBucket80 { get; init; }
+        public int ScoreBucket90 { get; init; }
+        public int ScoreBucket100 { get; init; }
+        public long ScoreSumSq { get; init; }
 
         public PlacementRangeTotalsRow ToRecord() => new(
             Placement, Events, Allowed, Challenged, Blocked, ScoreSum, NoJsBeaconCount,
-            DateOnly.FromDateTime(FirstDay), DateOnly.FromDateTime(LastDay));
+            DateOnly.FromDateTime(FirstDay), DateOnly.FromDateTime(LastDay),
+            new ScoreHistogramCounts(
+                ScoreBucket00, ScoreBucket10, ScoreBucket20, ScoreBucket30, ScoreBucket40, ScoreBucket50,
+                ScoreBucket60, ScoreBucket70, ScoreBucket80, ScoreBucket90, ScoreBucket100, ScoreSumSq));
     }
 
     private sealed class SiteDailySummaryDbRow
@@ -180,9 +252,24 @@ internal sealed class PublisherSummaryRepository(ITenantConnectionFactory connec
         public int Blocked { get; init; }
         public long ScoreSum { get; init; }
         public int NoJsBeaconCount { get; init; }
+        public int ScoreBucket00 { get; init; }
+        public int ScoreBucket10 { get; init; }
+        public int ScoreBucket20 { get; init; }
+        public int ScoreBucket30 { get; init; }
+        public int ScoreBucket40 { get; init; }
+        public int ScoreBucket50 { get; init; }
+        public int ScoreBucket60 { get; init; }
+        public int ScoreBucket70 { get; init; }
+        public int ScoreBucket80 { get; init; }
+        public int ScoreBucket90 { get; init; }
+        public int ScoreBucket100 { get; init; }
+        public long ScoreSumSq { get; init; }
 
         public SiteDailySummaryRow ToRecord() => new(
             TenantId, DateOnly.FromDateTime(Date), SiteKey,
-            TotalEvents, Events, Allowed, Challenged, Blocked, ScoreSum, NoJsBeaconCount);
+            TotalEvents, Events, Allowed, Challenged, Blocked, ScoreSum, NoJsBeaconCount,
+            new ScoreHistogramCounts(
+                ScoreBucket00, ScoreBucket10, ScoreBucket20, ScoreBucket30, ScoreBucket40, ScoreBucket50,
+                ScoreBucket60, ScoreBucket70, ScoreBucket80, ScoreBucket90, ScoreBucket100, ScoreSumSq));
     }
 }

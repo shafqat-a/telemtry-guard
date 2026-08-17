@@ -7,6 +7,7 @@ using Microsoft.Extensions.Options;
 using StackExchange.Redis;
 using TelemetryGuard.Analytics.Abstractions;
 using TelemetryGuard.Api.Options;
+using TelemetryGuard.Core.Analytics;
 using TelemetryGuard.Core.Tenancy;
 using TelemetryGuard.Core.Time;
 using TelemetryGuard.Data.Models;
@@ -232,7 +233,10 @@ public sealed class VerdictFinalizer(
                 Challenged: band == VerdictBand.Challenge ? 1 : 0,
                 Blocked: band == VerdictBand.Block ? 1 : 0,
                 ScoreSum: result.Score,
-                Events: 1), ct).ConfigureAwait(false);
+                Events: 1,
+                // REQ-01: a single verdict's histogram delta is always exactly one 1
+                // in its own bucket — same "1 event" shape as Events: 1 above.
+                ScoreHistogram: ScoreHistogramMath.SingleScore(result.Score)), ct).ConfigureAwait(false);
         }
         catch (Exception ex)
         {

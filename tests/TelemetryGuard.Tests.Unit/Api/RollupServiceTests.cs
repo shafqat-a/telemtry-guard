@@ -1,5 +1,6 @@
 using TelemetryGuard.Analytics.Abstractions;
 using TelemetryGuard.Api.Workers;
+using TelemetryGuard.Core.Analytics;
 
 namespace TelemetryGuard.Tests.Unit.Api;
 
@@ -85,6 +86,7 @@ public sealed class RollupServiceTests
         Assert.Equal(0, row.Allowed);
         Assert.Equal(0, row.Challenged);
         Assert.Equal(0, row.Blocked);
+        Assert.Equal(ScoreHistogramCounts.Empty, row.ScoreHistogram); // REQ-01: no fabricated buckets either
     }
 
     [Fact]
@@ -104,6 +106,29 @@ public sealed class RollupServiceTests
         Assert.Equal(1, row.Blocked);
         Assert.Equal(210, row.ScoreSum);
         Assert.Equal(5, row.Events);     // scored (verdict) events, NOT TotalEvents
+    }
+
+    [Fact]
+    public void MapDay_CopiesScoreHistogram_AsAnAbsoluteValue_NeverRecomputed()
+    {
+        // REQ-01: MapDay must pass the ClickHouse-computed histogram straight
+        // through — the same "absolute copy, no re-derivation" contract as
+        // Allowed/Challenged/Blocked/ScoreSum above.
+        var tenantId = Guid.NewGuid();
+        var campaignId = Guid.NewGuid();
+        var histogram = new ScoreHistogramCounts(
+            Bucket00: 1, Bucket10: 0, Bucket20: 0, Bucket30: 0, Bucket40: 0,
+            Bucket50: 0, Bucket60: 0, Bucket70: 0, Bucket80: 0, Bucket90: 1,
+            Bucket100: 0, SumSq: 8100);
+        var day = new CampaignDailyCounts(
+            new DateOnly(2026, 8, 9),
+            TotalEvents: 2, ScoredEvents: 2, Allowed: 1, Challenged: 0, Blocked: 1,
+            ScoreSum: 95, AvgScore: 47.5, NoJsBeaconCount: 0,
+            ScoreHistogram: histogram);
+
+        var row = RollupService.MapDay(tenantId, campaignId, day);
+
+        Assert.Equal(histogram, row.ScoreHistogram);
     }
 
     // ------------------------------------------------------- P2-01: NormalizeHost =

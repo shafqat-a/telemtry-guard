@@ -1,3 +1,5 @@
+using TelemetryGuard.Core.Analytics;
+
 namespace TelemetryGuard.Analytics.Abstractions;
 
 /// <summary>
@@ -12,7 +14,8 @@ public sealed record CampaignDailyCounts(
     long Blocked,
     long ScoreSum,             // sum of scores over scored events; 0 when none (mergeable — feeds DAT-06 ScoreSum)
     double AvgScore,           // NaN when ScoredEvents == 0 (missing != zero)
-    long NoJsBeaconCount);     // verdicts with has_js_beacon = false
+    long NoJsBeaconCount,      // verdicts with has_js_beacon = false
+    ScoreHistogramCounts ScoreHistogram = default);   // REQ-01: decile buckets + sum-of-squares over scored events
 
 /// <summary>
 /// Per-campaign fraud aggregate over a date range, as answered by
@@ -28,4 +31,5 @@ public sealed record CampaignFraudReport(
     long Blocked,
     double AvgScore,           // NaN when ScoredEvents == 0
     long NoJsBeaconCount,
-    IReadOnlyList<CampaignDailyCounts> Days);  // ordered ascending by Day
+    IReadOnlyList<CampaignDailyCounts> Days,   // ordered ascending by Day
+    ScoreHistogramCounts ScoreHistogram = default);   // REQ-01: sum of Days[*].ScoreHistogram

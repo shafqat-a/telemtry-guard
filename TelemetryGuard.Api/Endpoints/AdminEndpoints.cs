@@ -3,6 +3,7 @@ using System.Net;
 using System.Text.RegularExpressions;
 using StackExchange.Redis;
 using TelemetryGuard.Api.Auth;
+using TelemetryGuard.Core.Analytics;
 using TelemetryGuard.Core.Tenancy;
 using TelemetryGuard.Core.Time;
 using TelemetryGuard.Data.Models;
@@ -136,12 +137,23 @@ public static partial class AdminEndpoints
 
     // ------------------------------------------------------------- summary --
 
+    /// <summary>REQ-03: campaignId is now OPTIONAL. Present + valid GUID behaves
+    /// byte-identically to before (single-campaign read). Omitted returns the
+    /// tenant-wide daily summary (every campaign plus campaign-less traffic) with
+    /// a null campaignId in the response, instead of the old validation error.
+    /// Present-but-malformed is still a 400 — only a genuinely OMITTED campaignId
+    /// takes the tenant-wide path.</summary>
     private static async Task<IResult> GetSummaryAsync(
         string? campaignId, string? from, string? to,
         IVerdictSummaryRepository summaries, CancellationToken ct)
     {
-        if (campaignId is null || !Guid.TryParse(campaignId, out var campaignGuid))
-            return ValidationProblem("campaignId", "campaignId is required and must be a GUID.");
+        Guid? campaignGuid = null;
+        if (campaignId is not null)
+        {
+            if (!Guid.TryParse(campaignId, out var parsed))
+                return ValidationProblem("campaignId", "campaignId must be a GUID.");
+            campaignGuid = parsed;
+        }
 
         if (from is null || !TryParseDate(from, out var fromDate))
             return ValidationProblem("from", "from is required and must be yyyy-MM-dd.");
@@ -155,7 +167,9 @@ public static partial class AdminEndpoints
         if (toDate.DayNumber - fromDate.DayNumber > MaxSummaryRangeDays)
             return ValidationProblem("to", $"date range must not exceed {MaxSummaryRangeDays} days.");
 
-        var rows = await summaries.GetDailySummariesAsync(campaignGuid, fromDate, toDate, ct);
+        var rows = campaignGuid is { } cid
+            ? await summaries.GetDailySummariesAsync(cid, fromDate, toDate, ct)
+            : await summaries.GetTenantDailySummariesAsync(fromDate, toDate, ct);
 
         var response = new SummaryReportResponse(
             fromDate, toDate, campaignGuid,
@@ -166,7 +180,8 @@ public static partial class AdminEndpoints
     private static SummaryDayResponse ToSummaryDay(VerdictDailySummaryRow r)
         => new(
             r.Date, r.Events, r.Allowed, r.Challenged, r.Blocked,
-            r.Events == 0 ? null : Math.Round((double)r.ScoreSum / r.Events, 1));
+            r.Events == 0 ? null : Math.Round((double)r.ScoreSum / r.Events, 1),
+            ToHistogramResponse(r.ScoreHistogram));
 
     // ----------------------------------------------------- integration status --
 
@@ -241,7 +256,8 @@ public static partial class AdminEndpoints
         return Results.Ok(new FlaggedSourcesReportResponse(
             fromDate, toDate,
             rows.Select(r => new FlaggedSourceResponse(
-                    r.Date, r.SourceType, r.Value, r.FlaggedCount, r.BlockedCount, r.ScoreSum))
+                    r.Date, r.SourceType, r.Value, r.FlaggedCount, r.BlockedCount, r.ScoreSum,
+                    ToHistogramResponse(r.ScoreHistogram)))
                 .ToList()));
     }
 
@@ -276,7 +292,8 @@ public static partial class AdminEndpoints
             r.Events == 0 ? null : Math.Round((double)flagged / r.Events, 4),
             r.Events == 0 ? null : Math.Round((double)r.ScoreSum / r.Events, 1),
             r.NoJsBeaconCount, r.Events < LowVolumePlacementEvents,
-            r.FirstDay, r.LastDay);
+            r.FirstDay, r.LastDay,
+            ToHistogramResponse(r.ScoreHistogram));
     }
 
     private static async Task<IResult> GetSiteReportAsync(
@@ -301,9 +318,18 @@ public static partial class AdminEndpoints
         => new(
             r.Date, r.SiteKey, r.TotalEvents, r.Events, r.Allowed, r.Challenged, r.Blocked,
             r.Events == 0 ? null : Math.Round((double)r.ScoreSum / r.Events, 1),
-            r.NoJsBeaconCount);
+            r.NoJsBeaconCount,
+            ToHistogramResponse(r.ScoreHistogram));
 
     // ------------------------------------------------------------- helpers --
+
+    /// <summary>REQ-02: the one place every /admin/reports/* mapping method turns
+    /// the internal ScoreHistogramCounts (Data.Models row field) into the public
+    /// wire shape. BucketWidth/Edges are literal, not derived from the struct, so
+    /// the response contract stays stable even if the internal representation
+    /// ever changes shape.</summary>
+    private static ScoreHistogramResponse ToHistogramResponse(ScoreHistogramCounts h)
+        => new(ScoreHistogramMath.BucketWidth, ScoreHistogramMath.Edges, h.ToArray(), h.SumSq);
 
     private static bool TryParseDate(string s, out DateOnly date)
         => DateOnly.TryParseExact(s, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out date);

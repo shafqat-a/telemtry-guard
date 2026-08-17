@@ -10,6 +10,7 @@ using NSubstitute;
 using StackExchange.Redis;
 using TelemetryGuard.Analytics.Abstractions;
 using TelemetryGuard.Api.Auth;
+using TelemetryGuard.Core.Analytics;
 using TelemetryGuard.Core.Tenancy;
 using TelemetryGuard.Core.Time;
 using TelemetryGuard.Data.Models;
@@ -140,6 +141,12 @@ public sealed class AdminEndpointTests
         public (Guid CampaignId, DateOnly From, DateOnly To)? LastCall;
         public IReadOnlyList<VerdictDailySummaryRow> Rows = [];
 
+        /// <summary>REQ-03: set when GetTenantDailySummariesAsync (the campaignId-omitted
+        /// path) is called; null otherwise — lets tests assert exactly which repository
+        /// method the endpoint chose.</summary>
+        public (DateOnly From, DateOnly To)? LastTenantWideCall;
+        public IReadOnlyList<VerdictDailySummaryRow> TenantWideRows = [];
+
         public (DateOnly From, DateOnly To, int Limit)? LastFlaggedSourcesCall;
         public IReadOnlyList<FlaggedSourceDailyRow> FlaggedSourceRows = [];
 
@@ -152,6 +159,13 @@ public sealed class AdminEndpointTests
         {
             LastCall = (campaignId, from, to);
             return Task.FromResult(Rows);
+        }
+
+        public Task<IReadOnlyList<VerdictDailySummaryRow>> GetTenantDailySummariesAsync(
+            DateOnly from, DateOnly to, CancellationToken ct)
+        {
+            LastTenantWideCall = (from, to);
+            return Task.FromResult(TenantWideRows);
         }
 
         public Task<IReadOnlyList<FlaggedSourceDailyRow>> GetTopFlaggedSourcesAsync(
@@ -631,6 +645,41 @@ public sealed class AdminEndpointTests
     }
 
     [Fact]
+    public async Task GetSummary_ScoreHistogram_SerializesEdgesAndCounts_InBucketOrder()
+    {
+        // REQ-02: scoreHistogram is purely additive — BucketWidth=10, eleven literal
+        // Edges, Counts in the same order, and SumSq alongside.
+        using var app = new AdminApp();
+        app.Summaries.Rows = new List<VerdictDailySummaryRow>
+        {
+            new(TenantGuid, CampaignGuid, new DateOnly(2026, 8, 1),
+                Allowed: 2, Challenged: 1, Blocked: 1, ScoreSum: 210, Events: 4,
+                ScoreHistogram: new ScoreHistogramCounts(
+                    Bucket00: 0, Bucket10: 1, Bucket20: 0, Bucket30: 0, Bucket40: 0,
+                    Bucket50: 1, Bucket60: 0, Bucket70: 0, Bucket80: 0, Bucket90: 1,
+                    Bucket100: 1, SumSq: 22100)),
+        };
+        using var client = app.Client();
+
+        var resp = await client.GetAsync(
+            $"/admin/reports/summary?campaignId={CampaignGuid:D}&from=2026-08-01&to=2026-08-01");
+        var json = await ReadJson(resp);
+
+        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+        var histogram = json.GetProperty("rows")[0].GetProperty("scoreHistogram");
+        Assert.Equal(10, histogram.GetProperty("bucketWidth").GetInt32());
+
+        var edges = histogram.GetProperty("edges").EnumerateArray().Select(e => e.GetInt32()).ToList();
+        Assert.Equal(new[] { 0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100 }, edges);
+
+        var counts = histogram.GetProperty("counts").EnumerateArray().Select(c => c.GetInt32()).ToList();
+        Assert.Equal(new[] { 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 1 }, counts);
+        Assert.Equal(4, counts.Sum()); // matches Events
+
+        Assert.Equal(22100, histogram.GetProperty("sumSq").GetInt64());
+    }
+
+    [Fact]
     public async Task GetSummary_ZeroEvents_AvgScoreIsNull()
     {
         using var app = new AdminApp();
@@ -661,15 +710,33 @@ public sealed class AdminEndpointTests
     }
 
     [Fact]
-    public async Task GetSummary_MissingCampaignId_Returns400()
+    public async Task GetSummary_MissingCampaignId_ReturnsTenantWideSummary_WithNullCampaignId()
     {
+        // REQ-03: an OMITTED campaignId is no longer a validation error — it
+        // returns the tenant-wide daily summary (every campaign plus
+        // campaign-less traffic) via GetTenantDailySummariesAsync, never
+        // GetDailySummariesAsync (the single-campaign path).
         using var app = new AdminApp();
+        app.Summaries.TenantWideRows = new List<VerdictDailySummaryRow>
+        {
+            new(TenantGuid, Guid.Empty, new DateOnly(2026, 8, 1), 90, 20, 10, 3288, 120),
+        };
         using var client = app.Client();
 
         var resp = await client.GetAsync("/admin/reports/summary?from=2026-08-01&to=2026-08-12");
+        var json = await ReadJson(resp);
 
-        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
-        Assert.Equal("application/problem+json", resp.Content.Headers.ContentType?.MediaType);
+        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+        Assert.Equal(JsonValueKind.Null, json.GetProperty("campaignId").ValueKind);
+        Assert.Equal("2026-08-01", json.GetProperty("from").GetString());
+        Assert.Equal("2026-08-12", json.GetProperty("to").GetString());
+
+        var row = json.GetProperty("rows")[0];
+        Assert.Equal(120, row.GetProperty("events").GetInt32());
+        Assert.Equal(27.4, row.GetProperty("avgScore").GetDouble()); // 3288/120
+
+        Assert.Equal((new DateOnly(2026, 8, 1), new DateOnly(2026, 8, 12)), app.Summaries.LastTenantWideCall);
+        Assert.Null(app.Summaries.LastCall); // the single-campaign path was never invoked
     }
 
     [Fact]

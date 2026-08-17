@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Options;
 using TelemetryGuard.Analytics.Abstractions;
 using TelemetryGuard.Analytics.ClickHouse;
+using TelemetryGuard.Core.Analytics;
 using TelemetryGuard.Core.Tenancy;
 using Testcontainers.ClickHouse;
 
@@ -166,8 +167,11 @@ public sealed class ClickHouseAnalyticsQueriesTests(ClickHouseAnalyticsQueriesFi
         Assert.Equal(2, report.NoJsBeaconCount);
 
         Assert.Equal(3, report.Days.Count);
+        // Day 1 (see BuildSeed): allow(10, js) + block(90, no-js) -> bucket10=1,
+        // bucket90=1, SumSq = 10^2 + 90^2 = 8200 (REQ-01).
         Assert.Equal(
-            new CampaignDailyCounts(new DateOnly(2026, 8, 8), 4, 2, 1, 0, 1, 100, 50.0, 1),
+            new CampaignDailyCounts(new DateOnly(2026, 8, 8), 4, 2, 1, 0, 1, 100, 50.0, 1,
+                new ScoreHistogramCounts(0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 8200)),
             report.Days[0]);
 
         var day2 = report.Days[1];

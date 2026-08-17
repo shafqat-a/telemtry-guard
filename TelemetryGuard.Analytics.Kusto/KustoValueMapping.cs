@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Sockets;
+using TelemetryGuard.Core.Analytics;
 
 namespace TelemetryGuard.Analytics.Kusto;
 
@@ -36,4 +37,23 @@ public static class KustoValueMapping
         var addr = IPAddress.TryParse(ip, out var parsed) ? parsed : IPAddress.IPv6None;
         return (addr.AddressFamily == AddressFamily.InterNetwork ? addr.MapToIPv6() : addr).ToString();
     }
+
+    /// <summary>REQ-01: reads the eleven score_bucket_NN columns + score_sum_sq that
+    /// every KustoAnalyticsQueries summarize appends, via a column-name getter so it
+    /// works against any Kusto reader row. Mirrors
+    /// ClickHouseAnalyticsQueries.ReadScoreHistogram exactly (ANA-06 requires the two
+    /// providers to reproduce each other's arithmetic).</summary>
+    public static ScoreHistogramCounts ReadScoreHistogram(Func<string, object> get) => new(
+        Bucket00: checked((int)ToInt64OrZero(get("score_bucket_00"))),
+        Bucket10: checked((int)ToInt64OrZero(get("score_bucket_10"))),
+        Bucket20: checked((int)ToInt64OrZero(get("score_bucket_20"))),
+        Bucket30: checked((int)ToInt64OrZero(get("score_bucket_30"))),
+        Bucket40: checked((int)ToInt64OrZero(get("score_bucket_40"))),
+        Bucket50: checked((int)ToInt64OrZero(get("score_bucket_50"))),
+        Bucket60: checked((int)ToInt64OrZero(get("score_bucket_60"))),
+        Bucket70: checked((int)ToInt64OrZero(get("score_bucket_70"))),
+        Bucket80: checked((int)ToInt64OrZero(get("score_bucket_80"))),
+        Bucket90: checked((int)ToInt64OrZero(get("score_bucket_90"))),
+        Bucket100: checked((int)ToInt64OrZero(get("score_bucket_100"))),
+        SumSq: ToInt64OrZero(get("score_sum_sq")));
 }

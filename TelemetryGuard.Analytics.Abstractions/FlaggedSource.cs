@@ -1,3 +1,5 @@
+using TelemetryGuard.Core.Analytics;
+
 namespace TelemetryGuard.Analytics.Abstractions;
 
 /// <summary>
@@ -15,4 +17,5 @@ public sealed record FlaggedSource(
     long ScoreSum,             // sum of scores over scored events; 0 when none
     double AvgScore,           // NaN when no scored events
     DateTime FirstSeenUtc,
-    DateTime LastSeenUtc);
+    DateTime LastSeenUtc,
+    ScoreHistogramCounts ScoreHistogram = default);   // REQ-01: decile buckets + sum-of-squares

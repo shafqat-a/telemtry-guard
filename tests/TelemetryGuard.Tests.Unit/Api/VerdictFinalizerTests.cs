@@ -6,6 +6,7 @@ using StackExchange.Redis;
 using TelemetryGuard.Analytics.Abstractions;
 using TelemetryGuard.Api.Options;
 using TelemetryGuard.Api.Services;
+using TelemetryGuard.Core.Analytics;
 using TelemetryGuard.Core.Tenancy;
 using TelemetryGuard.Core.Time;
 using TelemetryGuard.Data.Models;
@@ -106,6 +107,8 @@ public sealed class VerdictFinalizerTests
             => throw new NotSupportedException();
         public Task<IReadOnlyList<VerdictDailySummaryRow>> GetDailySummariesAsync(
             Guid campaignId, DateOnly from, DateOnly to, CancellationToken ct) => throw new NotSupportedException();
+        public Task<IReadOnlyList<VerdictDailySummaryRow>> GetTenantDailySummariesAsync(
+            DateOnly from, DateOnly to, CancellationToken ct) => throw new NotSupportedException();
         public Task<IReadOnlyList<FlaggedSourceDailyRow>> GetTopFlaggedSourcesAsync(
             DateOnly from, DateOnly to, int limit, CancellationToken ct) => throw new NotSupportedException();
     }
@@ -418,6 +421,11 @@ public sealed class VerdictFinalizerTests
         Assert.Equal(blocked, delta.Blocked);
         Assert.Equal(score, delta.ScoreSum);
         Assert.Equal(1, delta.Events);
+
+        // REQ-01: the live-path histogram delta is exactly ScoreHistogramMath's
+        // single-score contribution — one 1 in the score's own bucket.
+        Assert.Equal(ScoreHistogramMath.SingleScore(score), delta.ScoreHistogram);
+        Assert.Equal(1, delta.ScoreHistogram.Total);
     }
 
     [Fact]

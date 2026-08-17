@@ -38,6 +38,15 @@ public interface IVerdictSummaryRepository
     Task<IReadOnlyList<VerdictDailySummaryRow>> GetDailySummariesAsync(
         Guid campaignId, DateOnly from, DateOnly to, CancellationToken ct);
 
+    /// <summary>REQ-03: tenant-wide daily summary — every campaign plus
+    /// campaign-less traffic, summed per date (the CampaignId dimension is
+    /// collapsed away). One row per date that has any data; CampaignId on the
+    /// returned rows is a Guid.Empty sentinel (unused by callers — API-07 sets
+    /// the response's top-level campaignId to null for this path instead).
+    /// Backs GET /admin/reports/summary when campaignId is omitted.</summary>
+    Task<IReadOnlyList<VerdictDailySummaryRow>> GetTenantDailySummariesAsync(
+        DateOnly from, DateOnly to, CancellationToken ct);
+
     /// <summary>Top flagged sources over an inclusive date range, ordered by
     /// BlockedCount desc then FlaggedCount desc.</summary>
     Task<IReadOnlyList<FlaggedSourceDailyRow>> GetTopFlaggedSourcesAsync(

@@ -1,3 +1,5 @@
+using TelemetryGuard.Core.Analytics;
+
 namespace TelemetryGuard.Analytics.Abstractions;
 
 /// <summary>
@@ -19,4 +21,5 @@ public sealed record PlacementDailyCounts(
     long Blocked,
     long ScoreSum,             // sum of scores; 0 when none (mergeable — never an average)
     double AvgScore,           // NaN when ScoredEvents == 0 (missing != zero)
-    long NoJsBeaconCount);     // verdicts with has_js_beacon = 0
+    long NoJsBeaconCount,      // verdicts with has_js_beacon = 0
+    ScoreHistogramCounts ScoreHistogram = default);   // REQ-01: decile buckets + sum-of-squares

@@ -149,7 +149,8 @@ public sealed class RollupService(
                     Value: s.SourceValue,
                     FlaggedCount: checked((int)s.FlaggedEvents),
                     BlockedCount: checked((int)s.BlockedEvents),
-                    ScoreSum: s.ScoreSum), ct);
+                    ScoreSum: s.ScoreSum,
+                    ScoreHistogram: s.ScoreHistogram), ct);
                 rows++;
             }
         }
@@ -189,7 +190,8 @@ public sealed class RollupService(
                 Challenged: checked((int)p.Challenged),
                 Blocked: checked((int)p.Blocked),
                 ScoreSum: p.ScoreSum,                          // AvgScore (NaN included) is never stored
-                NoJsBeaconCount: checked((int)p.NoJsBeaconCount)), ct);
+                NoJsBeaconCount: checked((int)p.NoJsBeaconCount),
+                ScoreHistogram: p.ScoreHistogram), ct);
             rows++;
         }
 
@@ -204,7 +206,8 @@ public sealed class RollupService(
                 Challenged: checked((int)s.Challenged),
                 Blocked: checked((int)s.Blocked),
                 ScoreSum: s.ScoreSum,
-                NoJsBeaconCount: checked((int)s.NoJsBeaconCount)), ct);
+                NoJsBeaconCount: checked((int)s.NoJsBeaconCount),
+                ScoreHistogram: s.ScoreHistogram), ct);
             rows++;
         }
 
@@ -224,7 +227,8 @@ public sealed class RollupService(
         new(TenantId: tenantId, CampaignId: campaignId, Date: d.Day,
             Allowed: checked((int)d.Allowed), Challenged: checked((int)d.Challenged),
             Blocked: checked((int)d.Blocked), ScoreSum: d.ScoreSum,
-            Events: checked((int)d.ScoredEvents)); // Events = scored (verdict) events; avg = ScoreSum/Events
+            Events: checked((int)d.ScoredEvents), // Events = scored (verdict) events; avg = ScoreSum/Events
+            ScoreHistogram: d.ScoreHistogram);    // REQ-01: decile buckets + sum-of-squares, same absolute copy
 
     /// <summary>
     /// Pure window math, all UTC. First run (no watermark) backfills LookbackDays;

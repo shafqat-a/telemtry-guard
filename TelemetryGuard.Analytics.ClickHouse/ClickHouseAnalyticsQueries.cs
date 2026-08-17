@@ -2,6 +2,7 @@ using ClickHouse.Client.ADO;
 using ClickHouse.Client.Utility;
 using Microsoft.Extensions.Options;
 using TelemetryGuard.Analytics.Abstractions;
+using TelemetryGuard.Core.Analytics;
 using TelemetryGuard.Core.Tenancy;
 using TelemetryGuard.Core.Time;
 
@@ -86,7 +87,19 @@ public sealed class ClickHouseAnalyticsQueries(
                 countIf(kind = 'verdict' AND band = 'block')        AS blocked,
                 sumIf(score, kind = 'verdict' AND isNotNull(score)) AS score_sum,
                 avgIf(score, kind = 'verdict' AND isNotNull(score)) AS avg_score,
-                countIf(kind = 'verdict' AND has_js_beacon = 0)     AS no_js_beacon
+                countIf(kind = 'verdict' AND has_js_beacon = 0)     AS no_js_beacon,
+                countIf(kind = 'verdict' AND score >= 0  AND score < 10)  AS score_bucket_00,
+                countIf(kind = 'verdict' AND score >= 10 AND score < 20)  AS score_bucket_10,
+                countIf(kind = 'verdict' AND score >= 20 AND score < 30)  AS score_bucket_20,
+                countIf(kind = 'verdict' AND score >= 30 AND score < 40)  AS score_bucket_30,
+                countIf(kind = 'verdict' AND score >= 40 AND score < 50)  AS score_bucket_40,
+                countIf(kind = 'verdict' AND score >= 50 AND score < 60)  AS score_bucket_50,
+                countIf(kind = 'verdict' AND score >= 60 AND score < 70)  AS score_bucket_60,
+                countIf(kind = 'verdict' AND score >= 70 AND score < 80)  AS score_bucket_70,
+                countIf(kind = 'verdict' AND score >= 80 AND score < 90)  AS score_bucket_80,
+                countIf(kind = 'verdict' AND score >= 90 AND score < 100) AS score_bucket_90,
+                countIf(kind = 'verdict' AND score = 100)                 AS score_bucket_100,
+                sumIf(score * score, kind = 'verdict' AND isNotNull(score)) AS score_sum_sq
             FROM tg_events
             WHERE tenant_id = {tenantId:UUID}
               AND campaign_id = {campaignId:String}
@@ -114,17 +127,19 @@ public sealed class ClickHouseAnalyticsQueries(
                     Blocked: Convert.ToInt64(r["blocked"]),
                     ScoreSum: ToInt64OrZero(r["score_sum"]),          // 0 when no scored rows (mergeable sum)
                     AvgScore: ToDoubleOrNaN(r["avg_score"]),          // NaN when no scored rows — never 0
-                    NoJsBeaconCount: Convert.ToInt64(r["no_js_beacon"])));
+                    NoJsBeaconCount: Convert.ToInt64(r["no_js_beacon"]),
+                    ScoreHistogram: ReadScoreHistogram(col => r[col])));
             }
         }
 
         var totalScored = days.Sum(d => d.ScoredEvents);
         var totalScoreSum = days.Sum(d => d.ScoreSum);
         var avg = totalScored == 0 ? double.NaN : (double)totalScoreSum / totalScored;
+        var totalHistogram = days.Aggregate(ScoreHistogramCounts.Empty, (acc, d) => acc + d.ScoreHistogram);
         return new CampaignFraudReport(campaignId, range,
             days.Sum(d => d.TotalEvents), totalScored,
             days.Sum(d => d.Allowed), days.Sum(d => d.Challenged), days.Sum(d => d.Blocked),
-            avg, days.Sum(d => d.NoJsBeaconCount), days);
+            avg, days.Sum(d => d.NoJsBeaconCount), days, totalHistogram);
     }
 
     public async Task<IReadOnlyList<FlaggedSource>> GetTopFlaggedSourcesAsync(DateRange range, int limit, CancellationToken ct)
@@ -144,7 +159,19 @@ public sealed class ClickHouseAnalyticsQueries(
                 sumIf(score, isNotNull(score))             AS score_sum,
                 avgIf(score, isNotNull(score))             AS avg_score,
                 min(timestamp)                             AS first_seen,
-                max(timestamp)                             AS last_seen
+                max(timestamp)                             AS last_seen,
+                countIf(score >= 0  AND score < 10)        AS score_bucket_00,
+                countIf(score >= 10 AND score < 20)        AS score_bucket_10,
+                countIf(score >= 20 AND score < 30)        AS score_bucket_20,
+                countIf(score >= 30 AND score < 40)        AS score_bucket_30,
+                countIf(score >= 40 AND score < 50)        AS score_bucket_40,
+                countIf(score >= 50 AND score < 60)        AS score_bucket_50,
+                countIf(score >= 60 AND score < 70)        AS score_bucket_60,
+                countIf(score >= 70 AND score < 80)        AS score_bucket_70,
+                countIf(score >= 80 AND score < 90)        AS score_bucket_80,
+                countIf(score >= 90 AND score < 100)       AS score_bucket_90,
+                countIf(score = 100)                       AS score_bucket_100,
+                sumIf(score * score, isNotNull(score))     AS score_sum_sq
             FROM tg_events
             WHERE tenant_id = {tenantId:UUID}
               AND kind = 'verdict'
@@ -173,7 +200,8 @@ public sealed class ClickHouseAnalyticsQueries(
                 ScoreSum: ToInt64OrZero(r["score_sum"]),
                 AvgScore: ToDoubleOrNaN(r["avg_score"]),
                 FirstSeenUtc: AsUtc(r["first_seen"]),
-                LastSeenUtc: AsUtc(r["last_seen"])));
+                LastSeenUtc: AsUtc(r["last_seen"]),
+                ScoreHistogram: ReadScoreHistogram(col => r[col])));
         }
         return sources;
     }
@@ -201,7 +229,19 @@ public sealed class ClickHouseAnalyticsQueries(
                 countIf(v.band = 'block')              AS blocked,
                 sumIf(v.score, isNotNull(v.score))     AS score_sum,
                 avgIf(v.score, isNotNull(v.score))     AS avg_score,
-                countIf(v.has_js_beacon = 0)           AS no_js_beacon
+                countIf(v.has_js_beacon = 0)           AS no_js_beacon,
+                countIf(v.score >= 0  AND v.score < 10)  AS score_bucket_00,
+                countIf(v.score >= 10 AND v.score < 20)  AS score_bucket_10,
+                countIf(v.score >= 20 AND v.score < 30)  AS score_bucket_20,
+                countIf(v.score >= 30 AND v.score < 40)  AS score_bucket_30,
+                countIf(v.score >= 40 AND v.score < 50)  AS score_bucket_40,
+                countIf(v.score >= 50 AND v.score < 60)  AS score_bucket_50,
+                countIf(v.score >= 60 AND v.score < 70)  AS score_bucket_60,
+                countIf(v.score >= 70 AND v.score < 80)  AS score_bucket_70,
+                countIf(v.score >= 80 AND v.score < 90)  AS score_bucket_80,
+                countIf(v.score >= 90 AND v.score < 100) AS score_bucket_90,
+                countIf(v.score = 100)                   AS score_bucket_100,
+                sumIf(v.score * v.score, isNotNull(v.score)) AS score_sum_sq
             FROM tg_events AS v
             INNER JOIN
             (
@@ -245,7 +285,8 @@ public sealed class ClickHouseAnalyticsQueries(
                 Blocked: Convert.ToInt64(r["blocked"]),
                 ScoreSum: ToInt64OrZero(r["score_sum"]),
                 AvgScore: ToDoubleOrNaN(r["avg_score"]),
-                NoJsBeaconCount: Convert.ToInt64(r["no_js_beacon"])));
+                NoJsBeaconCount: Convert.ToInt64(r["no_js_beacon"]),
+                ScoreHistogram: ReadScoreHistogram(col => r[col])));
         }
         return rows;
     }
@@ -270,7 +311,19 @@ public sealed class ClickHouseAnalyticsQueries(
                 countIf(kind = 'verdict' AND band = 'block')        AS blocked,
                 sumIf(score, kind = 'verdict' AND isNotNull(score)) AS score_sum,
                 avgIf(score, kind = 'verdict' AND isNotNull(score)) AS avg_score,
-                countIf(kind = 'verdict' AND has_js_beacon = 0)     AS no_js_beacon
+                countIf(kind = 'verdict' AND has_js_beacon = 0)     AS no_js_beacon,
+                countIf(kind = 'verdict' AND score >= 0  AND score < 10)  AS score_bucket_00,
+                countIf(kind = 'verdict' AND score >= 10 AND score < 20)  AS score_bucket_10,
+                countIf(kind = 'verdict' AND score >= 20 AND score < 30)  AS score_bucket_20,
+                countIf(kind = 'verdict' AND score >= 30 AND score < 40)  AS score_bucket_30,
+                countIf(kind = 'verdict' AND score >= 40 AND score < 50)  AS score_bucket_40,
+                countIf(kind = 'verdict' AND score >= 50 AND score < 60)  AS score_bucket_50,
+                countIf(kind = 'verdict' AND score >= 60 AND score < 70)  AS score_bucket_60,
+                countIf(kind = 'verdict' AND score >= 70 AND score < 80)  AS score_bucket_70,
+                countIf(kind = 'verdict' AND score >= 80 AND score < 90)  AS score_bucket_80,
+                countIf(kind = 'verdict' AND score >= 90 AND score < 100) AS score_bucket_90,
+                countIf(kind = 'verdict' AND score = 100)                 AS score_bucket_100,
+                sumIf(score * score, kind = 'verdict' AND isNotNull(score)) AS score_sum_sq
             FROM tg_events
             WHERE tenant_id = {tenantId:UUID}
               AND site_key != ''
@@ -297,7 +350,8 @@ public sealed class ClickHouseAnalyticsQueries(
                 Blocked: Convert.ToInt64(r["blocked"]),
                 ScoreSum: ToInt64OrZero(r["score_sum"]),
                 AvgScore: ToDoubleOrNaN(r["avg_score"]),
-                NoJsBeaconCount: Convert.ToInt64(r["no_js_beacon"])));
+                NoJsBeaconCount: Convert.ToInt64(r["no_js_beacon"]),
+                ScoreHistogram: ReadScoreHistogram(col => r[col])));
         }
         return rows;
     }
@@ -315,4 +369,24 @@ public sealed class ClickHouseAnalyticsQueries(
 
     private static DateTime AsUtc(object value) =>
         DateTime.SpecifyKind(Convert.ToDateTime(value), DateTimeKind.Utc);
+
+    /// <summary>REQ-01: reads the eleven score_bucket_NN columns + score_sum_sq that
+    /// every query above appends to its aggregate SELECT, via a column-name getter
+    /// so this works against any ClickHouse reader row without depending on its
+    /// concrete type. Bucket counts narrow to int (matching the dbo.*DailySummaries
+    /// int columns and ScoreHistogramCounts exactly) via ToInt64OrZero first so an
+    /// empty-scope DBNull never throws.</summary>
+    private static ScoreHistogramCounts ReadScoreHistogram(Func<string, object> get) => new(
+        Bucket00: checked((int)ToInt64OrZero(get("score_bucket_00"))),
+        Bucket10: checked((int)ToInt64OrZero(get("score_bucket_10"))),
+        Bucket20: checked((int)ToInt64OrZero(get("score_bucket_20"))),
+        Bucket30: checked((int)ToInt64OrZero(get("score_bucket_30"))),
+        Bucket40: checked((int)ToInt64OrZero(get("score_bucket_40"))),
+        Bucket50: checked((int)ToInt64OrZero(get("score_bucket_50"))),
+        Bucket60: checked((int)ToInt64OrZero(get("score_bucket_60"))),
+        Bucket70: checked((int)ToInt64OrZero(get("score_bucket_70"))),
+        Bucket80: checked((int)ToInt64OrZero(get("score_bucket_80"))),
+        Bucket90: checked((int)ToInt64OrZero(get("score_bucket_90"))),
+        Bucket100: checked((int)ToInt64OrZero(get("score_bucket_100"))),
+        SumSq: ToInt64OrZero(get("score_sum_sq")));
 }
