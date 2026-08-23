@@ -18,7 +18,7 @@ public sealed class SchemaMigratorSplitStatementsTests
     }
 
     [Fact]
-    public void EmbeddedSchemaScripts_ApplyInOrdinalNameOrder_0001Through0007()
+    public void EmbeddedSchemaScripts_ApplyInOrdinalNameOrder_0001Through0008()
     {
         var asm = typeof(SchemaMigrator).Assembly;
         var scripts = asm.GetManifestResourceNames()
@@ -27,7 +27,7 @@ public sealed class SchemaMigratorSplitStatementsTests
             .OrderBy(n => n, StringComparer.Ordinal)
             .ToList();
 
-        Assert.Equal(7, scripts.Count);
+        Assert.Equal(8, scripts.Count);
         Assert.EndsWith(".schema.0001_events.sql", scripts[0], StringComparison.Ordinal);
         Assert.EndsWith(".schema.0002_training_and_shadow.sql", scripts[1], StringComparison.Ordinal);
         // ANA-08 attribution columns — must run after the table exists, hence 0003.
@@ -37,6 +37,7 @@ public sealed class SchemaMigratorSplitStatementsTests
         Assert.EndsWith(".schema.0005_document_referrer.sql", scripts[4], StringComparison.Ordinal);
         Assert.EndsWith(".schema.0006_visit_id.sql", scripts[5], StringComparison.Ordinal);
         Assert.EndsWith(".schema.0007_sessions_visits.sql", scripts[6], StringComparison.Ordinal);
+        Assert.EndsWith(".schema.0008_legacy_visit_backfill.sql", scripts[7], StringComparison.Ordinal);
     }
 
     [Fact]
