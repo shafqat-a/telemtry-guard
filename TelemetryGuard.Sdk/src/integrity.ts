@@ -9,7 +9,7 @@ import { fnv1aHex } from './util';
  *
  * WIRE-FORMAT CONTRACT (mirror exactly in API-04's C# verifier):
  * - Payload is UTF-8 JSON, single line, no whitespace, canonical key order
- *   k, sid, seq, nonce, sent_at, u, r, ck, events, ending in ,"c":"<8 lowercase hex>"}
+ *   k, sid, visit_id, seq, nonce, sent_at, u, r, ck, events, ending in ,"c":"<8 lowercase hex>"}
  *   (u/r/ck are SDK-09 page context and are omitted by JSON.stringify when undefined;
  *   the verifier never needs the field list — it hashes the prefix as serialized)
  * - Verify: locate the LAST occurrence of ,"c":"; prefix = payload[0..idx) + '}';
@@ -26,6 +26,7 @@ export function seal(env: Envelope): string {
   const ordered = {
     k: env.k,
     sid: env.sid,
+    visit_id: env.visit_id,
     seq: env.seq,
     nonce: env.nonce,
     sent_at: env.sent_at,

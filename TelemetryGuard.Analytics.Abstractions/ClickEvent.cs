@@ -14,6 +14,8 @@ public sealed record ClickEvent
     public required TenantId TenantId { get; init; }
     public required string SiteKey { get; init; }
     public required string SessionId { get; init; }
+    /// <summary>One document/page load. Empty only for legacy SDK and tracker events.</summary>
+    public string VisitId { get; init; } = "";
     public required EventKind Kind { get; init; }
 
     // ---- click ids (one field per supported ad platform — API-02 extracts all four) ----

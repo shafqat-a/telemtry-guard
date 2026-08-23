@@ -25,6 +25,7 @@ export interface TgEvent {
 export interface Envelope {
   k: string;
   sid: string;
+  visit_id: string;
   seq: number;
   nonce: string;
   sent_at: number;

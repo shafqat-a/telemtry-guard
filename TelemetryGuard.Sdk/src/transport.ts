@@ -69,6 +69,7 @@ export function flush(reason: 'count' | 'timer' | 'hidden' | 'pagehide'): void {
     const env: Envelope = {
       k: state.cfg.siteKey,
       sid: state.sid,
+      visit_id: state.visitId,
       seq: state.seq,
       nonce: state.nonce,
       sent_at: Date.now(),

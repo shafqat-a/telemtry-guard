@@ -49,7 +49,7 @@ public sealed class KustoEventSink : IEventSink, IHostedService
         "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", "utm_id",
         "cookie_fbc", "cookie_fbp", "cookie_gcl_aw", "cookie_ttp",
         "attribution_channel", "landing_path", "landing_query_keys", "headers",
-        "landing_url", "cookies", "document_referrer"
+        "landing_url", "cookies", "document_referrer", "visit_id"
     };
 
     internal const string TableName = "tg_events";
@@ -291,6 +291,7 @@ public sealed class KustoEventSink : IEventSink, IHostedService
         e.Headers,
         e.LandingUrl ?? "",
         e.Cookies,
-        e.DocumentReferrer
+        e.DocumentReferrer,
+        e.VisitId
     ];
 }

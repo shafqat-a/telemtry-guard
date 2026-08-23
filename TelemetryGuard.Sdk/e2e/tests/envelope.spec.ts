@@ -59,6 +59,8 @@ test('envelopes match the pinned wire contract', async ({ page, request }) => {
   // Single page => single sid across all envelopes.
   const sids = new Set(done.map((c) => c.parsed.sid));
   expect(sids.size).toBe(1);
+  const visitIds = new Set(done.map((c) => c.parsed.visit_id));
+  expect(visitIds.size).toBe(1);
   const sid = done[0]!.parsed.sid;
 
   // seq: 0,1,2,... strictly increasing, no duplicates, no gaps.

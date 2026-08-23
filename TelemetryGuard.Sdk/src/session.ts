@@ -23,7 +23,7 @@ function uuidFromRandomValues(): string {
   );
 }
 
-function generateSid(): string {
+function generateUuid(): string {
   try {
     if (typeof crypto.randomUUID === 'function') return crypto.randomUUID();
   } catch {
@@ -58,7 +58,7 @@ export function resolveSid(): string {
     }
   }
 
-  if (!sid) sid = generateSid();
+  if (!sid) sid = generateUuid();
 
   try {
     sessionStorage.setItem('tg_sid', sid);
@@ -67,4 +67,9 @@ export function resolveSid(): string {
   }
 
   return sid;
+}
+
+/** A fresh identifier for this document load; intentionally never persisted. */
+export function createVisitId(): string {
+  return generateUuid();
 }

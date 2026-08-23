@@ -195,6 +195,10 @@ public static partial class BeaconEndpoints
             if (body.ValueKind != JsonValueKind.Object
                 || !body.TryGetProperty("sid", out var sidEl) || sidEl.ValueKind != JsonValueKind.String
                 || sidEl.GetString() is not { } sid || !SidShape().IsMatch(sid)
+                || (body.TryGetProperty("visit_id", out var visitEl)
+                    && (visitEl.ValueKind != JsonValueKind.String
+                        || visitEl.GetString() is not { } suppliedVisitId
+                        || !Guid.TryParse(suppliedVisitId, out _)))
                 || (body.TryGetProperty("k", out var bodyK)
                     && bodyK.ValueKind == JsonValueKind.String
                     && !string.Equals(bodyK.GetString(), k, StringComparison.Ordinal))
@@ -211,6 +215,9 @@ public static partial class BeaconEndpoints
             var now = clock.UtcNow;
             var nowMs = now.ToUnixTimeMilliseconds();
             var sessKey = $"t:{tid}:sess:{sid}";
+            var visitId = body.TryGetProperty("visit_id", out var visitIdEl)
+                ? visitIdEl.GetString() ?? ""
+                : "";
 
             // Load-modify-store (single-instance MVP): beacons for one session
             // arrive serially from one browser, so read-modify-write is
@@ -227,6 +234,8 @@ public static partial class BeaconEndpoints
                 hash, body, rawBody, nowMs, opts, tid,
                 storedNonce.IsNullOrEmpty ? null : storedNonce.ToString(),
                 string.IsNullOrEmpty(referer) ? null : referer);
+            if (visitId.Length > 0)
+                hash["visit_id"] = visitId;
 
             var entries = new HashEntry[hash.Count];
             var i = 0;
@@ -283,6 +292,7 @@ public static partial class BeaconEndpoints
                     new("referrer", NullIfEmpty(ctx.Request.Headers.Referer.ToString()) ?? ""),
                     new("header_order", string.Join(',', ctx.Request.Headers.Select(h => h.Key))),
                     new("site_key", k),
+                    new("visit_id", visitId),
                     new("campaign_id", ""),
                     new("click_id_type", ""),
                     new("click_id", ""),
@@ -319,7 +329,7 @@ public static partial class BeaconEndpoints
                 // recovered here even for a visit that never went through the tracker.
                 var attribution = AttributionExtractor.Extract(ctx, client: ReadClientContext(body));
                 var evt = BuildSnapshot(
-                    tenantContext.TenantId, k, sid, hash, ip, ua,
+                    tenantContext.TenantId, k, sid, visitId, hash, ip, ua,
                     ctx.Request.Headers.Select(h => h.Key).ToArray(),
                     retentionDays, now.UtcDateTime, edge);
                 evt = evt.WithAttributionAndClickIds(attribution);
@@ -375,7 +385,7 @@ public static partial class BeaconEndpoints
     /// modality mismatch, headless tiers) are RSK-04's — never computed here.
     /// Missing ≠ zero: absent aggregates stay NaN/null on the event.</summary>
     private static ClickEvent BuildSnapshot(
-        TenantId tenantId, string siteKey, string sid, Dictionary<string, string> h,
+        TenantId tenantId, string siteKey, string sid, string visitId, Dictionary<string, string> h,
         string ip, string? ua, string[] headerNames, ushort retentionDays, DateTime nowUtc,
         EdgeSignals edge)
     {
@@ -384,6 +394,7 @@ public static partial class BeaconEndpoints
             TenantId = tenantId,
             SiteKey = siteKey,
             SessionId = sid,
+            VisitId = visitId,
             Kind = EventKind.Beacon,
             Ip = ip,
             HeaderNames = headerNames,
