@@ -71,5 +71,13 @@ export function resolveSid(): string {
 
 /** A fresh identifier for this document load; intentionally never persisted. */
 export function createVisitId(): string {
+  // A tracker redirect already minted a unique request id; retaining it keeps
+  // paid-click Redis context and the first page visit on the same identity.
+  try {
+    const tracked = new URLSearchParams(location.search).get('tg_sid');
+    if (tracked && SID_PATTERN.test(tracked)) return tracked;
+  } catch {
+    /* ignore */
+  }
   return generateUuid();
 }

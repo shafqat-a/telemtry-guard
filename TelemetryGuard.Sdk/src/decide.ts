@@ -44,7 +44,7 @@ export async function decide(turnstileToken?: string): Promise<DecideResponse | 
       }
     }, TIMEOUT_MS);
     try {
-      const body: { sid: string; turnstileToken?: string } = { sid: state.sid };
+      const body: { sid: string; turnstileToken?: string } = { sid: state.visitId };
       if (turnstileToken !== undefined) body.turnstileToken = turnstileToken;
       const res = await fetch(
         state.cfg.endpoint + '/decide?k=' + encodeURIComponent(state.cfg.siteKey),

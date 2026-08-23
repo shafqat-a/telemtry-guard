@@ -198,7 +198,11 @@ public static partial class BeaconEndpoints
                 || (body.TryGetProperty("visit_id", out var visitEl)
                     && (visitEl.ValueKind != JsonValueKind.String
                         || visitEl.GetString() is not { } suppliedVisitId
-                        || !Guid.TryParse(suppliedVisitId, out _)))
+                        || !SidShape().IsMatch(suppliedVisitId)))
+                || (body.TryGetProperty("session_id", out var sessionEl)
+                    && (sessionEl.ValueKind != JsonValueKind.String
+                        || sessionEl.GetString() is not { } suppliedSessionId
+                        || !SidShape().IsMatch(suppliedSessionId)))
                 || (body.TryGetProperty("k", out var bodyK)
                     && bodyK.ValueKind == JsonValueKind.String
                     && !string.Equals(bodyK.GetString(), k, StringComparison.Ordinal))
@@ -218,6 +222,9 @@ public static partial class BeaconEndpoints
             var visitId = body.TryGetProperty("visit_id", out var visitIdEl)
                 ? visitIdEl.GetString() ?? ""
                 : "";
+            var canonicalSessionId = body.TryGetProperty("session_id", out var sessionIdEl)
+                ? sessionIdEl.GetString() ?? sid
+                : sid;
 
             // Load-modify-store (single-instance MVP): beacons for one session
             // arrive serially from one browser, so read-modify-write is
@@ -292,6 +299,7 @@ public static partial class BeaconEndpoints
                     new("referrer", NullIfEmpty(ctx.Request.Headers.Referer.ToString()) ?? ""),
                     new("header_order", string.Join(',', ctx.Request.Headers.Select(h => h.Key))),
                     new("site_key", k),
+                    new("session_id", canonicalSessionId),
                     new("visit_id", visitId),
                     new("campaign_id", ""),
                     new("click_id_type", ""),
@@ -300,6 +308,16 @@ public static partial class BeaconEndpoints
                     new("tls_fp", edge.Ja4 ?? edge.Ja3 ?? ""),
                 ]);
                 await db.KeyExpireAsync(clickKey, TimeSpan.FromSeconds(opts.SessionTtlSeconds));
+            }
+            // A tracker/pixel may have created the click context before the SDK
+            // arrived. Add journey identities without replacing its paid-click fields.
+            if (result.EventsAggregated && visitId.Length > 0)
+            {
+                await db.HashSetAsync(clickKey,
+                [
+                    new("session_id", canonicalSessionId),
+                    new("visit_id", visitId),
+                ]);
             }
 
             // SDK-only sessions have no tracker/pixel request to put them on the
@@ -329,7 +347,7 @@ public static partial class BeaconEndpoints
                 // recovered here even for a visit that never went through the tracker.
                 var attribution = AttributionExtractor.Extract(ctx, client: ReadClientContext(body));
                 var evt = BuildSnapshot(
-                    tenantContext.TenantId, k, sid, visitId, hash, ip, ua,
+                    tenantContext.TenantId, k, canonicalSessionId, visitId, hash, ip, ua,
                     ctx.Request.Headers.Select(h => h.Key).ToArray(),
                     retentionDays, now.UtcDateTime, edge);
                 evt = evt.WithAttributionAndClickIds(attribution);

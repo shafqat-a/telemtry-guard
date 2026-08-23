@@ -133,6 +133,8 @@ public sealed class VerdictFinalizer(
         var campaignId = Guid.TryParse(campaignIdStr, out var parsedCampaignId) ? parsedCampaignId : (Guid?)null;
         var clickSiteKey = clickFields.TryGetValue("site_key", out var skVal) && skVal.Length > 0 ? skVal : null;
         var visitId = clickFields.TryGetValue("visit_id", out var visitVal) ? visitVal : "";
+        var canonicalSessionId = clickFields.TryGetValue("session_id", out var sessionVal)
+            && sessionVal.Length > 0 ? sessionVal : sessionId;
         // Click-less sessions (pure SDK beacon, no tracker/pixel hit) have no site_key
         // in Redis: fall back to the ambient tenant context, which ingest endpoints
         // (and API-05's /decide) resolve with the site key in the same DI scope.
@@ -175,7 +177,7 @@ public sealed class VerdictFinalizer(
             {
                 TenantId = tenantId,
                 SiteKey = siteKey,
-                SessionId = sessionId,
+                SessionId = canonicalSessionId,
                 VisitId = visitId,
                 Kind = EventKind.Verdict,
                 CampaignId = campaignIdStr ?? "",

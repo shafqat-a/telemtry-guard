@@ -68,7 +68,8 @@ export function flush(reason: 'count' | 'timer' | 'hidden' | 'pagehide'): void {
     // Canonical key order — SDK-05 checksums the serialized form; API-04 verifies.
     const env: Envelope = {
       k: state.cfg.siteKey,
-      sid: state.sid,
+      session_id: state.sid,
+      sid: state.visitId,
       visit_id: state.visitId,
       seq: state.seq,
       nonce: state.nonce,

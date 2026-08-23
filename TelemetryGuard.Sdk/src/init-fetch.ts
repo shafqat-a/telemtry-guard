@@ -41,7 +41,7 @@ export function fetchInit(): Promise<void> {
       '/i/init?k=' +
       encodeURIComponent(state.cfg.siteKey) +
       '&sid=' +
-      encodeURIComponent(state.sid);
+      encodeURIComponent(state.visitId);
     return fetch(url, {
       method: 'GET',
       credentials: 'omit',
