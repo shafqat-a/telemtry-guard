@@ -49,7 +49,9 @@ internal sealed class SiteRepository(ITenantConnectionFactory connections, ITena
         await using var conn = await connections.OpenAsync(ct);
         return await conn.QuerySingleOrDefaultAsync<SiteRecord>(new CommandDefinition(
             """
-            SELECT TenantId, SiteKey, Domain, IntegrationMode, CreatedUtc
+            SELECT TenantId, SiteKey, Domain, IntegrationMode, CreatedUtc,
+                   MarketIqEnabled,MarketIqCompanyId,MarketIqCollectUrl,
+                   MarketIqHealthUrl,MarketIqHealthTokenRef
             FROM dbo.Sites WHERE TenantId = @TenantId AND SiteKey = @SiteKey;
             """,
             new { TenantId = tenant.TenantId.Value, SiteKey = siteKey },
@@ -61,7 +63,9 @@ internal sealed class SiteRepository(ITenantConnectionFactory connections, ITena
         await using var conn = await connections.OpenAsync(ct);
         var rows = await conn.QueryAsync<SiteRecord>(new CommandDefinition(
             """
-            SELECT TenantId, SiteKey, Domain, IntegrationMode, CreatedUtc
+            SELECT TenantId, SiteKey, Domain, IntegrationMode, CreatedUtc,
+                   MarketIqEnabled,MarketIqCompanyId,MarketIqCollectUrl,
+                   MarketIqHealthUrl,MarketIqHealthTokenRef
             FROM dbo.Sites WHERE TenantId = @TenantId ORDER BY CreatedUtc;
             """,
             new { TenantId = tenant.TenantId.Value },

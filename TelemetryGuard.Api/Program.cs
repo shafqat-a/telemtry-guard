@@ -156,6 +156,10 @@ builder.Services.Configure<TelemetryGuard.Api.Options.EnforcementOptions>(
 builder.Services.Configure<WebhookOptions>(builder.Configuration.GetSection(WebhookOptions.SectionName));
 builder.Services.AddScoped<IWebhookPublisher, WebhookPublisher>();
 builder.Services.AddHostedService<WebhookDeliveryService>();
+builder.Services.Configure<MarketIqOptions>(builder.Configuration.GetSection(MarketIqOptions.SectionName));
+builder.Services.AddHttpClient("marketiq",client=>client.Timeout=TimeSpan.FromSeconds(15));
+builder.Services.AddScoped<IMarketIqPublisher,MarketIqPublisher>();
+builder.Services.AddHostedService<TelemetryGuard.Api.Workers.MarketIqDeliveryService>();
 
 // API-06: real verdict finalizer (verdict persistence, exclusion-queue writes,
 // EnforcementMode handling, summary MERGEs) — replaces API-05's build-order
@@ -175,6 +179,7 @@ builder.Services.AddScoped<IVerdictFinalizer>(sp => new VerdictFinalizer(
     sp.GetRequiredService<Microsoft.Extensions.Caching.Memory.IMemoryCache>(),
     sp.GetRequiredService<ITenantContext>(),
     sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<RetentionOptions>>(),
+    sp.GetRequiredService<IMarketIqPublisher>(),
     sp.GetRequiredService<ILogger<VerdictFinalizer>>()));
 builder.Services.AddScoped<ITenantPolicyProvider, TenantPolicyProvider>();
 

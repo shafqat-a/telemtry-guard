@@ -30,7 +30,10 @@ public sealed record TenantRecord
 }
 
 public sealed record SiteRecord(
-    Guid TenantId, string SiteKey, string Domain, string IntegrationMode, DateTime CreatedUtc);
+    Guid TenantId, string SiteKey, string Domain, string IntegrationMode, DateTime CreatedUtc,
+    bool MarketIqEnabled = false, int? MarketIqCompanyId = null,
+    string? MarketIqCollectUrl = null, string? MarketIqHealthUrl = null,
+    string? MarketIqHealthTokenRef = null);
 
 public sealed record CampaignRecord(
     Guid TenantId, Guid CampaignId, string Platform, string? ExternalCampaignId,

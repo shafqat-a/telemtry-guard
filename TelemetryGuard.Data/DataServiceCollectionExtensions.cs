@@ -23,6 +23,7 @@ public static class DataServiceCollectionExtensions
         services.TryAddScoped<Repositories.ITenantRepository, Repositories.TenantRepository>();
         services.TryAddScoped<Repositories.ILabelSubmissionRepository, Repositories.LabelSubmissionRepository>();
         services.TryAddScoped<Repositories.IWebhookOutboxRepository, Repositories.WebhookOutboxRepository>();
+        services.TryAddScoped<Repositories.IMarketIqOutboxRepository, Repositories.MarketIqOutboxRepository>();
         services.TryAddScoped<Repositories.ISiteRepository, Repositories.SiteRepository>();
         services.TryAddScoped<Repositories.ICampaignRepository, Repositories.CampaignRepository>();
 

@@ -52,6 +52,7 @@ public sealed class VerdictFinalizer(
     IMemoryCache cache,
     ITenantContext tenant,
     IOptions<RetentionOptions> retentionOptions,
+    IMarketIqPublisher marketIq,
     ILogger<VerdictFinalizer> logger) : IVerdictFinalizer
 {
     // Compatibility constructor retained for existing hosts/tests while policy
@@ -74,7 +75,7 @@ public sealed class VerdictFinalizer(
         : this(pipeline, sink, exclusions, summaries, labelSink,
             new TenantPolicyProvider(tenants, tenant, cache, bandOptions,
                 Options.Create(new EnforcementOptions())),
-            campaigns, redis, clock, cache, tenant, retentionOptions, logger)
+            campaigns, redis, clock, cache, tenant, retentionOptions, NullMarketIqPublisher.Instance, logger)
     { }
 
     public async Task FinalizeAsync(
@@ -121,14 +122,16 @@ public sealed class VerdictFinalizer(
         var batch = db.CreateBatch();
         var clickHashTask = batch.HashGetAllAsync(clickKey);
         var beaconExistsTask = batch.KeyExistsAsync(sessKey);
-        var gaStatusTask = batch.HashGetAsync(sessKey, "ga_status");
+        var sessionHashTask = batch.HashGetAllAsync(sessKey);
         batch.Execute();
-        await Task.WhenAll(clickHashTask, beaconExistsTask, gaStatusTask).ConfigureAwait(false);
+        await Task.WhenAll(clickHashTask, beaconExistsTask, sessionHashTask).ConfigureAwait(false);
 
         var clickFields = clickHashTask.Result.ToDictionary(
             e => e.Name.ToString(), e => e.Value.ToString(), StringComparer.Ordinal);
         var hasJsBeacon = beaconExistsTask.Result;
-        var gaStatus = gaStatusTask.Result.IsNullOrEmpty ? "unknown" : gaStatusTask.Result.ToString();
+        var sessionFields = sessionHashTask.Result.ToDictionary(
+            e => e.Name.ToString(), e => e.Value.ToString(), StringComparer.Ordinal);
+        var gaStatus = sessionFields.TryGetValue("ga_status",out var ga)&&ga.Length>0?ga:"unknown";
 
         var ip = clickFields.TryGetValue("ip", out var ipVal) && ipVal.Length > 0 ? ipVal : null;
         var campaignIdStr = clickFields.TryGetValue("campaign_id", out var cidVal) && cidVal.Length > 0 ? cidVal : null;
@@ -155,6 +158,23 @@ public sealed class VerdictFinalizer(
                 "VerdictFinalizer: tenant config read failed for tenant {TenantId}; using defaults " +
                 "(retention={DefaultDays}d, EnforcementMode=AutoEnforce).",
                 tenantId, retentionOptions.Value.DefaultDays);
+        }
+
+        // MarketIQ receives exactly one finalized record per visit. SQL enqueue is
+        // idempotent on (tenant,site,event_id); Redis is only a wake-up signal.
+        try
+        {
+            var occurredUtc=clickFields.TryGetValue("ts",out var clickTs)
+                && long.TryParse(clickTs,out var clickTsMs)
+                ? DateTimeOffset.FromUnixTimeMilliseconds(clickTsMs).UtcDateTime
+                : clock.UtcNow.UtcDateTime;
+            await marketIq.PublishVisitAsync(siteKey,visitId,canonicalSessionId,
+                occurredUtc,clickFields.GetValueOrDefault("ua"),clickFields,
+                sessionFields,outcome.Features,ct).ConfigureAwait(false);
+        }
+        catch(Exception ex)
+        {
+            logger.LogError(ex,"MarketIQ outbox enqueue failed for visit {VisitId}; finalization continues",visitId);
         }
         var retentionDays = (ushort)(policy?.Tenant.RetentionDays is > 0 and var configuredDays
             ? configuredDays
@@ -314,4 +334,12 @@ public sealed class VerdictFinalizer(
         VerdictBand.Block => VerdictBands.Block,
         _ => VerdictBands.Block, // unreachable; MapBand only yields the three bands
     };
+}
+
+file sealed class NullMarketIqPublisher : IMarketIqPublisher
+{
+    public static readonly NullMarketIqPublisher Instance=new();
+    public Task PublishVisitAsync(string siteKey,string visitId,string sessionId,DateTime occurredUtc,
+        string? userAgent,IReadOnlyDictionary<string,string> click,IReadOnlyDictionary<string,string> session,
+        FraudFeatureVector? features,CancellationToken ct)=>Task.CompletedTask;
 }

@@ -33,3 +33,4 @@
 | 0011 | Per-tenant policy overrides, ExternalAuthority, and policy audit | REQ-07 / REQ-06 |
 | 0012 | LabelSubmissions + WebhookOutbox + RLS | REQ-08 / REQ-09 |
 | 0013 | Principal-bound RLS bypass, tg_app / tg_system roles, BLOCK on ApiKeys/Sites | D11 hardening (build review 2026-08-24) |
+| 0014 | Per-site MarketIQ configuration and durable visit-delivery outbox | MarketIQ click collection |
