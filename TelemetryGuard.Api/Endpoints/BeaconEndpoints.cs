@@ -442,6 +442,7 @@ public static partial class BeaconEndpoints
             HoneypotTouched = Flag(h, "hp_touched"),
             PointerUntrusted = Flag(h, "pointer_untrusted"),
             PagesViewed = Flt(h, "n_pv"),
+            GaStatus = Str(h, "ga_status") ?? "unknown",
             RetentionDays = retentionDays,
             TimestampUtc = nowUtc,
         };

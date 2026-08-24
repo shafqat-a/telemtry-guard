@@ -117,6 +117,30 @@ public sealed class SessionAggregatorTests
         Assert.Equal("2", hash["n_pv"]);
     }
 
+    [Theory]
+    [InlineData("loaded")]
+    [InlineData("blocked")]
+    [InlineData("unknown")]
+    public void GaStatus_StoresOnlySupportedStates(string status)
+    {
+        var hash = NewHash();
+
+        Apply(hash, Envelope($$"""[{"e":"ga","t":12,"s":"{{status}}"}]"""));
+
+        Assert.Equal(status, hash["ga_status"]);
+        Assert.False(hash.ContainsKey("n_unknown"));
+    }
+
+    [Fact]
+    public void GaStatus_InvalidValue_IsIgnoredWithoutPersistingIt()
+    {
+        var hash = NewHash();
+
+        Apply(hash, Envelope("""[{"e":"ga","t":12,"s":"maybe"}]"""));
+
+        Assert.False(hash.ContainsKey("ga_status"));
+    }
+
     [Fact]
     public void UnknownEventType_IsCountedAndSkipped_NeverRejected()
     {

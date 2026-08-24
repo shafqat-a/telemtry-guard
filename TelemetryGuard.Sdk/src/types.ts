@@ -81,6 +81,8 @@ export type HpEvent = { e: 'hp'; t: number; kind: 'focus' | 'input' | 'submit_fi
 export type FiEvent = { e: 'fi'; t: number; it: 'pointer' | 'key' | 'wheel' | 'touch' | 'scroll' };
 /** Render-timing mark (once per page load; fp omitted when unavailable — missing ≠ zero). */
 export type RtEvent = { e: 'rt'; t: number; fcp: number; fp?: number };
+/** Google Analytics runtime delivery status for this page visit. */
+export type GaEvent = { e: 'ga'; t: number; s: 'loaded' | 'blocked' | 'unknown' };
 
 // ---------------------------------------------------------------------------
 // SDK-04 fingerprint event — exactly ONE per session (sessionStorage keyed on
@@ -145,4 +147,5 @@ export type CollectorEvent =
   | AfEvent
   | HpEvent
   | FiEvent
-  | RtEvent;
+  | RtEvent
+  | GaEvent;

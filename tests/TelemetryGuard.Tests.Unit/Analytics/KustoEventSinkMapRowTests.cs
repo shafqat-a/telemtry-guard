@@ -30,10 +30,11 @@ public sealed class KustoEventSinkMapRowTests
     };
 
     [Fact]
-    public void ColumnNames_HasAll91Columns_InContractOrder()
+    public void ColumnNames_HasAll92Columns_InContractOrder()
     {
-        Assert.Equal(91, KustoEventSink.ColumnNames.Length);
+        Assert.Equal(92, KustoEventSink.ColumnNames.Length);
         Assert.Equal(90, Array.IndexOf(KustoEventSink.ColumnNames, "visit_id"));
+        Assert.Equal(91, Array.IndexOf(KustoEventSink.ColumnNames, "ga_status"));
         Assert.Equal(0, Array.IndexOf(KustoEventSink.ColumnNames, "tenant_id"));
         Assert.Equal(66, Array.IndexOf(KustoEventSink.ColumnNames, "retention_days"));
         Assert.Equal(67, Array.IndexOf(KustoEventSink.ColumnNames, "timestamp"));
@@ -46,12 +47,13 @@ public sealed class KustoEventSinkMapRowTests
     }
 
     [Fact]
-    public void MapRow_Produces91Values_MatchingColumnOrder()
+    public void MapRow_Produces92Values_MatchingColumnOrder()
     {
         var row = KustoEventSink.MapRow(SampleEvent());
 
-        Assert.Equal(91, row.Length);
+        Assert.Equal(92, row.Length);
         Assert.Equal("", row[90]);                       // legacy/non-SDK visit id
+        Assert.Equal("unknown", row[91]);                // no GA signal for tracker/pixel rows
         Assert.Equal(TenantGuid, row[0]);                 // tenant_id
         Assert.Equal("tracker", row[3]);                  // kind wire string
         Assert.Equal(90, row[66]);                        // retention_days: boxed int (task step 7)

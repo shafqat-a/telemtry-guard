@@ -149,6 +149,11 @@ public static class SessionAggregator
                     case "pv":
                         Incr(hash, "n_pv");
                         break;
+                    case "ga":
+                        var gaStatus = GetString(ev, "s");
+                        if (gaStatus is "loaded" or "blocked" or "unknown")
+                            hash["ga_status"] = gaStatus;
+                        break;
                     case "pm":
                         ApplyPointerMoves(hash, ev);
                         break;

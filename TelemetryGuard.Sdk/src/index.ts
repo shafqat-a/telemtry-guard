@@ -7,12 +7,14 @@ import { nowT } from './util';
 import { startCollectors } from './collectors';
 import { startFingerprint } from './fingerprint';
 import { startGate } from './gate';
+import { startGaStatus } from './ga-status';
 
 (() => {
   try {
     const cfg = readConfig();
     if (!cfg) return; // inert without a site key
     initState(cfg, resolveSid(), createVisitId());
+    startGaStatus();
     startTransport();
     enqueue({ e: 'pv', t: nowT() }); // guarantees >=1 envelope per JS session,
     // so has_js_beacon=1 lands inside the ~10 s grace period

@@ -32,10 +32,11 @@ public sealed class ClickHouseEventSinkMapRowTests
     };
 
     [Fact]
-    public void ColumnNames_HasAll91Columns_InContractOrder()
+    public void ColumnNames_HasAll92Columns_InContractOrder()
     {
-        Assert.Equal(91, ClickHouseEventSink.ColumnNames.Length);
+        Assert.Equal(92, ClickHouseEventSink.ColumnNames.Length);
         Assert.Equal(90, Array.IndexOf(ClickHouseEventSink.ColumnNames, "visit_id"));
+        Assert.Equal(91, Array.IndexOf(ClickHouseEventSink.ColumnNames, "ga_status"));
         Assert.Equal(0, Array.IndexOf(ClickHouseEventSink.ColumnNames, "tenant_id"));
         Assert.Equal(66, Array.IndexOf(ClickHouseEventSink.ColumnNames, "retention_days"));
         Assert.Equal(67, Array.IndexOf(ClickHouseEventSink.ColumnNames, "timestamp"));
@@ -47,12 +48,13 @@ public sealed class ClickHouseEventSinkMapRowTests
     }
 
     [Fact]
-    public void MapRow_Produces91Values_MatchingColumnOrder()
+    public void MapRow_Produces92Values_MatchingColumnOrder()
     {
         var row = ClickHouseEventSink.MapRow(SampleEvent());
 
-        Assert.Equal(91, row.Length);
+        Assert.Equal(92, row.Length);
         Assert.Equal("", row[90]);                       // legacy/non-SDK visit id
+        Assert.Equal("unknown", row[91]);                // no GA signal for tracker/pixel rows
         Assert.Equal(TenantGuid, row[0]);                 // tenant_id
         Assert.Equal("tracker", row[3]);                  // kind wire string
         Assert.Equal((ushort)90, row[66]);                // retention_days

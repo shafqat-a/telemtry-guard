@@ -126,6 +126,8 @@ public sealed record ClickEvent
     public bool? InputModalityMismatch { get; init; }
     public float TimeOnPageSec { get; init; } = float.NaN;
     public float PagesViewed { get; init; } = float.NaN;
+    /// <summary>GA runtime delivery for this visit: loaded, blocked, or unknown.</summary>
+    public string GaStatus { get; init; } = "unknown";
 
     // ---- velocity snapshot (server-computed at scoring time; 0 = cold, never NaN) ----
     public int IpClicksLastMin { get; init; }

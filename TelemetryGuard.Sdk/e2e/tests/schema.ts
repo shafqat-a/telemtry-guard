@@ -104,6 +104,10 @@ export const rtEvent = z
   })
   .strict();
 
+export const gaEvent = z
+  .object({ ...base, e: z.literal('ga'), s: z.enum(['loaded', 'blocked', 'unknown']) })
+  .strict();
+
 const storageSide = z
   .object({
     present: z.boolean(),
@@ -155,6 +159,7 @@ export const anyEvent = z.discriminatedUnion('e', [
   hpEvent,
   fiEvent,
   rtEvent,
+  gaEvent,
   fpEvent,
 ]);
 

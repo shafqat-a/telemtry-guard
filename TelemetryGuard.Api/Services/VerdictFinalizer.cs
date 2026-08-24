@@ -121,12 +121,14 @@ public sealed class VerdictFinalizer(
         var batch = db.CreateBatch();
         var clickHashTask = batch.HashGetAllAsync(clickKey);
         var beaconExistsTask = batch.KeyExistsAsync(sessKey);
+        var gaStatusTask = batch.HashGetAsync(sessKey, "ga_status");
         batch.Execute();
-        await Task.WhenAll(clickHashTask, beaconExistsTask).ConfigureAwait(false);
+        await Task.WhenAll(clickHashTask, beaconExistsTask, gaStatusTask).ConfigureAwait(false);
 
         var clickFields = clickHashTask.Result.ToDictionary(
             e => e.Name.ToString(), e => e.Value.ToString(), StringComparer.Ordinal);
         var hasJsBeacon = beaconExistsTask.Result;
+        var gaStatus = gaStatusTask.Result.IsNullOrEmpty ? "unknown" : gaStatusTask.Result.ToString();
 
         var ip = clickFields.TryGetValue("ip", out var ipVal) && ipVal.Length > 0 ? ipVal : null;
         var campaignIdStr = clickFields.TryGetValue("campaign_id", out var cidVal) && cidVal.Length > 0 ? cidVal : null;
@@ -183,6 +185,7 @@ public sealed class VerdictFinalizer(
                 CampaignId = campaignIdStr ?? "",
                 Ip = ip ?? "",
                 HasJsBeacon = hasJsBeacon,
+                GaStatus = gaStatus,
                 Score = result.Score,
                 Band = BandWire(band),
                 Action = policy?.ObserveOnly == true ? VerdictBands.Allow : BandWire(band),
