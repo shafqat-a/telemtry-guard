@@ -1,7 +1,7 @@
 import { enqueue } from './transport';
 import { nowT } from './util';
 
-export type GaStatus = 'loaded' | 'blocked' | 'unknown';
+export type GaStatus = 'loaded' | 'blocked' | 'unknown' | 'page_view_sent' | 'page_view_accepted';
 
 const LOAD_TIMEOUT_MS = 5000;
 const POLL_MS = 250;
@@ -27,6 +27,19 @@ function hasLoadedGa(): boolean {
   }
 }
 
+function isGaPageView(entry: PerformanceResourceTiming): boolean {
+  try {
+    const url = new URL(entry.name);
+    const gaHost = url.hostname === 'www.google-analytics.com'
+      || url.hostname === 'google-analytics.com'
+      || url.hostname.endsWith('.google-analytics.com');
+    if (!gaHost || !url.pathname.endsWith('/g/collect')) return false;
+    return url.searchParams.get('en') === 'page_view';
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Reports whether the page's configured GA runtime actually loaded. Merely finding
  * window.gtag is insufficient: the standard inline stub exists even when an ad blocker
@@ -41,16 +54,41 @@ export function startGaStatus(): void {
       return;
     }
 
-    let reported = false;
+    let current: GaStatus | undefined;
     let poll: number | undefined;
     let timeout: number | undefined;
-    const report = (status: GaStatus): void => {
-      if (reported) return;
-      reported = true;
-      if (poll !== undefined) clearInterval(poll);
-      if (timeout !== undefined) clearTimeout(timeout);
-      enqueue({ e: 'ga', t: nowT(), s: status });
+    let observer: PerformanceObserver | undefined;
+    const rank: Record<GaStatus, number> = {
+      unknown: 0, blocked: 1, loaded: 2, page_view_sent: 3, page_view_accepted: 4,
     };
+    const report = (status: GaStatus): void => {
+      if (current !== undefined && rank[status] <= rank[current]) return;
+      current = status;
+      enqueue({ e: 'ga', t: nowT(), s: status });
+      if (status === 'page_view_accepted') {
+        if (poll !== undefined) clearInterval(poll);
+        if (timeout !== undefined) clearTimeout(timeout);
+        observer?.disconnect();
+      }
+    };
+
+    const observeCollect = (entries: readonly PerformanceEntry[]): void => {
+      for (const item of entries) {
+        const entry = item as PerformanceResourceTiming;
+        if (!isGaPageView(entry)) continue;
+        report('page_view_sent');
+        // Cross-origin Resource Timing does not expose the HTTP status. A completed
+        // responseEnd proves network delivery only; GA report processing remains async.
+        if (entry.responseEnd > 0) report('page_view_accepted');
+      }
+    };
+    try {
+      observer = new PerformanceObserver((list) => observeCollect(list.getEntries()));
+      observer.observe({ type: 'resource', buffered: true });
+      observeCollect(performance.getEntriesByType('resource'));
+    } catch {
+      observer = undefined;
+    }
 
     if (hasLoadedGa()) {
       report('loaded');
@@ -68,7 +106,9 @@ export function startGaStatus(): void {
 
     // Installed before transport's pagehide handler: record the best-known state in
     // the final envelope even when a fast bounce happens before the timeout.
-    window.addEventListener('pagehide', () => report(hasLoadedGa() ? 'loaded' : 'blocked'), { once: true });
+    window.addEventListener('pagehide', () => {
+      if (current !== 'page_view_accepted') report(hasLoadedGa() ? 'loaded' : 'blocked');
+    }, { once: true });
   } catch {
     enqueue({ e: 'ga', t: nowT(), s: 'unknown' });
   }

@@ -121,6 +121,8 @@ public sealed class SessionAggregatorTests
     [InlineData("loaded")]
     [InlineData("blocked")]
     [InlineData("unknown")]
+    [InlineData("page_view_sent")]
+    [InlineData("page_view_accepted")]
     public void GaStatus_StoresOnlySupportedStates(string status)
     {
         var hash = NewHash();
@@ -139,6 +141,17 @@ public sealed class SessionAggregatorTests
         Apply(hash, Envelope("""[{"e":"ga","t":12,"s":"maybe"}]"""));
 
         Assert.False(hash.ContainsKey("ga_status"));
+    }
+
+    [Fact]
+    public void GaStatus_NeverRegressesWhenBeaconPostsArriveOutOfOrder()
+    {
+        var hash = NewHash();
+
+        Apply(hash, Envelope("""[{"e":"ga","t":12,"s":"page_view_accepted"}]""", seq: 0));
+        Apply(hash, Envelope("""[{"e":"ga","t":13,"s":"loaded"}]""", seq: 1));
+
+        Assert.Equal("page_view_accepted", hash["ga_status"]);
     }
 
     [Fact]

@@ -82,7 +82,7 @@ export type FiEvent = { e: 'fi'; t: number; it: 'pointer' | 'key' | 'wheel' | 't
 /** Render-timing mark (once per page load; fp omitted when unavailable — missing ≠ zero). */
 export type RtEvent = { e: 'rt'; t: number; fcp: number; fp?: number };
 /** Google Analytics runtime delivery status for this page visit. */
-export type GaEvent = { e: 'ga'; t: number; s: 'loaded' | 'blocked' | 'unknown' };
+export type GaEvent = { e: 'ga'; t: number; s: 'loaded' | 'blocked' | 'unknown' | 'page_view_sent' | 'page_view_accepted' };
 
 // ---------------------------------------------------------------------------
 // SDK-04 fingerprint event — exactly ONE per session (sessionStorage keyed on

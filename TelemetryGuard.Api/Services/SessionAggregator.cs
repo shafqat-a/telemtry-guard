@@ -151,8 +151,9 @@ public static class SessionAggregator
                         break;
                     case "ga":
                         var gaStatus = GetString(ev, "s");
-                        if (gaStatus is "loaded" or "blocked" or "unknown")
-                            hash["ga_status"] = gaStatus;
+                        if (gaStatus is "loaded" or "blocked" or "unknown"
+                            or "page_view_sent" or "page_view_accepted")
+                            SetGaStatus(hash, gaStatus);
                         break;
                     case "pm":
                         ApplyPointerMoves(hash, ev);
@@ -232,6 +233,21 @@ public static class SessionAggregator
         }
 
         return new Result(hash, aggregated, sawFp, sawFs);
+    }
+
+    private static void SetGaStatus(Dictionary<string, string> hash, string status)
+    {
+        static int Rank(string value) => value switch
+        {
+            "page_view_accepted" => 4,
+            "page_view_sent" => 3,
+            "loaded" => 2,
+            "blocked" => 1,
+            _ => 0,
+        };
+
+        if (!hash.TryGetValue("ga_status", out var current) || Rank(status) > Rank(current))
+            hash["ga_status"] = status;
     }
 
     /// <summary>Welford over inter-SAMPLE gaps of pm batches plus accumulated
