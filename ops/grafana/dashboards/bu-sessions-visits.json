@@ -1,0 +1,81 @@
+{
+  "uid": "tg-bu-sessions-visits",
+  "title": "BU Sessions & Visits — 24 Hours / 3 Days",
+  "tags": ["telemetryguard", "bu.edu.bd", "sessions", "visits"],
+  "timezone": "Asia/Dhaka",
+  "editable": true,
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "1m",
+  "time": { "from": "now-24h", "to": "now" },
+  "annotations": { "list": [] },
+  "templating": { "list": [] },
+  "panels": [
+    {
+      "id": 1, "type": "stat", "title": "Sessions — last 24 hours",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "tg-clickhouse" },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "color": "blue", "value": null }] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "textMode": "auto" },
+      "targets": [{ "refId": "A", "editorType": "sql", "queryType": "table", "format": 1, "rawSql": "SELECT uniqExact(session_id) AS sessions FROM telemetry_guard.tg_visits WHERE first_seen >= now() - INTERVAL 24 HOUR AND site_key='tg_sk_1uIiZzN3XsyoB3skHSvCyf'" }]
+    },
+    {
+      "id": 2, "type": "stat", "title": "Visits — last 24 hours",
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "tg-clickhouse" },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "textMode": "auto" },
+      "targets": [{ "refId": "A", "editorType": "sql", "queryType": "table", "format": 1, "rawSql": "SELECT count() AS visits FROM telemetry_guard.tg_visits WHERE first_seen >= now() - INTERVAL 24 HOUR AND site_key='tg_sk_1uIiZzN3XsyoB3skHSvCyf'" }]
+    },
+    {
+      "id": 3, "type": "stat", "title": "Sessions — last 3 days",
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "tg-clickhouse" },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "color": "purple", "value": null }] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "textMode": "auto" },
+      "targets": [{ "refId": "A", "editorType": "sql", "queryType": "table", "format": 1, "rawSql": "SELECT uniqExact(session_id) AS sessions FROM telemetry_guard.tg_visits WHERE first_seen >= now() - INTERVAL 3 DAY AND site_key='tg_sk_1uIiZzN3XsyoB3skHSvCyf'" }]
+    },
+    {
+      "id": 4, "type": "stat", "title": "Visits — last 3 days",
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "tg-clickhouse" },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "color": "orange", "value": null }] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "textMode": "auto" },
+      "targets": [{ "refId": "A", "editorType": "sql", "queryType": "table", "format": 1, "rawSql": "SELECT count() AS visits FROM telemetry_guard.tg_visits WHERE first_seen >= now() - INTERVAL 3 DAY AND site_key='tg_sk_1uIiZzN3XsyoB3skHSvCyf'" }]
+    },
+    {
+      "id": 5, "type": "table", "title": "Last 24 hours — sessions / visits by hour",
+      "description": "Canonical page visits grouped by visit start time. Session counts are distinct within each hour.",
+      "gridPos": { "h": 13, "w": 24, "x": 0, "y": 4 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "tg-clickhouse" },
+      "fieldConfig": { "defaults": { "custom": { "align": "auto", "cellOptions": { "type": "auto" } } }, "overrides": [] },
+      "options": { "showHeader": true, "cellHeight": "sm", "footer": { "show": true, "reducer": ["sum"] } },
+      "targets": [{ "refId": "A", "editorType": "sql", "queryType": "table", "format": 1, "rawSql": "SELECT toStartOfHour(toTimeZone(first_seen,'Asia/Dhaka')) AS hour_bdt, uniqExact(session_id) AS total_sessions, count() AS total_visits, uniqExactIf(session_id,attribution_channel='meta_ads') AS facebook_sessions, countIf(attribution_channel='meta_ads') AS facebook_visits, uniqExactIf(session_id,attribution_channel='tiktok_ads') AS tiktok_sessions, countIf(attribution_channel='tiktok_ads') AS tiktok_visits, uniqExactIf(session_id,attribution_channel='organic_search') AS organic_sessions, countIf(attribution_channel='organic_search') AS organic_visits, uniqExactIf(session_id,attribution_channel NOT IN ('meta_ads','tiktok_ads','organic_search')) AS other_sessions, countIf(attribution_channel NOT IN ('meta_ads','tiktok_ads','organic_search')) AS other_visits FROM telemetry_guard.tg_visits WHERE first_seen >= now() - INTERVAL 24 HOUR AND site_key='tg_sk_1uIiZzN3XsyoB3skHSvCyf' GROUP BY hour_bdt ORDER BY hour_bdt DESC" }]
+    },
+    {
+      "id": 6, "type": "table", "title": "Last 3 days — sessions / visits by day",
+      "description": "Daily canonical session and visit totals by source in Bangladesh time.",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 17 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "tg-clickhouse" },
+      "fieldConfig": { "defaults": { "custom": { "align": "auto", "cellOptions": { "type": "auto" } } }, "overrides": [] },
+      "options": { "showHeader": true, "cellHeight": "sm", "footer": { "show": true, "reducer": ["sum"] } },
+      "targets": [{ "refId": "A", "editorType": "sql", "queryType": "table", "format": 1, "rawSql": "SELECT toDate(toTimeZone(first_seen,'Asia/Dhaka')) AS day_bdt, uniqExact(session_id) AS total_sessions, count() AS total_visits, uniqExactIf(session_id,attribution_channel='meta_ads') AS facebook_sessions, countIf(attribution_channel='meta_ads') AS facebook_visits, uniqExactIf(session_id,attribution_channel='tiktok_ads') AS tiktok_sessions, countIf(attribution_channel='tiktok_ads') AS tiktok_visits, uniqExactIf(session_id,attribution_channel='organic_search') AS organic_sessions, countIf(attribution_channel='organic_search') AS organic_visits, uniqExactIf(session_id,attribution_channel NOT IN ('meta_ads','tiktok_ads','organic_search')) AS other_sessions, countIf(attribution_channel NOT IN ('meta_ads','tiktok_ads','organic_search')) AS other_visits FROM telemetry_guard.tg_visits WHERE first_seen >= now() - INTERVAL 3 DAY AND site_key='tg_sk_1uIiZzN3XsyoB3skHSvCyf' GROUP BY day_bdt ORDER BY day_bdt DESC" }]
+    },
+    {
+      "id": 7, "type": "timeseries", "title": "Visits by source — last 3 days",
+      "gridPos": { "h": 10, "w": 16, "x": 0, "y": 25 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "tg-clickhouse" },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "line", "lineInterpolation": "smooth", "lineWidth": 2, "fillOpacity": 18, "showPoints": "never", "stacking": { "mode": "normal", "group": "A" } } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["sum"] }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [{ "refId": "A", "editorType": "sql", "queryType": "timeseries", "format": 0, "rawSql": "SELECT toStartOfHour(first_seen) AS time, multiIf(attribution_channel='meta_ads','Facebook',attribution_channel='tiktok_ads','TikTok',attribution_channel='organic_search','Organic','Other') AS source, count() AS visits FROM telemetry_guard.tg_visits WHERE first_seen >= now() - INTERVAL 3 DAY AND site_key='tg_sk_1uIiZzN3XsyoB3skHSvCyf' GROUP BY time,source ORDER BY time" }]
+    },
+    {
+      "id": 8, "type": "table", "title": "Source totals — 24 hours vs 3 days",
+      "gridPos": { "h": 10, "w": 8, "x": 16, "y": 25 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "tg-clickhouse" },
+      "fieldConfig": { "defaults": { "custom": { "align": "auto", "cellOptions": { "type": "auto" } } }, "overrides": [] },
+      "options": { "showHeader": true, "cellHeight": "sm", "footer": { "show": false } },
+      "targets": [{ "refId": "A", "editorType": "sql", "queryType": "table", "format": 1, "rawSql": "SELECT multiIf(attribution_channel='meta_ads','Facebook',attribution_channel='tiktok_ads','TikTok',attribution_channel='organic_search','Organic','Other') AS source, uniqExactIf(session_id,first_seen>=now()-INTERVAL 24 HOUR) AS sessions_24h, countIf(first_seen>=now()-INTERVAL 24 HOUR) AS visits_24h, uniqExact(session_id) AS sessions_3d, count() AS visits_3d FROM telemetry_guard.tg_visits WHERE first_seen>=now()-INTERVAL 3 DAY AND site_key='tg_sk_1uIiZzN3XsyoB3skHSvCyf' GROUP BY source ORDER BY visits_3d DESC" }]
+    }
+  ]
+}
