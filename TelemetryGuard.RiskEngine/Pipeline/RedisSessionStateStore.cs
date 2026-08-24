@@ -107,7 +107,10 @@ public sealed class RedisSessionStateStore : ISessionStateStore
     private static BeaconData MapBeacon(Dictionary<string, string> h)
     {
         // SessionDurationMs = last_beacon_ts − nav_ts, only when both are present; else 0.
-        double sessionDurationMs = 0;
+        // Missing timing is unknown, never a zero-duration visit. This matters to
+        // both scoring and downstream relays: zero is affirmative evidence of an
+        // impossibly short visit, while NaN is omitted from JSON.
+        double sessionDurationMs = double.NaN;
         if (Long(h, "last_beacon_ts") is { } lastBeaconTs && Long(h, "nav_ts") is { } navTs)
         {
             sessionDurationMs = lastBeaconTs - navTs;

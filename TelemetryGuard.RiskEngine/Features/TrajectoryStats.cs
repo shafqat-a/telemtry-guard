@@ -46,7 +46,9 @@ public static class TrajectoryStats
         => MousePoints(beacon) + beacon.ClickCount + beacon.KeyCount + beacon.TouchCount;
 
     public static float TimeOnPageSec(BeaconData beacon)
-        => (float)(beacon.SessionDurationMs / 1000.0);
+        => double.IsFinite(beacon.SessionDurationMs) && beacon.SessionDurationMs >= 0
+            ? (float)(beacon.SessionDurationMs / 1000.0)
+            : float.NaN;
 
     /// <summary>(FormSubmitTMs − FormFirstFocusTMs) / 1000; either side null → NaN.</summary>
     public static float FormFillTimeSec(BeaconData beacon)

@@ -6,6 +6,12 @@ namespace TelemetryGuard.Tests.Unit.Features;
 /// ingest (API-04) — no raw event points exist server-side.</summary>
 public class TrajectoryStatsTests
 {
+    [Fact]
+    public void MissingSessionDuration_TimeOnPageIsNaNNotZero()
+    {
+        Assert.True(float.IsNaN(TrajectoryStats.TimeOnPageSec(new BeaconData())));
+    }
+
     // ---- mouse_path_linearity ----
 
     [Fact]

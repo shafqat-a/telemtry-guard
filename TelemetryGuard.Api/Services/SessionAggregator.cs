@@ -148,6 +148,13 @@ public static class SessionAggregator
                 {
                     case "pv":
                         Incr(hash, "n_pv");
+                        // SDK event timestamps are milliseconds since navigation start.
+                        // Anchor the navigation on the server clock so dwell does not
+                        // depend on the visitor's wall clock (which may be skewed).
+                        // First page-view wins across later beacon batches.
+                        if (!hash.ContainsKey("nav_ts") && GetNumber(ev, "t") is { } pvT
+                            && pvT >= 0 && pvT <= opts.SessionTtlSeconds * 1000L)
+                            SetLong(hash, "nav_ts", nowMs - (long)pvT);
                         break;
                     case "ga":
                         var gaStatus = GetString(ev, "s");

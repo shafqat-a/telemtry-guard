@@ -60,7 +60,7 @@ public sealed class MarketIqPublisher(
             ["cookies_disabled"]=f?.CookiesDisabled,
             ["canvas_fp_blocked"]=f?.CanvasFpBlocked,
             ["is_mobile"]=f?.IsMobile,
-            ["mouse_events"]=Long(session,"mm_n"),
+            ["mouse_events"]=MousePoints(session),
             ["touch_events"]=Long(session,"pt_touch"),
             ["scroll_events"]=Long(session,"n_scroll"),
             ["keystrokes"]=Long(session,"n_key"),
@@ -96,6 +96,9 @@ public sealed class MarketIqPublisher(
             ["is_proxy_or_vpn"]=geo.IsProxyOrVpn,
             ["is_tor"]=geo.IsTor,
             ["is_private_relay"]=geo.IsPrivateRelay,
+            // Allows MarketIQ to keep live telemetry separate from corrected
+            // historical replays when evaluating signal coverage and scores.
+            ["tg_export_mode"]="live",
         };
         foreach(var key in payload.Where(x=>x.Value is null).Select(x=>x.Key).ToArray()) payload.Remove(key);
         var json=JsonSerializer.Serialize(payload,new JsonSerializerOptions(JsonSerializerDefaults.Web));
@@ -112,6 +115,13 @@ public sealed class MarketIqPublisher(
         => values.TryGetValue(key,out var value)&&value.Length>0?value:null;
     private static long? Long(IReadOnlyDictionary<string,string> values,string key)
         => values.TryGetValue(key,out var value)&&long.TryParse(value,out var parsed)?parsed:null;
+    private static long? MousePoints(IReadOnlyDictionary<string,string> values)
+    {
+        // mm_n is the number of gaps between mouse samples. Presence of the first
+        // coordinate proves at least one point; N gaps therefore means N+1 points.
+        if (!values.ContainsKey("mm_first_x")) return null;
+        return (Long(values,"mm_n") ?? 0) + 1;
+    }
     private static float? Finite(float? value)
         => value is { } v&&!float.IsNaN(v)&&!float.IsInfinity(v)?v:null;
     private static JsonNode? FeatureNode(FraudFeatureVector? value)

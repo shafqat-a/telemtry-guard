@@ -22,6 +22,33 @@ are retried with exponential backoff and eventually dead-lettered in SQL. Market
 protected health endpoint is checked every five minutes; a positive `lost` counter is
 logged as an error.
 
-MarketIQ receives no caller-supplied IP field because its API discards it. The payload
-includes TG session/device identity, attribution, behavioral counts, and the finalized
-fraud feature vector where values are available.
+The trusted relay sends the end visitor's IP with `X-Ingest-Relay-Key`, plus TG
+session/device identity, attribution, behavioral counts, and the finalized fraud
+feature vector where values are available. Live records carry
+`tg_export_mode: "live"`.
+
+## Behavioral signal semantics
+
+- Missing is never zero. Unknown/non-finite counters and durations must be omitted.
+- `mouse_events` is the number of mouse points (`mm_n + 1` when `mm_first_x`
+  exists), not the number of gaps between points.
+- `time_on_page_sec` is derived from the first page-view's navigation-relative
+  timestamp and the latest accepted beacon receive time. Client wall-clock time is
+  not trusted for this calculation.
+
+## Historical replay
+
+Historical replay payloads must carry `tg_export_mode: "historical_backfill"`.
+ClickHouse aggregate functions return a type-default zero when an `argMaxIf` has no
+matching row, so a backfill must explicitly guard every nullable behavioral value:
+
+```sql
+if(countIf(isFinite(mouse_event_count)) = 0, NULL,
+   argMaxIf(toNullable(mouse_event_count), timestamp,
+            isFinite(mouse_event_count))) AS mouse_events
+```
+
+Use the same `countIf(...)=0 -> NULL` rule for key, touch, scroll, dwell, and all
+other non-finite feature values. Remove null properties when constructing JSON; do
+not coalesce them to zero. Replays require a replacement/deduplication agreement
+with MarketIQ before already-delivered event IDs are sent again.

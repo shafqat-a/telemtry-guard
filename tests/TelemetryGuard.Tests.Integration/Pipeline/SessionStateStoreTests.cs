@@ -264,7 +264,7 @@ public sealed class SessionStateStoreTests : IClassFixture<SessionStateRedisFixt
         Assert.True(beacon.IntegrityOk);         // integrity_fails absent
         Assert.True(beacon.CookiesEnabled);      // record default
         Assert.Equal(1, beacon.PagesViewed);     // record default
-        Assert.Equal(0, beacon.SessionDurationMs); // nav_ts/last_beacon_ts not both present
+        Assert.True(double.IsNaN(beacon.SessionDurationMs)); // missing timing is unknown, not zero dwell
         Assert.Null(beacon.FormFirstFocusTMs);
         Assert.Null(beacon.FormSubmitTMs);
     }

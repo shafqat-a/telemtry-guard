@@ -56,7 +56,7 @@ public sealed record BeaconData
     public bool CookiesEnabled { get; init; } = true;
     public bool CanvasFpBlocked { get; init; }
     public double? StorageAgeSec { get; init; }          // age of our first-party cookie/localStorage stamp
-    public double SessionDurationMs { get; init; }       // last_beacon_ts − nav_ts (RSK-07 maps it)
+    public double SessionDurationMs { get; init; } = double.NaN; // last_beacon_ts − nav_ts; NaN = unavailable
     public int PagesViewed { get; init; } = 1;
 
     // Form telemetry (timing only):

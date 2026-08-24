@@ -260,6 +260,28 @@ public sealed class SessionAggregatorTests
         Assert.Equal("https://tenant.example/landing", hash["page_url"]);
     }
 
+    [Fact]
+    public void PageView_AnchorsNavigationToServerClock_AndFirstValueWins()
+    {
+        var hash = NewHash();
+
+        Apply(hash, Envelope("""[{"e":"pv","t":1250}]""", seq: 0));
+        Apply(hash, Envelope("""[{"e":"pv","t":9000}]""", seq: 1), nowMs: NowMs + 5000);
+
+        Assert.Equal((NowMs - 1250).ToString(), hash["nav_ts"]);
+        Assert.Equal("2", hash["n_pv"]);
+    }
+
+    [Fact]
+    public void PageView_WithImplausibleTimestamp_DoesNotFabricateNavigationTime()
+    {
+        var hash = NewHash();
+
+        Apply(hash, Envelope("""[{"e":"pv","t":999999999}]"""));
+
+        Assert.DoesNotContain("nav_ts", hash.Keys);
+    }
+
     // ----------------------------------------------------------- integrity --
 
     [Fact]
