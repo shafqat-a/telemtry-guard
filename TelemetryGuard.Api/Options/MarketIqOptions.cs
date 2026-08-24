@@ -10,5 +10,6 @@ public sealed class MarketIqOptions
     public int MaxParallelism { get; set; } = 10;
     public int MaxAttempts { get; set; } = 12;
     public int PollSeconds { get; set; } = 10;
-    public Dictionary<string,string> HealthTokens { get; set; } = new(StringComparer.Ordinal);
+    public Dictionary<string,string> RelayKeys { get; set; } = new(StringComparer.Ordinal);
+    public Dictionary<string,string> HealthKeys { get; set; } = new(StringComparer.Ordinal);
 }

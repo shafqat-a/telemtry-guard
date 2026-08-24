@@ -160,6 +160,15 @@ public sealed class VerdictFinalizer(
                 tenantId, retentionOptions.Value.DefaultDays);
         }
 
+        var retentionDays = (ushort)(policy?.Tenant.RetentionDays is > 0 and var configuredDays
+            ? configuredDays
+            : retentionOptions.Value.DefaultDays);
+        var band = policy is null
+            ? MapBand(result.Score, 30, 70)
+            : MapBand(result.Score, policy.AllowMax, policy.ChallengeMax);
+        var bandWire=BandWire(band);
+        var action=policy?.ObserveOnly == true ? VerdictBands.Allow : bandWire;
+
         // MarketIQ receives exactly one finalized record per visit. SQL enqueue is
         // idempotent on (tenant,site,event_id); Redis is only a wake-up signal.
         try
@@ -170,18 +179,13 @@ public sealed class VerdictFinalizer(
                 : clock.UtcNow.UtcDateTime;
             await marketIq.PublishVisitAsync(siteKey,visitId,canonicalSessionId,
                 occurredUtc,clickFields.GetValueOrDefault("ua"),clickFields,
-                sessionFields,outcome.Features,ct).ConfigureAwait(false);
+                sessionFields,outcome.Features,result,bandWire,action,outcome.ShadowScore,
+                outcome.ShadowScorerVersion,ct).ConfigureAwait(false);
         }
         catch(Exception ex)
         {
             logger.LogError(ex,"MarketIQ outbox enqueue failed for visit {VisitId}; finalization continues",visitId);
         }
-        var retentionDays = (ushort)(policy?.Tenant.RetentionDays is > 0 and var configuredDays
-            ? configuredDays
-            : retentionOptions.Value.DefaultDays);
-        var band = policy is null
-            ? MapBand(result.Score, 30, 70)
-            : MapBand(result.Score, policy.AllowMax, policy.ChallengeMax);
 
         // ---- Step 5: verdict event (D18/D20 stamps). Sink call is an enqueue only —
         // never await ClickHouse round trips on the finalize path (spec §4).
@@ -207,8 +211,8 @@ public sealed class VerdictFinalizer(
                 HasJsBeacon = hasJsBeacon,
                 GaStatus = gaStatus,
                 Score = result.Score,
-                Band = BandWire(band),
-                Action = policy?.ObserveOnly == true ? VerdictBands.Allow : BandWire(band),
+                Band = bandWire,
+                Action = action,
                 RuleHits = result.RuleHits,
                 ScorerVersion = result.ScorerVersion,
                 FeatureSetVersion = result.FeatureSetVersion,
@@ -341,5 +345,6 @@ file sealed class NullMarketIqPublisher : IMarketIqPublisher
     public static readonly NullMarketIqPublisher Instance=new();
     public Task PublishVisitAsync(string siteKey,string visitId,string sessionId,DateTime occurredUtc,
         string? userAgent,IReadOnlyDictionary<string,string> click,IReadOnlyDictionary<string,string> session,
-        FraudFeatureVector? features,CancellationToken ct)=>Task.CompletedTask;
+        FraudFeatureVector? features,ScoreResult result,string band,string action,int? shadowScore,
+        string? shadowScorerVersion,CancellationToken ct)=>Task.CompletedTask;
 }

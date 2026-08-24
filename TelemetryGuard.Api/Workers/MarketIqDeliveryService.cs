@@ -1,6 +1,5 @@
 using System.Diagnostics.Metrics;
 using System.Net;
-using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using Dapper;
@@ -81,8 +80,13 @@ public sealed class MarketIqDeliveryService(
         try
         {
             _=await WebhookDestinationValidator.ValidateAsync(item.DestinationUrl,ct);
+            if(string.IsNullOrEmpty(item.RelayKeyRef)
+                || !options.Value.RelayKeys.TryGetValue(item.RelayKeyRef,out var relayKey)
+                || string.IsNullOrWhiteSpace(relayKey))
+                throw new InvalidOperationException($"MarketIQ relay key ref '{item.RelayKeyRef}' is not configured.");
             using var request=new HttpRequestMessage(HttpMethod.Post,item.DestinationUrl)
             { Content=new StringContent(item.PayloadJson,Encoding.UTF8,"application/json") };
+            request.Headers.TryAddWithoutValidation("X-Ingest-Relay-Key",relayKey);
             using var response=await clients.CreateClient("marketiq").SendAsync(request,HttpCompletionOption.ResponseHeadersRead,ct);
             if(response.StatusCode!=HttpStatusCode.NoContent)
                 throw new HttpRequestException($"MarketIQ returned HTTP {(int)response.StatusCode}.");
@@ -107,10 +111,10 @@ public sealed class MarketIqDeliveryService(
             cancellationToken:ct));
         foreach(var site in sites)
         {
-            if(string.IsNullOrEmpty(site.TokenRef)||!options.Value.HealthTokens.TryGetValue(site.TokenRef,out var token))
-            { logger.LogWarning("MarketIQ health token {TokenRef} for {Domain} is not configured",site.TokenRef,site.Domain); continue; }
+            if(string.IsNullOrEmpty(site.TokenRef)||!options.Value.HealthKeys.TryGetValue(site.TokenRef,out var token))
+            { logger.LogWarning("MarketIQ health key {TokenRef} for {Domain} is not configured",site.TokenRef,site.Domain); continue; }
             using var request=new HttpRequestMessage(HttpMethod.Get,site.HealthUrl);
-            request.Headers.Authorization=new AuthenticationHeaderValue("Bearer",token);
+            request.Headers.TryAddWithoutValidation("X-Ingest-Health-Key",token);
             using var response=await clients.CreateClient("marketiq").SendAsync(request,HttpCompletionOption.ResponseHeadersRead,ct);
             if(!response.IsSuccessStatusCode)
             { logger.LogWarning("MarketIQ health for {Domain} returned HTTP {Status}",site.Domain,(int)response.StatusCode); continue; }

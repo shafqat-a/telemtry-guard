@@ -4,9 +4,9 @@ using TelemetryGuard.Core.Tenancy;
 namespace TelemetryGuard.Data.Repositories;
 
 public sealed record MarketIqOutboxInsert(Guid DeliveryId, string SiteKey, string EventId,
-    string DestinationUrl, string PayloadJson, DateTime CreatedUtc);
+    string DestinationUrl, string PayloadJson, string? RelayKeyRef, DateTime CreatedUtc);
 public sealed record MarketIqOutboxItem(Guid TenantId, Guid DeliveryId, string SiteKey,
-    string EventId, string DestinationUrl, string PayloadJson, int AttemptCount);
+    string EventId, string DestinationUrl, string PayloadJson, string? RelayKeyRef, int AttemptCount);
 
 public interface IMarketIqOutboxRepository
 {
@@ -30,13 +30,13 @@ internal sealed class MarketIqOutboxRepository(
                            WHERE TenantId=@TenantId AND SiteKey=@SiteKey AND EventId=@EventId)
             BEGIN
               INSERT dbo.MarketIqOutbox
-                (TenantId,DeliveryId,SiteKey,EventId,DestinationUrl,PayloadJson,NextAttemptUtc,CreatedUtc)
-              VALUES (@TenantId,@DeliveryId,@SiteKey,@EventId,@DestinationUrl,@PayloadJson,@CreatedUtc,@CreatedUtc);
+                (TenantId,DeliveryId,SiteKey,EventId,DestinationUrl,PayloadJson,RelayKeyRef,NextAttemptUtc,CreatedUtc)
+              VALUES (@TenantId,@DeliveryId,@SiteKey,@EventId,@DestinationUrl,@PayloadJson,@RelayKeyRef,@CreatedUtc,@CreatedUtc);
               SELECT 1;
             END
             ELSE SELECT 0;
             """, new { TenantId=tenant.TenantId.Value, item.DeliveryId, item.SiteKey, item.EventId,
-                item.DestinationUrl, item.PayloadJson, item.CreatedUtc }, cancellationToken:ct)) == 1;
+                item.DestinationUrl, item.PayloadJson, item.RelayKeyRef, item.CreatedUtc }, cancellationToken:ct)) == 1;
     }
 
     public async Task<IReadOnlyList<MarketIqOutboxItem>> ClaimDueAsync(int limit, DateTime nowUtc, CancellationToken ct)
@@ -46,7 +46,7 @@ internal sealed class MarketIqOutboxRepository(
             """
             UPDATE picked SET Status=1,AttemptCount=AttemptCount+1,NextAttemptUtc=DATEADD(minute,5,@NowUtc)
             OUTPUT inserted.TenantId,inserted.DeliveryId,inserted.SiteKey,inserted.EventId,
-                   inserted.DestinationUrl,inserted.PayloadJson,inserted.AttemptCount
+                   inserted.DestinationUrl,inserted.PayloadJson,inserted.RelayKeyRef,inserted.AttemptCount
             FROM (SELECT TOP (@Limit) * FROM dbo.MarketIqOutbox WITH (UPDLOCK,READPAST,ROWLOCK)
                   WHERE Status IN (0,1) AND NextAttemptUtc<=@NowUtc ORDER BY NextAttemptUtc) picked;
             """, new { Limit=limit,NowUtc=nowUtc }, cancellationToken:ct));

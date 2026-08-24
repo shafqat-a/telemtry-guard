@@ -6,12 +6,14 @@ TelemetryGuard publishes one finalized record per `visit_id`. SQL Server's
 messages if Redis is cleared or a notification is missed.
 
 Per-site settings live on `dbo.Sites`: `MarketIqEnabled`, `MarketIqCompanyId`,
-`MarketIqCollectUrl`, `MarketIqHealthUrl`, and `MarketIqHealthTokenRef`. Tokens never
+`MarketIqCollectUrl`, `MarketIqHealthUrl`, `MarketIqHealthTokenRef`, and
+`MarketIqRelayKeyRef`. Keys never
 belong in SQL or source control. Supply them through configuration using the token ref:
 
 ```text
 MarketIq__Enabled=true
-MarketIq__HealthTokens__<token-ref>=<bearer-token>
+MarketIq__RelayKeys__<key-ref>=<relay-key>
+MarketIq__HealthKeys__<key-ref>=<health-key>
 ```
 
 BU uses company ID `2`, token ref `miq_bu_edu_bd_telemetry_guard`, and the dedicated
