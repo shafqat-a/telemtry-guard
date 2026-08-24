@@ -18,7 +18,7 @@ public sealed class TenantConnectionFactory(ITenantContext tenant, IConfiguratio
             throw new InvalidOperationException(
                 "The SYSTEM sentinel may only be stamped via ISystemConnectionFactory.");
 
-        var conn = new SqlConnection(cfg.GetConnectionString("Main"));
+        var conn = new SqlConnection(SqlConnectionStrings.Main(cfg));
         try
         {
             await conn.OpenAsync(ct);

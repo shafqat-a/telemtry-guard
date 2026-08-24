@@ -97,8 +97,12 @@ public sealed class T1RuleEngine : IT1RuleEngine
             && !float.IsNaN(v.InputEventCount) && v.InputEventCount >= opt.LinearMousePathMinEvents)
             Hit(ref hits, ref floor, "linear_mouse_path", opt.LinearMousePathFloor);
 
-        if (!float.IsNaN(v.StdInterEventMs) && v.StdInterEventMs < opt.StdInterEventMsThreshold
-            && !float.IsNaN(v.InputEventCount) && v.InputEventCount >= opt.RoboticCadenceMinEvents)
+        // Rule 13 (robotic_cadence): gated on the gap count the σ was computed from and
+        // disabled by default — see RulesOptions for why the throttled SDK sampling makes
+        // the current measurement unreliable on high-refresh displays and privacy browsers.
+        if (opt.RoboticCadenceEnabled
+            && !float.IsNaN(v.StdInterEventMs) && v.StdInterEventMs < opt.StdInterEventMsThreshold
+            && !float.IsNaN(v.MouseMoveGaps) && v.MouseMoveGaps >= opt.RoboticCadenceMinGaps)
             Hit(ref hits, ref floor, "robotic_cadence", opt.RoboticCadenceFloor);
 
         if (v.ClickIdInvalid == true)

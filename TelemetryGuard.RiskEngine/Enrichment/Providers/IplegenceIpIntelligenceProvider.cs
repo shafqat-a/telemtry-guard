@@ -57,6 +57,7 @@ public sealed class IplegenceIpIntelligenceProvider : IIpIntelligenceProvider
     private readonly IpEnrichmentOptions _options;
     private readonly ILogger<IplegenceIpIntelligenceProvider> _logger;
     private readonly FrozenSet<long> _datacenterAsns;
+    private readonly FrozenSet<long> _cdnAsns;
     private readonly PrivateRelaySource _privateRelay;
 
     // Swapped atomically; read once per lookup via Volatile.Read.
@@ -70,6 +71,7 @@ public sealed class IplegenceIpIntelligenceProvider : IIpIntelligenceProvider
         _options = options.Value;
         _logger = logger;
         _datacenterAsns = AsnClassifier.LoadDatacenterAsnSeed();
+        _cdnAsns = AsnClassifier.LoadCdnAsnSeed();
         _privateRelay = new PrivateRelaySource(
             Path.Combine(_options.DataDir, _options.PrivateRelayCsv), logger);
         _handle = OpenDatabase();
@@ -113,7 +115,7 @@ public sealed class IplegenceIpIntelligenceProvider : IIpIntelligenceProvider
         var asnNumber = record.Asn?.Number;
         var usageType = Trimmed(traits.UsageType);
         var asnType = AsnClassifier.FromTraits(
-            usageType, traits.IsCdn, traits.IsHostingProvider, asnNumber, _datacenterAsns);
+            usageType, traits.IsCdn, traits.IsHostingProvider, asnNumber, _datacenterAsns, _cdnAsns);
 
         return new IpEnrichment
         {

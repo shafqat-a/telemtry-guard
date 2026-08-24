@@ -93,7 +93,7 @@ internal sealed class TenantRepository(ITenantConnectionFactory connections, ITe
             ChallengeMax = update.ChallengeMax,
             ObserveOnly = update.ObserveOnly,
             EnforcementMode = update.EnforcementMode,
-            ExternalAuthority = update.ExternalAuthority,
+            ExternalAuthority = update.ExternalAuthority ?? before.ExternalAuthority,
             PolicyUpdatedUtc = updatedUtc,
         };
         var jsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web);
@@ -118,7 +118,7 @@ internal sealed class TenantRepository(ITenantConnectionFactory connections, ITe
                 update.ChallengeMax,
                 update.ObserveOnly,
                 update.EnforcementMode,
-                update.ExternalAuthority,
+                after.ExternalAuthority,   // merged: null in the update = keep the stored value
                 PolicyUpdatedUtc = updatedUtc,
                 AuditId = Guid.NewGuid(),
                 ActorKeyHash = actorKeyHash,

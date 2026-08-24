@@ -33,6 +33,7 @@ public class NoBeaconPropagationTests
         Assert.True(float.IsNaN(vector.FormFillTimeSec));
         Assert.True(float.IsNaN(vector.StorageAgeZeroRepeat));
         Assert.True(float.IsNaN(vector.InputEventCount));
+        Assert.True(float.IsNaN(vector.MouseMoveGaps));
         Assert.True(float.IsNaN(vector.ScrollEvents));
         Assert.True(float.IsNaN(vector.PagesViewed));
 
@@ -47,6 +48,7 @@ public class NoBeaconPropagationTests
         Assert.Null(vector.CookiesDisabled);
         Assert.Null(vector.CanvasFpBlocked);
         Assert.Null(vector.PasteInIdentityFields);
+        Assert.Null(vector.ClockSkewBad);
         Assert.Null(vector.TimezoneIpMismatch); // beacon side missing
         Assert.Null(vector.InputModalityMismatch);
         Assert.Null(vector.FormSubmitted);

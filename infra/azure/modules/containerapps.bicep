@@ -43,7 +43,9 @@ var acrRegistry = {
 
 // Base Key-Vault-backed secrets: all five are created unconditionally by keyvault.bicep.
 var baseSecrets = [
-  { name: 'sql-connection-string', keyVaultUrl: '${keyVaultUri}secrets/sql-connection-string', identity: uamiId }
+  // 0013: the API holds the least-privilege connection strings only — never the admin one.
+  { name: 'sql-app-connection-string', keyVaultUrl: '${keyVaultUri}secrets/sql-app-connection-string', identity: uamiId }
+  { name: 'sql-system-connection-string', keyVaultUrl: '${keyVaultUri}secrets/sql-system-connection-string', identity: uamiId }
   { name: 'redis-connection-string', keyVaultUrl: '${keyVaultUri}secrets/redis-connection-string', identity: uamiId }
   { name: 'clickhouse-connection-string', keyVaultUrl: '${keyVaultUri}secrets/clickhouse-connection-string', identity: uamiId }
   { name: 'beacon-hmac-secret', keyVaultUrl: '${keyVaultUri}secrets/beacon-hmac-secret', identity: uamiId }
@@ -69,7 +71,8 @@ var baseEnv = [
   { name: 'OTEL_SERVICE_NAME', value: 'telemetry-guard-api' }
   { name: 'OTEL_EXPORTER_OTLP_ENDPOINT', value: 'http://localhost:4317' }
   { name: 'OTEL_EXPORTER_OTLP_PROTOCOL', value: 'grpc' }
-  { name: 'ConnectionStrings__Main', secretRef: 'sql-connection-string' }
+  { name: 'ConnectionStrings__Main', secretRef: 'sql-app-connection-string' }
+  { name: 'ConnectionStrings__System', secretRef: 'sql-system-connection-string' }
   { name: 'ConnectionStrings__Redis', secretRef: 'redis-connection-string' }
   { name: 'Analytics__Provider', value: 'ClickHouse' }
   { name: 'Analytics__ClickHouse__ConnectionString', secretRef: 'clickhouse-connection-string' }
@@ -272,6 +275,8 @@ resource migrateSqlJob 'Microsoft.App/jobs@2024-03-01' = {
       ]
       secrets: [
         { name: 'sql-connection-string', keyVaultUrl: '${keyVaultUri}secrets/sql-connection-string', identity: uamiId }
+        { name: 'sql-app-password', keyVaultUrl: '${keyVaultUri}secrets/sql-app-password', identity: uamiId }
+        { name: 'sql-system-password', keyVaultUrl: '${keyVaultUri}secrets/sql-system-password', identity: uamiId }
       ]
     }
     template: {
@@ -279,14 +284,19 @@ resource migrateSqlJob 'Microsoft.App/jobs@2024-03-01' = {
         {
           name: 'migrator'
           image: containerImage
-          command: [ 'dotnet' ]
-          args: [ '/app/migrator/TelemetryGuard.MigrationRunner.dll' ]
+          // Migrations, then the least-privilege users the API runs as (0013) — the
+          // only place the admin connection string is used. Same chain as
+          // docker-compose.app.yml's `migrate` service.
+          command: [ '/bin/sh', '-c' ]
+          args: [ 'dotnet /app/migrator/TelemetryGuard.MigrationRunner.dll && dotnet /app/migrator/TelemetryGuard.MigrationRunner.dll provision create-db-user --name tg_app --role tg_app --password-env TG_APP_DB_PASSWORD && dotnet /app/migrator/TelemetryGuard.MigrationRunner.dll provision create-db-user --name tg_system --role tg_system --password-env TG_SYSTEM_DB_PASSWORD' ]
           resources: {
             cpu: json('0.5')
             memory: '1Gi'
           }
           env: [
             { name: 'MIGRATIONS_CONNECTIONSTRING', secretRef: 'sql-connection-string' }
+            { name: 'TG_APP_DB_PASSWORD', secretRef: 'sql-app-password' }
+            { name: 'TG_SYSTEM_DB_PASSWORD', secretRef: 'sql-system-password' }
           ]
         }
       ]

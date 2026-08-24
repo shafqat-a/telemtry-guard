@@ -15,7 +15,9 @@ namespace TelemetryGuard.Tests.Integration.Sql;
 ///     would mask a broken BLOCK predicate);
 /// (c) an unstamped session sees ZERO rows in every RLS-protected table;
 /// (d) the SYSTEM sentinel session sees ALL tenants;
-/// (e) the resolution tables dbo.ApiKeys / dbo.Sites are RLS-exempt and readable unstamped.
+/// (e) the resolution tables dbo.ApiKeys / dbo.Sites have no FILTER predicate and are
+///     readable unstamped (their BLOCK predicate — 0013 — is proven in RlsPrincipalTests,
+///     together with the principal-bound sentinel and the structural coverage check).
 /// </summary>
 [Collection("sqlserver")]
 [Trait("Category", "Integration")]
@@ -50,7 +52,9 @@ public sealed class RlsProofTests(SqlServerFixture fx)
         foreach (var table in new[] { "dbo.Tenants", "dbo.Campaigns",
             "dbo.VerdictDailySummaries", "dbo.FlaggedSourcesDaily",
             "dbo.ExclusionQueue", "dbo.RollupWatermarks", "dbo.WhitelistEntries",
-            "dbo.PublisherDailySummaries", "dbo.SiteDailySummaries" })
+            "dbo.PublisherDailySummaries", "dbo.SiteDailySummaries",
+            "dbo.EnforcementAudit", "dbo.GoogleAdsPushedExclusions",
+            "dbo.TenantPolicyAudit", "dbo.LabelSubmissions", "dbo.WebhookOutbox" })
         {
             var n = await raw.ExecuteScalarAsync<int>($"SELECT COUNT(*) FROM {table}");
             Assert.Equal(0, n);

@@ -32,6 +32,7 @@ public sealed class MaxMindIpIntelligenceProvider : IIpIntelligenceProvider
     private readonly IpEnrichmentOptions _options;
     private readonly ILogger<MaxMindIpIntelligenceProvider> _logger;
     private readonly FrozenSet<long> _datacenterAsns;
+    private readonly FrozenSet<long> _cdnAsns;
     private readonly PrivateRelaySource _privateRelay;
 
     // Swapped atomically; read once per lookup via Volatile.Read. (The task sketch says
@@ -47,6 +48,7 @@ public sealed class MaxMindIpIntelligenceProvider : IIpIntelligenceProvider
         _options = options.Value;
         _logger = logger;
         _datacenterAsns = AsnClassifier.LoadDatacenterAsnSeed();
+        _cdnAsns = AsnClassifier.LoadCdnAsnSeed();
         _privateRelay = new PrivateRelaySource(
             Path.Combine(_options.DataDir, _options.PrivateRelayCsv), logger);
         _readers = LoadReaders();
@@ -120,14 +122,13 @@ public sealed class MaxMindIpIntelligenceProvider : IIpIntelligenceProvider
             }
         }
 
-        var asnType = AsnClassifier.FromUsageType(usageType, asnNumber, _datacenterAsns);
+        var asnType = AsnClassifier.FromUsageType(usageType, asnNumber, _datacenterAsns, _cdnAsns);
 
-        bool? isDatacenter;
-        if (usageType is null && asnNumber is null)
-            isDatacenter = null; // PX db missing AND ASN unavailable
-        else
-            isDatacenter = string.Equals(usageType, "DCH", StringComparison.Ordinal)
-                || (asnNumber is { } number && _datacenterAsns.Contains(number));
+        // Derived from the classification (same rule as the iplegence provider, D24) so
+        // the flag and the type can never disagree; null only when nothing was looked up.
+        bool? isDatacenter = usageType is null && asnNumber is null
+            ? null // PX db missing AND ASN unavailable
+            : asnType is AsnType.Datacenter or AsnType.Cdn;
 
         return new IpEnrichment
         {

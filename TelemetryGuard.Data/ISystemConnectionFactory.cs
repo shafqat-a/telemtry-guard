@@ -20,6 +20,11 @@ namespace TelemetryGuard.Data;
 /// </code>
 /// Alternative for reusing repositories in jobs: create a DI scope per tenant, set the
 /// scoped TenantContext (FND-04) to that tenant, resolve repositories inside the scope.
+///
+/// Opens <c>ConnectionStrings:System</c> (falling back to Main). Since 0013 the SYSTEM
+/// sentinel is only a bypass for members of the <c>tg_system</c> database role (or a
+/// db_owner): stamping it on the request-path login (<c>tg_app</c>) yields zero rows,
+/// so the System connection string must use a <c>tg_system</c> member.
 /// </summary>
 public interface ISystemConnectionFactory
 {
@@ -47,7 +52,7 @@ internal sealed class SystemConnectionFactory(IConfiguration cfg) : ISystemConne
 
     private async Task<SqlConnection> OpenStampedAsync(Guid tid, CancellationToken ct)
     {
-        var conn = new SqlConnection(cfg.GetConnectionString("Main"));
+        var conn = new SqlConnection(SqlConnectionStrings.System(cfg));
         try
         {
             await conn.OpenAsync(ct);

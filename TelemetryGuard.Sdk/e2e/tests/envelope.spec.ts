@@ -85,6 +85,37 @@ test('envelopes match the pinned wire contract', async ({ page, request }) => {
   expect(hasPv, 'first envelope must contain the pv event').toBe(true);
 });
 
+test('a tracked tg_sid is adopted as the visit id once; a reload gets a fresh visit', async ({
+  page,
+  request,
+}) => {
+  // The API-02 tracker mints tg_sid on its 302; the SDK adopts it for the landing
+  // visit so the click context and the first page share one identity.
+  const tracked = '0f1e2d3c-4b5a-4697-8877-665544332211';
+  await page.goto(`/fixtures/landing.html?tg_sid=${tracked}`);
+  const first = await pollCaptured(request, (c) => (c.length ? c[0] : undefined), {
+    what: 'tracked landing beacon',
+  });
+  expect(first.parsed.visit_id).toBe(tracked);
+  expect(first.parsed.session_id).toBe(tracked);
+  expect(first.parsed.seq).toBe(0);
+
+  // F5 on the same tagged URL: seq restarts at 0 on every document load, and the
+  // server scopes seq/nonce per visit — reusing the tracked id would make the whole
+  // reload read as a replay. The reload must mint a fresh visit under the same session.
+  await page.reload();
+  const both = await pollCaptured(
+    request,
+    (c) => (new Set(c.map((x) => x.parsed.visit_id)).size >= 2 ? c : undefined),
+    { what: 'reloaded visit beacon' }
+  );
+  const reloaded = both.filter((x) => x.parsed.visit_id !== tracked);
+  expect(reloaded.length).toBeGreaterThan(0);
+  expect(new Set(reloaded.map((x) => x.parsed.visit_id)).size).toBe(1);
+  expect(reloaded.every((x) => x.parsed.session_id === tracked)).toBe(true);
+  expect(reloaded.some((x) => x.parsed.seq === 0)).toBe(true);
+});
+
 test('two page loads keep one session and create distinct visits', async ({ page, request }) => {
   await page.goto('/fixtures/landing.html');
   const first = await pollCaptured(request, (c) => (c.length ? c[0] : undefined), {

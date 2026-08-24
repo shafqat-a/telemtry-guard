@@ -35,6 +35,7 @@
 
   <ItemGroup>
     <EmbeddedResource Include="Enrichment\Data\datacenter-asns.txt" LogicalName="TelemetryGuard.RiskEngine.Enrichment.Data.datacenter-asns.txt" />
+    <EmbeddedResource Include="Enrichment\Data\cdn-asns.txt" LogicalName="TelemetryGuard.RiskEngine.Enrichment.Data.cdn-asns.txt" />
     <EmbeddedResource Include="Enrichment\Data\apple-private-relay-seed.csv" LogicalName="TelemetryGuard.RiskEngine.Enrichment.Data.apple-private-relay-seed.csv" />
     <EmbeddedResource Include="Features\Data\tls-fingerprints.json" LogicalName="TelemetryGuard.RiskEngine.Features.Data.tls-fingerprints.json" />
     <EmbeddedResource Include="Features\Data\country-languages.json" LogicalName="TelemetryGuard.RiskEngine.Features.Data.country-languages.json" />

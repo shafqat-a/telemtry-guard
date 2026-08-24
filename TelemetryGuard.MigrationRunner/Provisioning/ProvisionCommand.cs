@@ -90,6 +90,16 @@ public static partial class ProvisionCommand
                         flags.GetValueOrDefault("site-key"));
                     return 0;
 
+                case "create-db-user":
+                    RequireFlags(flags,
+                        required: ["name", "role"],
+                        optional: ["password", "password-env"]);
+                    await CreateDbUserAsync(connectionString,
+                        flags["name"],
+                        flags["role"],
+                        ResolvePassword(flags));
+                    return 0;
+
                 case "create-campaign":
                     RequireFlags(flags,
                         required: ["tenant-id", "platform", "landing-url"],
@@ -121,6 +131,82 @@ public static partial class ProvisionCommand
             Console.Error.WriteLine($"Error: {ex.Message}");
             return 1;
         }
+    }
+
+    private static string ResolvePassword(Dictionary<string, string> flags)
+    {
+        if (flags.TryGetValue("password", out var literal)) return literal;
+        var variable = flags.GetValueOrDefault("password-env", "");
+        if (variable.Length == 0)
+            throw new ArgumentException("create-db-user needs --password <value> or --password-env <VARIABLE>.");
+        return Environment.GetEnvironmentVariable(variable)
+            ?? throw new ArgumentException($"Environment variable '{variable}' (--password-env) is not set.");
+    }
+
+    /// <summary>Allowed database roles for <c>create-db-user</c> (created by migration 0013).</summary>
+    public static readonly IReadOnlySet<string> DatabaseRoles =
+        new HashSet<string>(StringComparer.Ordinal) { "tg_app", "tg_system" };
+
+    [GeneratedRegex("^[A-Za-z_][A-Za-z0-9_]{0,63}$")]
+    private static partial Regex PrincipalName();
+
+    /// <summary>
+    /// Creates (or rotates the password of) a least-privilege database user and makes it
+    /// a member of <paramref name="role"/> — <c>tg_app</c> for the request path,
+    /// <c>tg_system</c> for background jobs (0013). Idempotent: an existing login/user
+    /// gets its password reset, an existing membership is left alone. On Azure SQL
+    /// Database (EngineEdition 5) a contained user is created; elsewhere a server login
+    /// plus a database user. Passwords never appear in migrations — this verb is the
+    /// only place they are applied, and the caller supplies them via environment.
+    /// </summary>
+    public static async Task CreateDbUserAsync(string connectionString, string name, string role,
+        string password, CancellationToken ct = default)
+    {
+        if (!PrincipalName().IsMatch(name))
+            throw new ArgumentException("name must match ^[A-Za-z_][A-Za-z0-9_]{0,63}$.", nameof(name));
+        if (!DatabaseRoles.Contains(role))
+            throw new ArgumentException($"role must be one of: {string.Join(", ", DatabaseRoles)}.", nameof(role));
+        if (string.IsNullOrWhiteSpace(password) || password.Length < 12)
+            throw new ArgumentException("password must be at least 12 characters.", nameof(password));
+
+        // Identifiers are regex-validated above; the password is a T-SQL string literal
+        // (CREATE LOGIN/USER cannot take a parameter), so only the quote needs escaping.
+        var q = "[" + name + "]";
+        var pw = "N'" + password.Replace("'", "''") + "'";
+
+        await using var conn = new SqlConnection(connectionString);
+        await conn.OpenAsync(ct);
+
+        var engineEdition = await conn.ExecuteScalarAsync<int>(
+            "SELECT CAST(SERVERPROPERTY('EngineEdition') AS int)");
+        var userExists = await conn.ExecuteScalarAsync<int>(
+            "SELECT COUNT(*) FROM sys.database_principals WHERE name = @name AND type IN ('S', 'U')",
+            new { name }) > 0;
+
+        if (engineEdition == 5)
+        {
+            // Azure SQL Database: contained database user with its own password.
+            await conn.ExecuteAsync(userExists
+                ? $"ALTER USER {q} WITH PASSWORD = {pw}"
+                : $"CREATE USER {q} WITH PASSWORD = {pw}");
+        }
+        else
+        {
+            var loginExists = await conn.ExecuteScalarAsync<int>(
+                "SELECT COUNT(*) FROM sys.sql_logins WHERE name = @name", new { name }) > 0;
+            await conn.ExecuteAsync(loginExists
+                ? $"ALTER LOGIN {q} WITH PASSWORD = {pw}"
+                : $"CREATE LOGIN {q} WITH PASSWORD = {pw}, CHECK_POLICY = ON");
+            if (!userExists)
+                await conn.ExecuteAsync($"CREATE USER {q} FOR LOGIN {q}");
+        }
+
+        var isMember = await conn.ExecuteScalarAsync<int?>(
+            "SELECT IS_ROLEMEMBER(@role, @name)", new { role, name }) == 1;
+        if (!isMember)
+            await conn.ExecuteAsync($"ALTER ROLE [{role}] ADD MEMBER {q}");
+
+        Console.WriteLine($"Database user {name}: member of {role} ({(userExists ? "password rotated" : "created")}).");
     }
 
     public static async Task<Guid> CreateTenantAsync(string connectionString, Guid? tenantId,
@@ -165,6 +251,13 @@ public static partial class ProvisionCommand
     {
         GuardRealTenantId(tenantId);
         if (string.IsNullOrWhiteSpace(scopes)) scopes = DefaultScopes;
+        var scopeTokens = scopes.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var unknown = scopeTokens.Where(s => !TelemetryGuard.Core.Tenancy.ApiKeyScopes.Known.Contains(s)).ToArray();
+        if (unknown.Length > 0)
+            throw new ArgumentException(
+                $"Unknown scope(s) [{string.Join(", ", unknown)}]; known: {string.Join(", ", TelemetryGuard.Core.Tenancy.ApiKeyScopes.Known)}.",
+                nameof(scopes));
+        scopes = string.Join(' ', scopeTokens);
         if (scopes.Length > 400)
             throw new ArgumentException("scopes is limited to 400 chars (space-separated).", nameof(scopes));
         var explicitKey = rawKey is not null;
@@ -373,5 +466,7 @@ public static partial class ProvisionCommand
           provision register-site   --tenant-id <guid> --domain <host> [--integration-mode js|pixel] [--site-key <{KeyGenerator.SiteKeyPrefix}...>]
           provision create-campaign --tenant-id <guid> --platform google|meta|tiktok|other --landing-url <url>
                                     [--external-id <string>] [--geo-targets '["US"]'] [--campaign-id <guid>]
+          provision create-db-user  --name <login> --role tg_app|tg_system (--password <value> | --password-env <VARIABLE>)
+                                    least-privilege SQL user for ConnectionStrings:Main (tg_app) / :System (tg_system); see 0013
         """);
 }

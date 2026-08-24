@@ -15,5 +15,11 @@ public interface ITenantContext
     /// when resolution happened via site key; null when resolved via API key.</summary>
     string? SiteKey { get; }
 
+    /// <summary>Scopes granted to the API key this request was resolved with
+    /// (<see cref="ApiKeyScopes"/>); empty for site-key resolutions and background
+    /// job scopes. Authorization on <c>/admin/*</c> is decided from this, never from
+    /// "a key of this tenant exists" (API-07).</summary>
+    IReadOnlyList<string> Scopes { get; }
+
     bool IsResolved { get; }
 }

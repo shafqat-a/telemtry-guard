@@ -12,6 +12,7 @@ using NSubstitute;
 using StackExchange.Redis;
 using TelemetryGuard.Analytics.Abstractions;
 using TelemetryGuard.Api.Services;
+using TelemetryGuard.Api.Options;
 using TelemetryGuard.Core.Tenancy;
 using TelemetryGuard.Core.Time;
 using TelemetryGuard.Data.Models;
@@ -323,6 +324,15 @@ public sealed class BeaconEndpointTests
         => $"{{\"k\":\"{k}\",\"sid\":\"{sid}\",\"seq\":{seq},\"nonce\":\"{nonce}\"," +
            $"\"sent_at\":{sentAt ?? NowMs},\"events\":{eventsJson}}}";
 
+    /// <summary>The shipped SDK envelope shape (3afde1a): session_id is the persistent
+    /// session, sid == visit_id is the per-document-load identity the server scopes the
+    /// aggregate hash, nonce and seq counter on.</summary>
+    private static string VisitEnvelope(
+        long seq, string eventsJson, string sessionId, string visitId, string nonce = "")
+        => $"{{\"k\":\"{SiteKey}\",\"session_id\":\"{sessionId}\",\"sid\":\"{visitId}\"," +
+           $"\"visit_id\":\"{visitId}\",\"seq\":{seq},\"nonce\":\"{nonce}\"," +
+           $"\"sent_at\":{NowMs},\"events\":{eventsJson}}}";
+
     private static HttpRequestMessage Post(
         string body, string contentType = "text/plain", string k = SiteKey,
         params (string Name, string Value)[] headers)
@@ -369,7 +379,7 @@ public sealed class BeaconEndpointTests
 
         // Nonce persisted under t:{tid}:nonce:{sid} with the configured TTL.
         Assert.Equal(nonce, app.Redis.Strings[$"t:{Tid}:nonce:{HexSid}"]);
-        Assert.Equal(TimeSpan.FromSeconds(900), app.Redis.StringTtls[$"t:{Tid}:nonce:{HexSid}"]);
+        Assert.Equal(TimeSpan.FromSeconds(1800), app.Redis.StringTtls[$"t:{Tid}:nonce:{HexSid}"]); // == SessionTtlSeconds by default
     }
 
     [Theory]
@@ -525,6 +535,65 @@ public sealed class BeaconEndpointTests
         await client.SendAsync(Post(Envelope(1, "[]", sentAt: app.Clock.UtcNow.ToUnixTimeMilliseconds())));
         Assert.Equal(FixedNow.AddSeconds(42).ToUnixTimeSeconds(),
             app.Redis.SortedSets[graceKey][HexSid]);
+    }
+
+    /// <summary>The page-2 regression: one browser session, two document loads. The
+    /// SDK restarts seq at 0 and fetches a fresh nonce on every load, so nonce and
+    /// last_seq MUST be scoped per visit — otherwise every multi-page visit reads as a
+    /// replayed, tampered beacon (integrity_fails → the beacon_integrity_failed T1
+    /// floor of 85) and its events are dropped.</summary>
+    [Fact]
+    public async Task Post_TwoVisitsOfOneSession_EachStartAtSeqZero_NeitherIsAReplay()
+    {
+        using var app = new BeaconApp();
+        using var client = app.Client();
+        const string sessionId = "9f8e7d6c5b4a39281706f5e4d3c2b1a0";
+        const string visit1 = "11111111-2222-4333-8444-555555555555";
+        const string visit2 = "66666666-7777-4888-9999-aaaaaaaaaaaa";
+        const string pv = """[{"e":"pv","t":1}]""";
+
+        async Task<string> InitAsync(string visitId)
+        {
+            var init = await client.GetAsync($"/i/init?k={SiteKey}&sid={visitId}");
+            return JsonSerializer.Deserialize<JsonElement>(await init.Content.ReadAsStringAsync())
+                .GetProperty("nonce").GetString()!;
+        }
+
+        // Visit 1 (landing page): init, then seq 0 and 1.
+        var nonce1 = await InitAsync(visit1);
+        await client.SendAsync(Post(VisitEnvelope(0, pv, sessionId, visit1, nonce1)));
+        await client.SendAsync(Post(VisitEnvelope(1, pv, sessionId, visit1, nonce1)));
+
+        // Visit 2 (next page in the same tab): a NEW init overwrites nothing of visit 1,
+        // and seq restarts at 0 without being a replay.
+        var nonce2 = await InitAsync(visit2);
+        Assert.NotEqual(nonce1, nonce2);
+        var second = await client.SendAsync(Post(VisitEnvelope(0, pv, sessionId, visit2, nonce2)));
+        Assert.Equal(HttpStatusCode.NoContent, second.StatusCode);
+
+        // Visit 1's late pagehide flush (racing visit 2's init) still verifies.
+        await client.SendAsync(Post(VisitEnvelope(2, pv, sessionId, visit1, nonce1)));
+
+        var h1 = app.Redis.SessionHash(visit1);
+        var h2 = app.Redis.SessionHash(visit2);
+        Assert.Equal("3", h1["n_pv"]);
+        Assert.Equal("2", h1["last_seq"]);
+        Assert.Equal("1", h2["n_pv"]);
+        Assert.Equal("0", h2["last_seq"]);
+        foreach (var h in new[] { h1, h2 })
+        {
+            Assert.Equal("1", h["nonce_ok"]);
+            Assert.DoesNotContain("seq_replays", h.Keys);
+            Assert.DoesNotContain("integrity_fails", h.Keys);
+        }
+
+        // The nonce lives at least as long as the visit's aggregate hash.
+        Assert.True(app.Redis.StringTtls[$"t:{Tid}:nonce:{visit1}"]
+            >= TimeSpan.FromSeconds(new BeaconOptions().SessionTtlSeconds));
+
+        // Journey linkage survives: both visits carry the canonical session id.
+        Assert.Equal(sessionId, app.Redis.Hashes[$"t:{Tid}:click:{visit1}"]["session_id"]);
+        Assert.Equal(sessionId, app.Redis.Hashes[$"t:{Tid}:click:{visit2}"]["session_id"]);
     }
 
     [Fact]

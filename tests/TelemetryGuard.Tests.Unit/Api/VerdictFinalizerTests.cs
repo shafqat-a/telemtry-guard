@@ -44,6 +44,7 @@ public sealed class VerdictFinalizerTests
         public TenantId TenantId => TestTenantId;
         public string? SiteKey => siteKey;
         public bool IsResolved => true;
+        public IReadOnlyList<string> Scopes => Array.Empty<string>();
     }
 
     private sealed class FakePipeline : IScoringPipeline

@@ -11,9 +11,16 @@ internal static class AsnClassifier
     internal const string DatacenterAsnResourceName =
         "TelemetryGuard.RiskEngine.Enrichment.Data.datacenter-asns.txt";
 
-    /// <summary>Maps IP2Proxy usage_type to AsnType, falling back to the embedded
-    /// datacenter ASN seed, then Unknown. Precedence per RSK-02 step 5.</summary>
-    internal static AsnType FromUsageType(string? usageType, long? asnNumber, FrozenSet<long> datacenterAsns)
+    /// <summary>Shared consumer-egress / CDN edge ASNs (Cloudflare WARP, Private Relay
+    /// partners, Google One VPN). Seeded as <see cref="AsnType.Cdn"/>, never Datacenter,
+    /// so real visitors behind them do not hit the ip_datacenter_paid T1 rule.</summary>
+    internal const string CdnAsnResourceName =
+        "TelemetryGuard.RiskEngine.Enrichment.Data.cdn-asns.txt";
+
+    /// <summary>Maps IP2Proxy usage_type to AsnType, falling back to the embedded CDN seed,
+    /// then the datacenter ASN seed, then Unknown. Precedence per RSK-02 step 5.</summary>
+    internal static AsnType FromUsageType(string? usageType, long? asnNumber, FrozenSet<long> datacenterAsns,
+        FrozenSet<long>? cdnAsns = null)
     {
         if (usageType is not null)
         {
@@ -33,7 +40,7 @@ internal static class AsnClassifier
             }
         }
 
-        return FromSeed(asnNumber, datacenterAsns);
+        return FromSeed(asnNumber, datacenterAsns, cdnAsns);
     }
 
     /// <summary>Maps iplegence traits to AsnType.
@@ -50,7 +57,8 @@ internal static class AsnClassifier
     /// CDN outranks Datacenter for the same address because most CDN ASNs are also
     /// hosting ASNs and the edge classification is the useful one.</summary>
     internal static AsnType FromTraits(
-        string? usageType, bool isCdn, bool isHostingProvider, long? asnNumber, FrozenSet<long> datacenterAsns)
+        string? usageType, bool isCdn, bool isHostingProvider, long? asnNumber, FrozenSet<long> datacenterAsns,
+        FrozenSet<long>? cdnAsns = null)
     {
         switch (usageType)
         {
@@ -68,18 +76,29 @@ internal static class AsnClassifier
         if (isHostingProvider)
             return AsnType.Datacenter;
 
-        return FromSeed(asnNumber, datacenterAsns);
+        return FromSeed(asnNumber, datacenterAsns, cdnAsns);
     }
 
-    private static AsnType FromSeed(long? asnNumber, FrozenSet<long> datacenterAsns) =>
-        asnNumber is { } number && datacenterAsns.Contains(number) ? AsnType.Datacenter : AsnType.Unknown;
+    /// <summary>The weakest signal we hold: CDN seed first (consumer egress), then the
+    /// datacenter seed, else Unknown — never guessed.</summary>
+    private static AsnType FromSeed(long? asnNumber, FrozenSet<long> datacenterAsns, FrozenSet<long>? cdnAsns)
+    {
+        if (asnNumber is not { } number) return AsnType.Unknown;
+        if (cdnAsns is not null && cdnAsns.Contains(number)) return AsnType.Cdn;
+        return datacenterAsns.Contains(number) ? AsnType.Datacenter : AsnType.Unknown;
+    }
 
     /// <summary>Reads the embedded seed list of well-known datacenter/cloud ASNs.</summary>
-    internal static FrozenSet<long> LoadDatacenterAsnSeed()
+    internal static FrozenSet<long> LoadDatacenterAsnSeed() => LoadSeed(DatacenterAsnResourceName);
+
+    /// <summary>Reads the embedded seed list of shared consumer-egress / CDN ASNs.</summary>
+    internal static FrozenSet<long> LoadCdnAsnSeed() => LoadSeed(CdnAsnResourceName);
+
+    private static FrozenSet<long> LoadSeed(string resourceName)
     {
-        using var stream = typeof(AsnClassifier).Assembly.GetManifestResourceStream(DatacenterAsnResourceName)
+        using var stream = typeof(AsnClassifier).Assembly.GetManifestResourceStream(resourceName)
             ?? throw new InvalidOperationException(
-                $"Embedded resource '{DatacenterAsnResourceName}' is missing from the assembly.");
+                $"Embedded resource '{resourceName}' is missing from the assembly.");
         using var reader = new StreamReader(stream);
 
         var asns = new HashSet<long>();

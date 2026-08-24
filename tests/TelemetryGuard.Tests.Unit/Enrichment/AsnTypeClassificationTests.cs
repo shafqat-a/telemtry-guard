@@ -22,13 +22,36 @@ public class AsnTypeClassificationTests
     public void Usage_type_maps_to_expected_asn_type(string usageType, AsnType expected) =>
         Assert.Equal(expected, AsnClassifier.FromUsageType(usageType, asnNumber: null, Seed));
 
+    private static readonly FrozenSet<long> CdnSeed = AsnClassifier.LoadCdnAsnSeed();
+
     [Theory]
     [InlineData(24940)]  // Hetzner
     [InlineData(16509)]  // Amazon AWS
-    [InlineData(13335)]  // Cloudflare
+    [InlineData(14061)]  // DigitalOcean
     [InlineData(20473)]  // Vultr
     public void Seed_asn_with_no_px_db_classifies_as_datacenter(long asn) =>
-        Assert.Equal(AsnType.Datacenter, AsnClassifier.FromUsageType(usageType: null, asn, Seed));
+        Assert.Equal(AsnType.Datacenter, AsnClassifier.FromUsageType(usageType: null, asn, Seed, CdnSeed));
+
+    [Theory]
+    [InlineData(13335)]  // Cloudflare — WARP, Private Relay egress
+    [InlineData(54113)]  // Fastly — Private Relay egress
+    [InlineData(15169)]  // Google — Google One VPN
+    public void Consumer_egress_asns_classify_as_cdn_never_datacenter(long asn)
+    {
+        // Typed Datacenter, these put every WARP / Private Relay / Google One VPN visitor
+        // into the ip_datacenter_paid T1 rule on every paid click.
+        Assert.Equal(AsnType.Cdn, AsnClassifier.FromUsageType(usageType: null, asn, Seed, CdnSeed));
+        Assert.Equal(AsnType.Cdn,
+            AsnClassifier.FromTraits(usageType: null, isCdn: false, isHostingProvider: false, asn, Seed, CdnSeed));
+        // …and they are no longer in the datacenter seed at all.
+        Assert.Equal(AsnType.Unknown, AsnClassifier.FromUsageType(usageType: null, asn, Seed));
+    }
+
+    [Fact]
+    public void Dataset_signal_still_outranks_the_cdn_seed() =>
+        // A prefix the dataset itself types as hosting on a CDN ASN stays what the data says.
+        Assert.Equal(AsnType.Datacenter,
+            AsnClassifier.FromTraits("hosting", isCdn: false, isHostingProvider: false, 13335, Seed, CdnSeed));
 
     [Theory]
     [InlineData("SES")]
@@ -114,13 +137,22 @@ public class AsnTypeClassificationTests
     [Fact]
     public void Embedded_seed_list_contains_every_documented_asn()
     {
+        // Hosting/cloud only — consumer-egress ASNs moved to cdn-asns.txt.
         long[] documented =
         [
-            16509, 14618, 8075, 15169, 396982, 14061, 16276, 24940,
-            63949, 20473, 51167, 45102, 132203, 13335, 54113,
+            16509, 14618, 8075, 396982, 14061, 16276, 24940,
+            63949, 20473, 51167, 45102, 132203,
         ];
         foreach (var asn in documented)
             Assert.True(Seed.Contains(asn), $"seed list is missing ASN {asn}");
         Assert.Equal(documented.Length, Seed.Count);
+
+        long[] documentedCdn = [13335, 54113, 15169];
+        foreach (var asn in documentedCdn)
+        {
+            Assert.True(CdnSeed.Contains(asn), $"cdn seed list is missing ASN {asn}");
+            Assert.False(Seed.Contains(asn), $"ASN {asn} must not be in BOTH seed lists");
+        }
+        Assert.Equal(documentedCdn.Length, CdnSeed.Count);
     }
 }

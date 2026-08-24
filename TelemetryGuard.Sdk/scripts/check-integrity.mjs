@@ -26,18 +26,30 @@ const fail = (m) => {
 };
 
 // Fixture deliberately uses nonce: '' so the init-failed shape is covered too.
+// Shape mirrors the shipped envelope: session_id (persistent session), sid (= visit id,
+// the key the server scopes nonce/seq on) and visit_id, then seq/nonce/sent_at, then
+// the SDK-09 page context (u/r/ck), then events.
 const p = seal({
   k: 'k1',
-  sid: 'a'.repeat(32),
+  session_id: 'b'.repeat(32),
+  sid: '11111111-2222-4333-8444-555555555555',
+  visit_id: '11111111-2222-4333-8444-555555555555',
   seq: 0,
   nonce: '',
   sent_at: 1723400001234,
+  u: 'https://example.test/landing?x=1',
+  r: '',
+  ck: { _ga: 'GA1.1.1' },
   events: [{ e: 'pv', t: 12 }],
 });
 
 // (a) final key is c with exactly 8 lowercase hex chars; canonical key order preserved.
 if (!/,"c":"[0-9a-f]{8}"\}$/.test(p)) fail('final key is not c:<8 lowercase hex>');
-if (!/^\{"k":"k1","sid":"a{32}","seq":0,"nonce":"","sent_at":1723400001234,"events":/.test(p))
+if (
+  !/^\{"k":"k1","session_id":"b{32}","sid":"11111111-2222-4333-8444-555555555555","visit_id":"11111111-2222-4333-8444-555555555555","seq":0,"nonce":"","sent_at":1723400001234,"u":"https:\/\/example\.test\/landing\?x=1","r":"","ck":\{"_ga":"GA1\.1\.1"\},"events":/.test(
+    p
+  )
+)
   fail('canonical key order violated');
 // (b) recomputing FNV-1a over the payload minus the c field reproduces the embedded value.
 const i = p.lastIndexOf(',"c":"');

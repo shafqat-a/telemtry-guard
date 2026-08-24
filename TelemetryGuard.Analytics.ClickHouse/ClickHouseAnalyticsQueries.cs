@@ -407,6 +407,128 @@ public sealed class ClickHouseAnalyticsQueries(
         return new VerdictEvidencePage(rows, more);
     }
 
+    public async Task<DomainTrafficPage> GetDomainTrafficPageAsync(
+        string host, int page, int pageSize, bool botsOnly, CancellationToken ct)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(host);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(page);
+        ArgumentOutOfRangeException.ThrowIfLessThan(pageSize, 1);
+
+        var prefix = $"https://{host.Trim().TrimEnd('/').ToLowerInvariant()}";
+        var offset = checked((page - 1) * pageSize);
+        await using var conn = new ClickHouseConnection(_cs);
+        await conn.OpenAsync(ct);
+
+        const string sessionScope =
+            "session_id IN (SELECT session_id FROM tg_events WHERE tenant_id = {tenantId:UUID} " +
+            "AND kind = 'beacon' AND startsWith(ifNull(referrer, ''), {prefix:String}))";
+
+        await using var stats = conn.CreateCommand();
+        stats.CommandText =
+            "SELECT count() total_sessions, sum(event_count) total_events, " +
+            "countIf(bot_source != '') bot_sessions, countIf(band = 'allow') allowed, " +
+            "countIf(band = 'challenge') challenged, countIf(band = 'block') blocked FROM (" +
+            "SELECT session_id, count() event_count, argMaxIf(ifNull(band, ''), timestamp, kind = 'verdict') band, " +
+            "multiIf(max(ifNull(headless_browser, 0)) = 1, 'Headless browser', " +
+            "max(ifNull(webdriver_flag, 0)) = 1, 'WebDriver', " +
+            "max(ifNull(honeypot_touched, 0)) = 1, 'Honeypot automation', " +
+            "arrayExists(x -> positionCaseInsensitive(x, 'headless') > 0, argMaxIf(rule_hits, timestamp, kind = 'verdict')), 'Headless browser', " +
+            "arrayExists(x -> positionCaseInsensitive(x, 'webdriver') > 0, argMaxIf(rule_hits, timestamp, kind = 'verdict')), 'WebDriver', " +
+            "arrayExists(x -> positionCaseInsensitive(x, 'honeypot') > 0, argMaxIf(rule_hits, timestamp, kind = 'verdict')), 'Honeypot automation', " +
+            "arrayExists(x -> positionCaseInsensitive(x, 'bot') > 0 OR positionCaseInsensitive(x, 'automation') > 0, argMaxIf(rule_hits, timestamp, kind = 'verdict')), 'Bot rule', '') bot_source " +
+            $"FROM tg_events WHERE tenant_id = {{tenantId:UUID}} AND {sessionScope} GROUP BY session_id)";
+        stats.AddParameter("tenantId", tenant.TenantId.Value);
+        stats.AddParameter("prefix", prefix);
+
+        long totalSessions, totalEvents, botSessions, allowed, challenged, blocked;
+        await using (var r = await stats.ExecuteReaderAsync(ct))
+        {
+            await r.ReadAsync(ct);
+            totalSessions = Convert.ToInt64(r["total_sessions"]);
+            totalEvents = Convert.ToInt64(r["total_events"]);
+            botSessions = Convert.ToInt64(r["bot_sessions"]);
+            allowed = Convert.ToInt64(r["allowed"]);
+            challenged = Convert.ToInt64(r["challenged"]);
+            blocked = Convert.ToInt64(r["blocked"]);
+        }
+
+        await using var sourceCmd = conn.CreateCommand();
+        sourceCmd.CommandText =
+            "SELECT bot_source, count() total FROM (SELECT session_id, " +
+            "multiIf(max(ifNull(headless_browser, 0)) = 1, 'Headless browser', " +
+            "max(ifNull(webdriver_flag, 0)) = 1, 'WebDriver', " +
+            "max(ifNull(honeypot_touched, 0)) = 1, 'Honeypot automation', " +
+            "arrayExists(x -> positionCaseInsensitive(x, 'headless') > 0, argMaxIf(rule_hits, timestamp, kind = 'verdict')), 'Headless browser', " +
+            "arrayExists(x -> positionCaseInsensitive(x, 'webdriver') > 0, argMaxIf(rule_hits, timestamp, kind = 'verdict')), 'WebDriver', " +
+            "arrayExists(x -> positionCaseInsensitive(x, 'honeypot') > 0, argMaxIf(rule_hits, timestamp, kind = 'verdict')), 'Honeypot automation', " +
+            "arrayExists(x -> positionCaseInsensitive(x, 'bot') > 0 OR positionCaseInsensitive(x, 'automation') > 0, argMaxIf(rule_hits, timestamp, kind = 'verdict')), 'Bot rule', '') bot_source " +
+            $"FROM tg_events WHERE tenant_id = {{tenantId:UUID}} AND {sessionScope} GROUP BY session_id) " +
+            "WHERE bot_source != '' GROUP BY bot_source ORDER BY total DESC";
+        sourceCmd.AddParameter("tenantId", tenant.TenantId.Value);
+        sourceCmd.AddParameter("prefix", prefix);
+        var botSources = new List<DomainBotSource>();
+        await using (var r = await sourceCmd.ExecuteReaderAsync(ct))
+        {
+            while (await r.ReadAsync(ct))
+                botSources.Add(new DomainBotSource(
+                    Convert.ToString(r["bot_source"]) ?? "Unknown bot",
+                    Convert.ToInt64(r["total"])));
+        }
+
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText =
+            "SELECT session_id, argMinIf(ifNull(referrer, ''), timestamp, kind = 'beacon' " +
+            "AND startsWith(ifNull(referrer, ''), {prefix:String})) page_url, min(timestamp) first_seen, " +
+            "max(timestamp) last_seen, argMax(IPv6NumToString(ip), timestamp) ip, " +
+            "argMax(user_agent, timestamp) user_agent, argMax(country, timestamp) country, " +
+            "argMax(asn_org, timestamp) asn_org, arrayDistinct(arrayFlatten(groupArray(header_names))) header_names, " +
+            "max(ifNull(webdriver_flag, 0)) webdriver, max(ifNull(headless_browser, 0)) headless, " +
+            "max(ifNull(honeypot_touched, 0)) honeypot, argMaxIf(score, timestamp, kind = 'verdict') score, " +
+            "argMaxIf(band, timestamp, kind = 'verdict') band, argMaxIf(action, timestamp, kind = 'verdict') action, " +
+            "argMaxIf(rule_hits, timestamp, kind = 'verdict') rule_hits, " +
+            "multiIf(headless = 1, 'Headless browser', webdriver = 1, 'WebDriver', honeypot = 1, 'Honeypot automation', " +
+            "arrayExists(x -> positionCaseInsensitive(x, 'headless') > 0, rule_hits), 'Headless browser', " +
+            "arrayExists(x -> positionCaseInsensitive(x, 'webdriver') > 0, rule_hits), 'WebDriver', " +
+            "arrayExists(x -> positionCaseInsensitive(x, 'honeypot') > 0, rule_hits), 'Honeypot automation', " +
+            "arrayExists(x -> positionCaseInsensitive(x, 'bot') > 0 OR positionCaseInsensitive(x, 'automation') > 0, rule_hits), 'Bot rule', '') bot_source FROM tg_events " +
+            $"WHERE tenant_id = {{tenantId:UUID}} AND {sessionScope} GROUP BY session_id " +
+            "HAVING {botsOnly:UInt8} = 0 OR bot_source != '' " +
+            "ORDER BY last_seen DESC LIMIT {take:Int32} OFFSET {skip:Int32}";
+        cmd.AddParameter("tenantId", tenant.TenantId.Value);
+        cmd.AddParameter("prefix", prefix);
+        cmd.AddParameter("take", pageSize);
+        cmd.AddParameter("skip", offset);
+        cmd.AddParameter("botsOnly", botsOnly ? (byte)1 : (byte)0);
+
+        var rows = new List<DomainTrafficSession>();
+        await using (var r = await cmd.ExecuteReaderAsync(ct))
+        {
+            while (await r.ReadAsync(ct))
+            {
+                rows.Add(new DomainTrafficSession(
+                    Convert.ToString(r["session_id"]) ?? "",
+                    Convert.ToString(r["page_url"]) ?? "",
+                    AsUtc(r["first_seen"]), AsUtc(r["last_seen"]),
+                    Convert.ToString(r["ip"]) ?? "",
+                    r["user_agent"] is DBNull ? null : Convert.ToString(r["user_agent"]),
+                    r["country"] is DBNull ? null : Convert.ToString(r["country"]),
+                    r["asn_org"] is DBNull ? null : Convert.ToString(r["asn_org"]),
+                    ParseStringArray(r["header_names"]),
+                    Convert.ToInt32(r["webdriver"]) == 1,
+                    Convert.ToInt32(r["headless"]) == 1,
+                    Convert.ToInt32(r["honeypot"]) == 1,
+                    r["score"] is DBNull ? null : Convert.ToInt32(r["score"]),
+                    r["band"] is DBNull ? null : Convert.ToString(r["band"]),
+                    r["action"] is DBNull ? null : Convert.ToString(r["action"]),
+                    ParseRuleHits(r["rule_hits"]),
+                    Convert.ToString(r["bot_source"]) ?? ""));
+            }
+        }
+
+        return new DomainTrafficPage(host, totalSessions, totalEvents, botSessions,
+            allowed, challenged, blocked, botSources, page, pageSize, rows);
+    }
+
     private const string VerdictSelect =
         "SELECT timestamp, session_id, score, band, action, rule_hits, scorer_version, " +
         "feature_set_version, shadow_score, shadow_scorer_version, features FROM tg_events";
@@ -432,6 +554,9 @@ public sealed class ClickHouseAnalyticsQueries(
         try { return System.Text.Json.JsonSerializer.Deserialize<string[]>(text) ?? []; }
         catch (System.Text.Json.JsonException) { return []; }
     }
+
+    private static IReadOnlyList<string> ParseStringArray(object value)
+        => value is IEnumerable<string> values ? values.ToArray() : [];
 
     /// <summary>IPv4 inputs must compare equal to stored IPv4-mapped IPv6 values —
     /// same normalization as the ANA-03 writer.</summary>

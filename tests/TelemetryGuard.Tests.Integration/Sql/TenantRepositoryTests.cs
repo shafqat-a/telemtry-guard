@@ -52,6 +52,30 @@ public sealed class TenantRepositoryTests(SqlServerFixture fx)
     }
 
     [Fact]
+    public async Task UpdatePolicyAsync_null_ExternalAuthority_leaves_the_stored_value_alone()
+    {
+        // REQ-07 regression: a partial policy PUT that omits externalAuthority used to
+        // reset it to false, silently handing enforcement ownership back to the tenant.
+        await using var provider = RepositoryFactory.BuildServices(fx, SqlServerFixture.TenantB);
+        using var scope = provider.CreateScope();
+        var repo = scope.ServiceProvider.GetRequiredService<ITenantRepository>();
+
+        var granted = await repo.UpdatePolicyAsync(
+            new TenantPolicyUpdate(null, null, null, 0, ExternalAuthority: true), null, CancellationToken.None);
+        Assert.True(granted!.ExternalAuthority);
+
+        var partial = await repo.UpdatePolicyAsync(
+            new TenantPolicyUpdate(20, 60, true, 1, ExternalAuthority: null), null, CancellationToken.None);
+        Assert.True(partial!.ExternalAuthority);           // untouched
+        Assert.Equal((byte)20, partial.AllowMax);
+        Assert.Equal((byte)1, partial.EnforcementMode);
+
+        var revoked = await repo.UpdatePolicyAsync(
+            new TenantPolicyUpdate(null, null, null, 0, ExternalAuthority: false), null, CancellationToken.None);
+        Assert.False(revoked!.ExternalAuthority);
+    }
+
+    [Fact]
     public async Task UpdateRetentionDaysAsync_rejects_out_of_range()
     {
         await using var provider = RepositoryFactory.BuildServices(fx, SqlServerFixture.TenantA);

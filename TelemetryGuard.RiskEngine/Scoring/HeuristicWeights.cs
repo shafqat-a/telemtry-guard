@@ -48,6 +48,7 @@ public sealed class HeuristicWeights
                                                             // (backlog, suggested P2-06) exists.
     public double PasteInIdentityFields { get; set; } = 2;
     public double ReferrerMissing { get; set; } = 2;
+    public double ClockSkewBad { get; set; } = 2;           // sent_at far from receive time; ordinary on bad clocks
     public double T3TotalCap { get; set; } = 15;            // hard cap on the summed T3 block
 
     // --- Negative evidence (subtracted; clamp keeps score >= 0) ---

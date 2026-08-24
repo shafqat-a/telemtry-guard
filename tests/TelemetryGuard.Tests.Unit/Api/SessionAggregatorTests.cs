@@ -329,10 +329,26 @@ public sealed class SessionAggregatorTests
 
         Assert.Equal("1", hash["skew_bad"]);
         Assert.Equal("200000", hash["skew_max_ms"]);
-        Assert.Equal("1", hash["integrity_fails"]);
+        // A wrong device clock is its own T3 signal (ClockSkewBad), NEVER an integrity
+        // failure: integrity_fails feeds the beacon_integrity_failed T1 floor of 85.
+        Assert.DoesNotContain("integrity_fails", hash.Keys);
 
         Apply(hash, Envelope("[]", seq: 1, sentAt: NowMs - 50));
         Assert.Equal("200000", hash["skew_max_ms"]);   // max survives a clean POST
+        Assert.Equal("1", hash["skew_bad"]);           // sticky once tripped
+        Assert.DoesNotContain("integrity_fails", hash.Keys);
+    }
+
+    [Fact]
+    public void Skew_WithinBounds_LeavesSkewBadAbsent_AndNoIntegrityFailure()
+    {
+        var hash = NewHash();
+
+        Apply(hash, Envelope("[]", seq: 0, sentAt: NowMs - 50));
+
+        Assert.DoesNotContain("skew_bad", hash.Keys);   // missing ≠ zero: absent = never tripped
+        Assert.Equal("50", hash["skew_max_ms"]);
+        Assert.DoesNotContain("integrity_fails", hash.Keys);
     }
 
     [Fact]

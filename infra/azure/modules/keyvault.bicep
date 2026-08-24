@@ -13,6 +13,12 @@ param sqlServerFqdn string
 param sqlAdminLogin string
 @secure()
 param sqlAdminPassword string
+param sqlAppLogin string
+@secure()
+param sqlAppPassword string
+param sqlSystemLogin string
+@secure()
+param sqlSystemPassword string
 param databaseName string
 
 param redisHostName string
@@ -60,12 +66,43 @@ resource secretsUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   }
 }
 
+// Admin (db_owner) connection: the SQL migration job only.
 resource sqlConnectionString 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
   parent: vault
   name: 'sql-connection-string'
   properties: {
-    value: 'Server=tcp:${sqlServerFqdn},1433;Initial Catalog=${databaseName};User ID=${sqlAdminLogin};Password=${sqlAdminPassword};Encrypt=True;TrustServerCertificate=False;Connection Timeout=30;'
+    value: 'Server=tcp:${sqlServerFqdn},1433;Initial Catalog=${databaseName};User ID=${sqlAdminLogin};Password=${sqlAdminPassword};Encrypt=True;TrustServerCertificate=False;Connection Timeout=30;Application Name=TelemetryGuard.MigrationRunner;'
   }
+}
+
+// 0013: request path (tg_app) and background jobs (tg_system). The users are created
+// by the migration job from the passwords below; the API never holds the admin login.
+resource sqlAppConnectionString 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
+  parent: vault
+  name: 'sql-app-connection-string'
+  properties: {
+    value: 'Server=tcp:${sqlServerFqdn},1433;Initial Catalog=${databaseName};User ID=${sqlAppLogin};Password=${sqlAppPassword};Encrypt=True;TrustServerCertificate=False;Connection Timeout=30;Application Name=TelemetryGuard.Api;'
+  }
+}
+
+resource sqlSystemConnectionString 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
+  parent: vault
+  name: 'sql-system-connection-string'
+  properties: {
+    value: 'Server=tcp:${sqlServerFqdn},1433;Initial Catalog=${databaseName};User ID=${sqlSystemLogin};Password=${sqlSystemPassword};Encrypt=True;TrustServerCertificate=False;Connection Timeout=30;Application Name=TelemetryGuard.Api;'
+  }
+}
+
+resource sqlAppPasswordSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
+  parent: vault
+  name: 'sql-app-password'
+  properties: { value: sqlAppPassword }
+}
+
+resource sqlSystemPasswordSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
+  parent: vault
+  name: 'sql-system-password'
+  properties: { value: sqlSystemPassword }
 }
 
 resource redisConnectionString 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {

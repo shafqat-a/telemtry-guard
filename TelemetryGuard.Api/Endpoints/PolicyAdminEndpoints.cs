@@ -79,12 +79,15 @@ public static class PolicyAdminEndpoints
             ? SHA256.HashData(Encoding.UTF8.GetBytes(values.ToString()))
             : null;
 
+    /// <summary>ExternalAuthority is nullable on purpose: a PUT that omits it leaves the
+    /// current value alone. A non-nullable bool made every partial update silently hand
+    /// enforcement ownership back to the tenant (default false).</summary>
     private sealed record PolicyPutRequest(
         int? AllowMax,
         int? ChallengeMax,
         bool? ObserveOnly,
         string? EnforcementMode,
-        bool ExternalAuthority);
+        bool? ExternalAuthority);
 
     private sealed record PolicyResponse(
         int AllowMax,

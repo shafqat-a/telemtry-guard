@@ -7,8 +7,15 @@
 - `GO` batch separators are supported (required around CREATE SCHEMA / CREATE FUNCTION).
 - RLS RULE (see DAT-03): every migration that creates a new tenant-scoped table MUST
   `ALTER SECURITY POLICY rls.TenantIsolationPolicy` to add FILTER + BLOCK predicates for
-  that table in the same migration. Only the resolution tables (dbo.ApiKeys, dbo.Sites)
-  are exempt.
+  that table in the same migration. The resolution tables (dbo.ApiKeys, dbo.Sites) carry
+  a BLOCK predicate only (0013). `tests/…/Sql/RlsPrincipalTests.cs` asserts this
+  structurally against `sys.security_predicates` — a table with a `TenantId` column and
+  no predicates fails the integration suite.
+- PRINCIPALS (0013): the app connects as a member of `tg_app` (request path) or
+  `tg_system` (background jobs); the SYSTEM sentinel is a bypass only for `tg_system` /
+  db_owner. Migrations never carry passwords — users are created with
+  `MigrationRunner provision create-db-user`. Never add a GRANT that lets `tg_app` ALTER
+  anything.
 
 ## Number registry (append when adding a script)
 | NNNN | Description | Task |
@@ -24,3 +31,5 @@
 | 0009 | ModelRegistry (model lifecycle: candidate/shadow/active/rejected/retired) — platform table, deliberately outside RLS | P2-02 |
 | 0010 | Score histograms and sum-of-squares on all four daily rollups | REQ-01 |
 | 0011 | Per-tenant policy overrides, ExternalAuthority, and policy audit | REQ-07 / REQ-06 |
+| 0012 | LabelSubmissions + WebhookOutbox + RLS | REQ-08 / REQ-09 |
+| 0013 | Principal-bound RLS bypass, tg_app / tg_system roles, BLOCK on ApiKeys/Sites | D11 hardening (build review 2026-08-24) |

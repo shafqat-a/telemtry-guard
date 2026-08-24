@@ -102,6 +102,10 @@ builder.Services.AddOptions<BeaconOptions>()
     .Validate(
         o => o.FinalizeQuietSeconds > 0 && o.FinalizeQuietSeconds < o.SessionTtlSeconds,
         "Beacon:FinalizeQuietSeconds must be positive and shorter than SessionTtlSeconds.")
+    .Validate(
+        o => o.NonceTtlSeconds >= o.SessionTtlSeconds,
+        "Beacon:NonceTtlSeconds must be at least SessionTtlSeconds — a nonce that expires " +
+        "before the visit's session hash makes late flushes look tampered.")
     .ValidateOnStart();
 
 // P2-02: registry-driven model selection (D18). When Scoring:ModelSource is

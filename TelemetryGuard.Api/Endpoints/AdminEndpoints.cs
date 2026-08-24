@@ -17,9 +17,9 @@ namespace TelemetryGuard.Api.Endpoints;
 /// Every route is gated by <see cref="AdminScopeFilter"/>; DAT-04's middleware
 /// guarantees only X-Api-Key-resolved requests ever reach these handlers.
 ///
-/// D23: reads here go ONLY through the small RLS-protected SQL aggregate tables
-/// (<see cref="IVerdictSummaryRepository"/>, <see cref="IPublisherSummaryRepository"/>) —
-/// never ClickHouse/IAnalyticsQueries.
+/// Most D23 reports read the small RLS-protected SQL aggregate tables. The explicit
+/// domain-traffic report is a protected, redacted session read through the narrow
+/// <see cref="IAnalyticsQueries"/> abstraction; it never returns cookies or header values.
 /// D19: whitelist mutations go through DAT-07's <see cref="IWhitelistRepository"/>
 /// exactly as-is; the Redis cache rebuild and the review-screen negative training
 /// label are BOTH side effects of that repository's AddAsync/Remove* methods —
@@ -55,7 +55,24 @@ public static partial class AdminEndpoints
         admin.MapGet("/reports/flagged-sources", GetFlaggedSourcesAsync);
         admin.MapGet("/reports/publishers", GetPublisherReportAsync);
         admin.MapGet("/reports/sites", GetSiteReportAsync);
+        admin.MapGet("/reports/domain-traffic", GetDomainTrafficAsync);
         return app;
+    }
+
+    private static async Task<IResult> GetDomainTrafficAsync(
+        string? host, int? page, int? pageSize, bool? botsOnly,
+        IAnalyticsQueries analytics, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(host)
+            || host.Length > 253
+            || !Uri.CheckHostName(host).Equals(UriHostNameType.Dns))
+            return ValidationProblem("host", "host is required and must be a valid DNS hostname.");
+
+        var effectivePage = Math.Max(page ?? 1, 1);
+        var effectivePageSize = Math.Clamp(pageSize ?? 50, 1, 200);
+        var report = await analytics.GetDomainTrafficPageAsync(
+            host.Trim().ToLowerInvariant(), effectivePage, effectivePageSize, botsOnly ?? false, ct);
+        return Results.Ok(report);
     }
 
     // ------------------------------------------------------ whitelist: list --

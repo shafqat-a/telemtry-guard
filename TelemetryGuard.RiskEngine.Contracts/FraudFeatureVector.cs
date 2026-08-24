@@ -156,6 +156,12 @@ public sealed record FraudFeatureVector
     /// observable). Largely superseded by ClickIdInvalid but retained as weak T3.</summary>
     public bool ReferrerMissing { get; init; }
 
+    /// <summary>SDK: an envelope's sent_at differed from the server receive time by more
+    /// than the configured skew (API-04 skew_bad). A wrong device clock is ordinary, so
+    /// this is its own weak T3 signal and deliberately NOT part of BeaconIntegrityOk —
+    /// it must never reach the beacon_integrity_failed T1 floor. null = no beacon.</summary>
+    public bool? ClockSkewBad { get; init; }
+
     /// <summary>SDK: total count of input timing events (mouse/key/touch). Used by rules
     /// as a minimum-evidence gate. NaN = no beacon.</summary>
     public float InputEventCount { get; init; } = float.NaN;
@@ -175,8 +181,14 @@ public sealed record FraudFeatureVector
     public AsnType AsnType { get; init; } = AsnType.Unknown;
 
     /// <summary>IP is in Apple iCloud Private Relay egress ranges. When true,
-    /// IpProxyOrVpn is forced false. Always known (embedded range list) → plain bool.</summary>
+    /// IpProxyOrVpn and IpDatacenterAsn are forced false. Always known (embedded range
+    /// list) → plain bool.</summary>
     public bool IsPrivateRelay { get; init; }
+
+    /// <summary>SDK: number of inter-move gaps behind MeanInterEventMs/StdInterEventMs
+    /// (API-04 mm_n). Evidence gate for the cadence/linearity rules — a std computed
+    /// from a handful of gaps proves nothing. NaN = no beacon.</summary>
+    public float MouseMoveGaps { get; init; } = float.NaN;
 
     /// <summary>SDK: a monitored form was submitted. null = no beacon.</summary>
     public bool? FormSubmitted { get; init; }

@@ -1,0 +1,15 @@
+# Shared consumer egress / CDN edge ASNs. Seed FALLBACK only — a dataset usage_type
+# or is_cdn/is_hosting_provider trait always outranks this list (AsnClassifier).
+#
+# These ASNs are hosting providers on paper, but a large share of the traffic that
+# egresses from them is REAL PEOPLE: Cloudflare WARP and Apple iCloud Private Relay
+# (partners: Cloudflare, Fastly, Akamai), Google One VPN and other Google consumer
+# egress. Classifying them as Datacenter put every such visitor into the
+# ip_datacenter_paid T1 rule (floor 70 = Challenge) on every paid click. They are
+# typed Cdn instead: still visible to the model via AsnType (CTX), never a T1 hit.
+#
+# Genuine hosting ASNs (AWS, Azure, GCP, Hetzner, Linode...) stay in
+# datacenter-asns.txt. Do not add an ASN here unless consumer egress is documented.
+13335   # Cloudflare (WARP, Private Relay egress)
+54113   # Fastly (Private Relay egress)
+15169   # Google (Google One VPN, consumer egress; Google Cloud is 396982)

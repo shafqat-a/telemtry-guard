@@ -15,12 +15,14 @@ public interface ITenantRepository
         => throw new NotSupportedException("This tenant repository does not support policy mutation.");
 }
 
+/// <summary>ExternalAuthority null = leave the stored value unchanged (REQ-07: a caller
+/// that does not mention external ownership must not revoke it).</summary>
 public sealed record TenantPolicyUpdate(
     byte? AllowMax,
     byte? ChallengeMax,
     bool? ObserveOnly,
     byte EnforcementMode,
-    bool ExternalAuthority);
+    bool? ExternalAuthority);
 
 public interface ISiteRepository
 {

@@ -100,35 +100,42 @@ public sealed class RlsSmokeTests : IClassFixture<RlsSqlServerFixture>
     }
 
     [Fact]
-    public async Task ResolutionTables_RemainReadableAndWritable_OnUnstampedSession()
+    public async Task ResolutionTables_ReadableUnstamped_WritableOnlyUnderTheMatchingStamp()
     {
-        await using var conn = new SqlConnection(_fixture.ConnectionString);
-        await conn.OpenAsync();
-
-        // dbo.Sites is RLS-exempt: unstamped INSERT and read-back both work.
+        // 0013: dbo.Sites / dbo.ApiKeys have no FILTER predicate (tenant resolution reads
+        // them before a context exists) but DO have a BLOCK predicate — an unstamped or
+        // mismatched write is refused. The full matrix lives in Sql/RlsPrincipalTests.
         var siteKey = $"sk_test_{Guid.NewGuid():N}";
-        await conn.ExecuteAsync(
-            """
-            INSERT INTO dbo.Sites (TenantId, SiteKey, Domain)
-            VALUES (@TenantId, @SiteKey, N'example.com')
-            """,
-            new { TenantId = TenantA, SiteKey = siteKey });
-        var siteTenant = await conn.ExecuteScalarAsync<Guid>(
-            "SELECT TenantId FROM dbo.Sites WHERE SiteKey = @SiteKey", new { SiteKey = siteKey });
-        Assert.Equal(TenantA, siteTenant);
-
-        // dbo.ApiKeys is RLS-exempt: unstamped INSERT and read-back both work.
         var keyHash = new byte[32];
         Random.Shared.NextBytes(keyHash);
-        await conn.ExecuteAsync(
-            """
-            INSERT INTO dbo.ApiKeys (KeyHash, TenantId, Scopes)
-            VALUES (@KeyHash, @TenantId, N'ingest')
-            """,
-            new { KeyHash = keyHash, TenantId = TenantA });
-        var apiKeyTenant = await conn.ExecuteScalarAsync<Guid>(
-            "SELECT TenantId FROM dbo.ApiKeys WHERE KeyHash = @KeyHash", new { KeyHash = keyHash });
-        Assert.Equal(TenantA, apiKeyTenant);
+
+        await using (var unstamped = new SqlConnection(_fixture.ConnectionString))
+        {
+            await unstamped.OpenAsync();
+            await Assert.ThrowsAsync<SqlException>(() => unstamped.ExecuteAsync(
+                "INSERT INTO dbo.Sites (TenantId, SiteKey, Domain) VALUES (@TenantId, @SiteKey, N'example.com')",
+                new { TenantId = TenantA, SiteKey = siteKey }));
+        }
+
+        await using (var asA = await _fixture.OpenStampedAsync(TenantA))
+        {
+            await asA.ExecuteAsync(
+                "INSERT INTO dbo.Sites (TenantId, SiteKey, Domain) VALUES (@TenantId, @SiteKey, N'example.com')",
+                new { TenantId = TenantA, SiteKey = siteKey });
+            await asA.ExecuteAsync(
+                "INSERT INTO dbo.ApiKeys (KeyHash, TenantId, Scopes) VALUES (@KeyHash, @TenantId, N'ingest')",
+                new { KeyHash = keyHash, TenantId = TenantA });
+        }
+
+        // Unstamped read-back is what SqlTenantResolver relies on.
+        await using (var unstamped = new SqlConnection(_fixture.ConnectionString))
+        {
+            await unstamped.OpenAsync();
+            Assert.Equal(TenantA, await unstamped.ExecuteScalarAsync<Guid>(
+                "SELECT TenantId FROM dbo.Sites WHERE SiteKey = @SiteKey", new { SiteKey = siteKey }));
+            Assert.Equal(TenantA, await unstamped.ExecuteScalarAsync<Guid>(
+                "SELECT TenantId FROM dbo.ApiKeys WHERE KeyHash = @KeyHash", new { KeyHash = keyHash }));
+        }
     }
 
     [Fact]
@@ -199,6 +206,7 @@ public sealed class RlsSmokeTests : IClassFixture<RlsSqlServerFixture>
         public string? SiteKey => null;
 
         public bool IsResolved => true;
+        public IReadOnlyList<string> Scopes => Array.Empty<string>();
     }
 }
 

@@ -10,6 +10,7 @@ public sealed class TenantContext : ITenantContext
 {
     private TenantId _tenantId;
     private string? _siteKey;
+    private IReadOnlyList<string> _scopes = Array.Empty<string>();
 
     public bool IsResolved { get; private set; }
 
@@ -19,12 +20,17 @@ public sealed class TenantContext : ITenantContext
     public string? SiteKey
         => IsResolved ? _siteKey : throw new TenantNotResolvedException();
 
+    public IReadOnlyList<string> Scopes
+        => IsResolved ? _scopes : throw new TenantNotResolvedException();
+
     /// <summary>
     /// Resolves the tenant for this scope. May be called exactly once;
     /// a second call throws InvalidOperationException. An empty tenantId throws
     /// ArgumentException — resolution with a zero tenant is always a bug.
+    /// <paramref name="scopes"/> are the API key's granted scopes (null/empty for
+    /// site-key resolutions and background jobs); they are copied, never aliased.
     /// </summary>
-    public void Resolve(TenantId tenantId, string? siteKey = null)
+    public void Resolve(TenantId tenantId, string? siteKey = null, IReadOnlyList<string>? scopes = null)
     {
         if (IsResolved)
         {
@@ -39,6 +45,7 @@ public sealed class TenantContext : ITenantContext
 
         _tenantId = tenantId;
         _siteKey = siteKey;
+        _scopes = scopes is { Count: > 0 } ? scopes.ToArray() : Array.Empty<string>();
         IsResolved = true;
     }
 }

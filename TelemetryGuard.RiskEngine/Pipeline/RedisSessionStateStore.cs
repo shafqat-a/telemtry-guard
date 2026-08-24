@@ -157,7 +157,9 @@ public sealed class RedisSessionStateStore : ISessionStateStore
             PointerUntrusted = Flag(h, "pointer_untrusted") ?? false,
             ClickBeforeRender = Flag(h, "click_before_render") ?? false,
             // Derived from the STORED integrity_fails counter: absent or 0 → intact.
+            // (Checksum, nonce and sequence failures only — clock skew is separate.)
             IntegrityOk = (Int(h, "integrity_fails") ?? 0) == 0,
+            ClockSkewBad = Flag(h, "skew_bad"),
 
             ScreenWidth = Int(h, "screen_w"),
             ScreenHeight = Int(h, "screen_h"),

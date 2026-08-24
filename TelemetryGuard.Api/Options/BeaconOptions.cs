@@ -17,11 +17,16 @@ public sealed class BeaconOptions
     /// <summary>POST /i body cap; larger bodies get 413 (the only non-204 status).</summary>
     public int MaxBodyBytes { get; init; } = 65536;
 
-    /// <summary>TTL of the per-session server nonce minted by /i/init.</summary>
-    public int NonceTtlSeconds { get; init; } = 900;
+    /// <summary>TTL of the per-visit server nonce minted by /i/init. Must be at least
+    /// SessionTtlSeconds (validated at startup): a nonce that expires before the visit's
+    /// aggregate hash turns every late flush of a long-dwelling page into a
+    /// nonce mismatch, i.e. a beacon_integrity_failed T1 hit on a real visitor.</summary>
+    public int NonceTtlSeconds { get; init; } = 1800;
 
     /// <summary>Max accepted |server receive ms − envelope sent_at|; beyond it
-    /// skew_bad=1 and integrity_fails increments (recorded, never rejected).</summary>
+    /// skew_bad=1 and skew_max_ms is tracked. Recorded as its own signal — a wrong
+    /// device clock is ordinary and never counts as beacon tampering
+    /// (integrity_fails is reserved for checksum, nonce and sequence failures).</summary>
     public long MaxClockSkewMs { get; init; } = 120000;
 
     /// <summary>TTL of the per-session aggregate hash t:{tid}:sess:{sid}.</summary>

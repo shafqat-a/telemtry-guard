@@ -116,6 +116,7 @@ public sealed class ScoringPipelineTests
         public TenantId TenantId { get; } = new(Guid.Parse("aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa"));
         public string? SiteKey => null;
         public bool IsResolved => true;
+        public IReadOnlyList<string> Scopes => Array.Empty<string>();
     }
 
     // ---------- helpers ----------

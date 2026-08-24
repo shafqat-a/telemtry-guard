@@ -42,7 +42,9 @@ public sealed class TenantResolutionMiddleware(RequestDelegate next)
             var byKey = await resolver.ResolveApiKeyAsync(apiKeyValues.ToString(), context.RequestAborted);
             if (byKey is not null)
             {
-                tenantContext.Resolve(new TenantId(byKey.TenantId));
+                // Scopes ride into ambient state so AdminScopeFilter can authorize on
+                // what the key was granted, not merely on its existence (API-07).
+                tenantContext.Resolve(new TenantId(byKey.TenantId), siteKey: null, scopes: byKey.Scopes);
                 await next(context);
                 return;
             }
