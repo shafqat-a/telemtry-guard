@@ -28,9 +28,13 @@ public static class SqlConnectionStrings
             ?? throw new InvalidOperationException("ConnectionStrings:Main is not configured."));
 
     public static string System(IConfiguration cfg)
-        => WithApplicationName(cfg.GetConnectionString(SystemKey)
-            ?? cfg.GetConnectionString(MainKey)
-            ?? throw new InvalidOperationException("ConnectionStrings:System (or Main) is not configured."));
+    {
+        var system = cfg.GetConnectionString(SystemKey);
+        return WithApplicationName(!string.IsNullOrWhiteSpace(system)
+            ? system
+            : cfg.GetConnectionString(MainKey)
+              ?? throw new InvalidOperationException("ConnectionStrings:System (or Main) is not configured."));
+    }
 
     private static string WithApplicationName(string connectionString)
     {
