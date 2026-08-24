@@ -39,4 +39,14 @@ public interface IAnalyticsQueries
     /// </summary>
     Task<IReadOnlyList<SiteDailyCounts>> GetSiteDailyCountsAsync(
         DateRange range, CancellationToken ct);
+
+    Task<VerdictEvidence?> GetVerdictEvidenceAsync(string sessionId, CancellationToken ct)
+        => Task.FromResult<VerdictEvidence?>(null);
+    Task<VerdictEvidencePage> GetVerdictEvidencePageAsync(
+        DateRange range, VerdictCursor? cursor, int limit, CancellationToken ct)
+        => Task.FromResult(new VerdictEvidencePage([], false));
+
+    Task<DomainTrafficPage> GetDomainTrafficPageAsync(
+        string host, int page, int pageSize, bool botsOnly, CancellationToken ct)
+        => throw new NotSupportedException("Domain traffic reporting is not supported by this analytics provider.");
 }

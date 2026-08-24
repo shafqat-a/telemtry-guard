@@ -10,6 +10,7 @@ public sealed class FixedTenantContext(TenantId tenantId, string? siteKey = null
     public TenantId TenantId { get; } = tenantId;
     public string? SiteKey { get; } = siteKey;
     public bool IsResolved => true;
+    public IReadOnlyList<string> Scopes => Array.Empty<string>();
 }
 
 /// <summary>Trivial fixed-time stub (FND-04 contract) for deterministic

@@ -56,6 +56,7 @@ public sealed class HeuristicScorer(IOptionsMonitor<HeuristicWeights> weights) :
         t3 += Math.Clamp(v.IpReputationBad, 0f, 1f) * w.IpReputationBadMax;
         if (v.PasteInIdentityFields == true) t3 += w.PasteInIdentityFields;
         if (v.ReferrerMissing) t3 += w.ReferrerMissing;
+        if (v.ClockSkewBad == true) t3 += w.ClockSkewBad;
         s += Math.Min(t3, w.T3TotalCap);
         // Challenge outcome (CTX):
         if (v.ChallengeOutcome == ChallengeOutcome.Failed) s += w.ChallengeFailed;

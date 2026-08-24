@@ -96,6 +96,7 @@ internal sealed class FixedTenantContext(TenantId tenantId) : ITenantContext
     public TenantId TenantId { get; } = tenantId;
     public string? SiteKey => null;
     public bool IsResolved => true;
+    public IReadOnlyList<string> Scopes => Array.Empty<string>();
 }
 
 /// <summary>Trivial fixed-time stub for deterministic trailing windows in tests.</summary>

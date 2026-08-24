@@ -14,7 +14,7 @@
         <div class="panel-error" role="alert">@Model.Error</div>
     }
 
-    <form method="post" action="/signin">
+    <form method="post" action="@Url.Content("~/signin")">
         @Html.AntiForgeryToken()
         <input type="hidden" name="returnUrl" value="@Model.ReturnUrl" />
         <label>

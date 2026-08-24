@@ -42,7 +42,7 @@ public sealed class AdminEndpointTests
     {
         public Task<ResolvedTenant?> ResolveApiKeyAsync(string apiKey, CancellationToken ct)
             => Task.FromResult(apiKey == ApiKey
-                ? new ResolvedTenant(TenantGuid, [], null, null)
+                ? new ResolvedTenant(TenantGuid, [ApiKeyScopes.Admin], null, null)
                 : (ResolvedTenant?)null);
 
         // Admin routes must never resolve via site key (DAT-04's construction) —
@@ -137,7 +137,7 @@ public sealed class AdminEndpointTests
 
     private sealed class FakeVerdictSummaryRepository : IVerdictSummaryRepository
     {
-        public (Guid CampaignId, DateOnly From, DateOnly To)? LastCall;
+        public (Guid? CampaignId, DateOnly From, DateOnly To)? LastCall;
         public IReadOnlyList<VerdictDailySummaryRow> Rows = [];
 
         public (DateOnly From, DateOnly To, int Limit)? LastFlaggedSourcesCall;
@@ -148,7 +148,7 @@ public sealed class AdminEndpointTests
         public Task IncrementDailySummaryAsync(VerdictDailySummaryRow delta, CancellationToken ct) => throw new NotSupportedException();
 
         public Task<IReadOnlyList<VerdictDailySummaryRow>> GetDailySummariesAsync(
-            Guid campaignId, DateOnly from, DateOnly to, CancellationToken ct)
+            Guid? campaignId, DateOnly from, DateOnly to, CancellationToken ct)
         {
             LastCall = (campaignId, from, to);
             return Task.FromResult(Rows);
@@ -355,18 +355,20 @@ public sealed class AdminEndpointTests
 
     // --------------------------------------- AdminScopeFilter, in isolation --
 
-    private sealed class FakeTenantContext(bool isResolved, string? siteKey) : ITenantContext
+    private sealed class FakeTenantContext(bool isResolved, string? siteKey, IReadOnlyList<string>? scopes = null) : ITenantContext
     {
         public TenantId TenantId { get; } = new(TenantGuid);
         public string? SiteKey { get; } = siteKey;
         public bool IsResolved { get; } = isResolved;
+        public IReadOnlyList<string> Scopes { get; } = scopes ?? [ApiKeyScopes.Admin];
     }
 
-    private static async Task<IResult> InvokeFilterAsync(ITenantContext tenant)
+    private static async Task<IResult> InvokeFilterAsync(ITenantContext tenant, string method = "GET")
     {
         var services = new ServiceCollection();
         services.AddSingleton(tenant);
         var httpContext = new DefaultHttpContext { RequestServices = services.BuildServiceProvider() };
+        httpContext.Request.Method = method;
         var efc = EndpointFilterInvocationContext.Create(httpContext);
 
         var filter = new AdminScopeFilter();
@@ -401,6 +403,71 @@ public sealed class AdminEndpointTests
 
         // Not a 403 — the "passed" sentinel from `next` came back untouched.
         Assert.False(result is IStatusCodeHttpResult { StatusCode: StatusCodes.Status403Forbidden });
+    }
+
+    // API-07 scope enforcement: what a key was GRANTED decides, not that it exists.
+
+    [Theory]
+    [InlineData("GET")]
+    [InlineData("HEAD")]
+    [InlineData("POST")]
+    [InlineData("PUT")]
+    [InlineData("DELETE")]
+    public async Task Filter_AdminScope_PassesEveryMethod(string method)
+    {
+        var result = await InvokeFilterAsync(
+            new FakeTenantContext(isResolved: true, siteKey: null, scopes: [ApiKeyScopes.Admin]), method);
+
+        Assert.False(result is IStatusCodeHttpResult { StatusCode: StatusCodes.Status403Forbidden });
+    }
+
+    [Theory]
+    [InlineData("GET")]
+    [InlineData("HEAD")]
+    public async Task Filter_ReportScope_PassesReads(string method)
+    {
+        var result = await InvokeFilterAsync(
+            new FakeTenantContext(isResolved: true, siteKey: null, scopes: [ApiKeyScopes.Report]), method);
+
+        Assert.False(result is IStatusCodeHttpResult { StatusCode: StatusCodes.Status403Forbidden });
+    }
+
+    [Theory]
+    [InlineData("POST")]
+    [InlineData("PUT")]
+    [InlineData("DELETE")]
+    public async Task Filter_ReportScope_Refuses_Mutations(string method)
+    {
+        var result = await InvokeFilterAsync(
+            new FakeTenantContext(isResolved: true, siteKey: null, scopes: [ApiKeyScopes.Report]), method);
+
+        var statusResult = Assert.IsAssignableFrom<IStatusCodeHttpResult>(result);
+        Assert.Equal(StatusCodes.Status403Forbidden, statusResult.StatusCode);
+    }
+
+    [Theory]
+    [InlineData("GET")]
+    [InlineData("PUT")]
+    public async Task Filter_IngestOnlyKey_IsRefusedEverywhere(string method)
+    {
+        // The regression this guards: before scopes were enforced, an `ingest`-only key
+        // could PUT /admin/policy (switch ExternalAuthority off, flip EnforcementMode)
+        // and approve exclusions that INT-03 pushes to Google Ads.
+        var result = await InvokeFilterAsync(
+            new FakeTenantContext(isResolved: true, siteKey: null, scopes: [ApiKeyScopes.Ingest]), method);
+
+        var statusResult = Assert.IsAssignableFrom<IStatusCodeHttpResult>(result);
+        Assert.Equal(StatusCodes.Status403Forbidden, statusResult.StatusCode);
+    }
+
+    [Fact]
+    public async Task Filter_KeyWithNoScopes_IsRefused()
+    {
+        var result = await InvokeFilterAsync(
+            new FakeTenantContext(isResolved: true, siteKey: null, scopes: []), "GET");
+
+        var statusResult = Assert.IsAssignableFrom<IStatusCodeHttpResult>(result);
+        Assert.Equal(StatusCodes.Status403Forbidden, statusResult.StatusCode);
     }
 
     // ============================================================ whitelist =
@@ -606,7 +673,12 @@ public sealed class AdminEndpointTests
         using var app = new AdminApp();
         app.Summaries.Rows = new List<VerdictDailySummaryRow>
         {
-            new(TenantGuid, CampaignGuid, new DateOnly(2026, 8, 1), 90, 20, 10, 3288, 120), // 3288/120 = 27.4
+            new VerdictDailySummaryRow(
+                TenantGuid, CampaignGuid, new DateOnly(2026, 8, 1), 90, 20, 10, 3288, 120)
+            {
+                ScoreDistribution = new ScoreDistribution(
+                    10, 11, 12, 13, 14, 15, 16, 9, 8, 7, 5, 123456),
+            }, // 3288/120 = 27.4
         };
         using var client = app.Client();
 
@@ -626,6 +698,13 @@ public sealed class AdminEndpointTests
         Assert.Equal(20, row.GetProperty("challenged").GetInt32());
         Assert.Equal(10, row.GetProperty("blocked").GetInt32());
         Assert.Equal(27.4, row.GetProperty("avgScore").GetDouble());
+        var histogram = row.GetProperty("scoreHistogram");
+        Assert.Equal(10, histogram.GetProperty("bucketWidth").GetInt32());
+        Assert.Equal(new[] { 0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100 },
+            histogram.GetProperty("edges").EnumerateArray().Select(x => x.GetInt32()).ToArray());
+        Assert.Equal(new long[] { 10, 11, 12, 13, 14, 15, 16, 9, 8, 7, 5 },
+            histogram.GetProperty("counts").EnumerateArray().Select(x => x.GetInt64()).ToArray());
+        Assert.Equal(123456, histogram.GetProperty("sumSq").GetInt64());
 
         Assert.Equal((CampaignGuid, new DateOnly(2026, 8, 1), new DateOnly(2026, 8, 12)), app.Summaries.LastCall);
     }
@@ -661,15 +740,17 @@ public sealed class AdminEndpointTests
     }
 
     [Fact]
-    public async Task GetSummary_MissingCampaignId_Returns400()
+    public async Task GetSummary_MissingCampaignId_ReturnsTenantWideRows()
     {
         using var app = new AdminApp();
         using var client = app.Client();
 
         var resp = await client.GetAsync("/admin/reports/summary?from=2026-08-01&to=2026-08-12");
 
-        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
-        Assert.Equal("application/problem+json", resp.Content.Headers.ContentType?.MediaType);
+        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+        var json = await ReadJson(resp);
+        Assert.Equal(JsonValueKind.Null, json.GetProperty("campaignId").ValueKind);
+        Assert.Equal((null, new DateOnly(2026, 8, 1), new DateOnly(2026, 8, 12)), app.Summaries.LastCall);
     }
 
     [Fact]

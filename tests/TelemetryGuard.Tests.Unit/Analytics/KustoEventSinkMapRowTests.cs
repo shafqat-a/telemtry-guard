@@ -30,26 +30,28 @@ public sealed class KustoEventSinkMapRowTests
     };
 
     [Fact]
-    public void ColumnNames_HasAll71Columns_InContractOrder()
+    public void ColumnNames_HasAll91Columns_InContractOrder()
     {
-        Assert.Equal(71, KustoEventSink.ColumnNames.Length);
+        Assert.Equal(91, KustoEventSink.ColumnNames.Length);
+        Assert.Equal(90, Array.IndexOf(KustoEventSink.ColumnNames, "visit_id"));
         Assert.Equal(0, Array.IndexOf(KustoEventSink.ColumnNames, "tenant_id"));
         Assert.Equal(66, Array.IndexOf(KustoEventSink.ColumnNames, "retention_days"));
         Assert.Equal(67, Array.IndexOf(KustoEventSink.ColumnNames, "timestamp"));
         Assert.Equal(68, Array.IndexOf(KustoEventSink.ColumnNames, "features"));
         Assert.Equal(69, Array.IndexOf(KustoEventSink.ColumnNames, "shadow_score"));
         Assert.Equal(70, Array.IndexOf(KustoEventSink.ColumnNames, "shadow_scorer_version"));
-        // Same 71 names, same order, as ClickHouseEventSink.ColumnNames (ANA-03) —
+        // Same 90 names, same order, as ClickHouseEventSink.ColumnNames (ANA-03) —
         // duplicated on purpose (D7): no cross-provider reference from this project.
         Assert.DoesNotContain(KustoEventSink.ColumnNames, n => n.Contains("ClickHouse"));
     }
 
     [Fact]
-    public void MapRow_Produces71Values_MatchingColumnOrder()
+    public void MapRow_Produces91Values_MatchingColumnOrder()
     {
         var row = KustoEventSink.MapRow(SampleEvent());
 
-        Assert.Equal(71, row.Length);
+        Assert.Equal(91, row.Length);
+        Assert.Equal("", row[90]);                       // legacy/non-SDK visit id
         Assert.Equal(TenantGuid, row[0]);                 // tenant_id
         Assert.Equal("tracker", row[3]);                  // kind wire string
         Assert.Equal(90, row[66]);                        // retention_days: boxed int (task step 7)

@@ -44,6 +44,7 @@ public sealed record BeaconData
     public bool PointerUntrusted { get; init; }          // any pointer event with isTrusted=false
     public bool ClickBeforeRender { get; init; }
     public bool IntegrityOk { get; init; } = true;       // beacon signature check (API-04 verifies)
+    public bool? ClockSkewBad { get; init; }             // API-04 skew_bad; null = not measured
 
     public int? ScreenWidth { get; init; }
     public int? ScreenHeight { get; init; }

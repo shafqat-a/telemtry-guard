@@ -16,10 +16,21 @@ public sealed record WhitelistEntryResponse(
     string? CreatedBy, DateTime CreatedUtc, DateTime? ExpiresUtc);
 
 public sealed record SummaryDayResponse(
-    DateOnly Date, int Events, int Allowed, int Challenged, int Blocked, double? AvgScore);
+    DateOnly Date, int Events, int Allowed, int Challenged, int Blocked, double? AvgScore)
+{
+    public ScoreHistogramResponse ScoreHistogram { get; init; } = ScoreHistogramResponse.Empty;
+}
 
 public sealed record SummaryReportResponse(
-    DateOnly From, DateOnly To, Guid CampaignId, IReadOnlyList<SummaryDayResponse> Rows);
+    DateOnly From, DateOnly To, Guid? CampaignId, IReadOnlyList<SummaryDayResponse> Rows);
+
+public sealed record ScoreHistogramResponse(
+    int BucketWidth, IReadOnlyList<int> Edges, IReadOnlyList<long> Counts, long SumSq)
+{
+    public static ScoreHistogramResponse Empty { get; } = new(
+        10, Array.AsReadOnly(new[] { 0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100 }),
+        Array.AsReadOnly(new long[11]), 0);
+}
 
 public sealed record SiteIntegrationStatusResponse(
     string SiteKey, string Domain, string ConfiguredMode, DateTime? LastBeaconAt, string EffectiveLevel);
@@ -41,7 +52,10 @@ public sealed record CampaignListResponse(IReadOnlyList<CampaignSummaryResponse>
 /// Events IS the denominator.</summary>
 public sealed record FlaggedSourceResponse(
     DateOnly Date, string SourceType, string Value,
-    int FlaggedCount, int BlockedCount, long ScoreSum);
+    int FlaggedCount, int BlockedCount, long ScoreSum)
+{
+    public ScoreHistogramResponse ScoreHistogram { get; init; } = ScoreHistogramResponse.Empty;
+}
 
 public sealed record FlaggedSourcesReportResponse(
     DateOnly From, DateOnly To, IReadOnlyList<FlaggedSourceResponse> Sources);
@@ -53,14 +67,20 @@ public sealed record PublisherReportRowResponse(
     double? AvgScore,          // ScoreSum / Events; null when Events == 0
     int NoJsBeaconCount,
     bool LowVolume,            // Events < LowVolumePlacementEvents — read the ratio with care
-    DateOnly FirstDay, DateOnly LastDay);
+    DateOnly FirstDay, DateOnly LastDay)
+{
+    public ScoreHistogramResponse ScoreHistogram { get; init; } = ScoreHistogramResponse.Empty;
+}
 
 public sealed record PublisherReportResponse(
     DateOnly From, DateOnly To, IReadOnlyList<PublisherReportRowResponse> Rows);
 
 public sealed record SiteReportDayResponse(
     DateOnly Date, string SiteKey, int TotalEvents, int Events,
-    int Allowed, int Challenged, int Blocked, double? AvgScore, int NoJsBeaconCount);
+    int Allowed, int Challenged, int Blocked, double? AvgScore, int NoJsBeaconCount)
+{
+    public ScoreHistogramResponse ScoreHistogram { get; init; } = ScoreHistogramResponse.Empty;
+}
 
 public sealed record SiteReportResponse(
     DateOnly From, DateOnly To, IReadOnlyList<SiteReportDayResponse> Rows);

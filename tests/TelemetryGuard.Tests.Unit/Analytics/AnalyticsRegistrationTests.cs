@@ -31,6 +31,7 @@ public class AnalyticsRegistrationTests
         public TenantId TenantId { get; } = new(Guid.NewGuid());
         public string? SiteKey => null;
         public bool IsResolved => true;
+        public IReadOnlyList<string> Scopes => Array.Empty<string>();
     }
 
     private sealed class StubClock : IClock

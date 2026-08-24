@@ -24,6 +24,9 @@ npm run size                   # 30 KB gzip gate (D2)
 npm run typecheck              # tsc --noEmit
 npm test                       # Playwright e2e (fixture pages; needs `npx playwright install chromium`)
 
+./scripts/update-iplegence.sh  # fetch Superior-IP.mmdb into ./data/geo (D24; needs `gh auth login`,
+                               # or set IPLEGENCE_MMDB_URL / IPLEGENCE_DIST_DIR) — optional, the app
+                               # starts and degrades to null enrichment without it
 ./scripts/dev-up.sh            # compose stack: mssql, redis, clickhouse, grafana
 ./scripts/dev-seed.sh          # migrations + demo tenant/site key/campaign via MigrationRunner `provision`
 dotnet run --project TelemetryGuard.Api                  # API on the host (deliberately not a compose service)
@@ -36,12 +39,14 @@ Tenant provisioning CLI: `dotnet run --project TelemetryGuard.MigrationRunner --
 
 TelemetryGuard is a multi-tenant SaaS that detects and blocks ad fraud, click fraud, and bot traffic for PPC campaigns (Google Ads, Meta, TikTok) and lead-generation forms. It scores every click/visit 0–100 in real time, enforces allow/challenge/block decisions, and pushes confirmed-fraud sources back into ad-platform exclusion lists.
 
-The full decision record — including every technology choice and the rationale/alternatives considered — lives in `doc/spec.md`. Read it before making architectural changes; it is the source of truth, and decisions are numbered (D1–D23) and amended by adding new numbered entries (D24+), never by editing history. A companion `fraud-signal-feature-spec.md` (not yet added) is intended to hold the detailed signal contract and ML.NET input vector.
+The full decision record — including every technology choice and the rationale/alternatives considered — lives in `doc/spec.md`. Read it before making architectural changes; it is the source of truth, and decisions are numbered (D1–D25) and amended by adding new numbered entries (D26+), never by editing history. A companion `fraud-signal-feature-spec.md` (not yet added) is intended to hold the detailed signal contract and ML.NET input vector.
 
 ## Core architectural constraints (do not violate silently)
 
 - **No server-side scripting languages.** Python and Node are explicitly excluded from the backend by owner constraint. Backend is **.NET (C#) end-to-end** (D1). The one unavoidable exception is the browser: the client SDK is TypeScript compiled via esbuild to a static IIFE bundle (D2) — this does not introduce a server-side scripting runtime.
 - **Abstract analytics by intent, not by query.** `IEventSink` / `IAnalyticsQueries` are narrow, intent-named interfaces implemented once per engine (ClickHouse now, Kusto later). Never build a generic cross-engine query language or LINQ-over-both — this was explicitly rejected (D7).
+- **The event store holds the whole request (D25).** Ad attribution is on every event (utm_*, click ids incl. gbraid/wbraid, `attribution_channel`), and `headers` / `cookies` / `landing_url` capture the request verbatim so a visitor can be followed across pages by their own cookies. This means `tg_events` contains session and auth cookies and any query-string PII: **treat read access to it as equivalent to holding those credentials**, and use `retention_days` (D20) as the exposure lever. Per-page rows require `Beacon:SinkEveryNthBeacon = 1`.
+- **IP intelligence is a memory-mapped file, never a service call.** Datasets sit behind `IIpIntelligenceProvider` (D24), selected by `IpEnrichment:Provider` — `Iplegence` (default, one merged `Superior-IP.mmdb`) or `MaxMind` (GeoLite2 + IP2Proxy). iplegence ships an HTTP API and a Docker image: **do not call them from the request path.** Enrichment runs on every click and beacon inside the 50 ms budget, and a network hop would force a fail-open/fail-closed choice on every timeout. iplegence is a build-time data producer fetched by `scripts/update-iplegence.sh`; no Go runs in production (D1).
 - **Multi-tenancy correctness must not depend on developer discipline.** Shared database/shared schema with `TenantId` on every row, enforced primarily via SQL Server Row-Level Security (RLS) keyed on `SESSION_CONTEXT('TenantId')`, not just application-level `WHERE` clauses (D11). Repositories must only obtain connections through `TenantConnectionFactory`, which stamps the session context — there is no path to an unscoped connection.
 - **Dapper, not EF Core**, for all SQL Server data access (D9) — one consistent pattern (explicit SQL behind narrow, intent-named repositories) instead of ORM-here/raw-SQL-there. Migrations are versioned SQL scripts run by DbUp/Grate (D10), not EF migrations.
 - **Real-time scoring budget is < 50 ms.** The risk engine's model inference runs in-process inside the same ASP.NET Core service as ingestion, tracking, and decision (D3) — no network hop for scoring in the hot path.
@@ -53,7 +58,7 @@ The full decision record — including every technology choice and the rationale
 1. **Client JS SDK** (`TelemetryGuard.Sdk`) — TypeScript/esbuild bundle embedded on tenant pages; collects behavioral timing, FingerprintJS + Botd signals, honeypots, storage age. Ships via `sendBeacon`. Tenants unable to add script tags use **web-pixel mode** instead (HTTP-only signals, D22) — pixel mode must degrade gracefully to `NaN` SDK features rather than failing.
 2. **Click/redirect tracker** — server endpoint the ad destination URL points to; logs HTTP-layer signals and 302-redirects. Exists specifically because many bots never execute JavaScript, so this path must work independently of the SDK.
 3. **Ingestion API** — receives beacons + tracker hits, extracts HTTP-layer signals (IP, headers, UA/Client Hints, TLS fingerprint via Cloudflare), joins beacon to click data by session ID.
-4. **Enrichment + risk engine** (`TelemetryGuard.RiskEngine`) — GeoLite2/IP2Location lookups, Redis velocity counters, derived features, scoring via `IScorer` (heuristic at MVP, swappable to ML.NET LightGBM / ONNX Runtime later without a rewrite — D18).
+4. **Enrichment + risk engine** (`TelemetryGuard.RiskEngine`) — IP intelligence behind `IIpIntelligenceProvider` (D24: **iplegence's merged `Superior-IP.mmdb` by default**, GeoLite2 + IP2Proxy as the rollback), Redis velocity counters, derived features, scoring via `IScorer` (heuristic at MVP, swappable to ML.NET LightGBM / ONNX Runtime later without a rewrite — D18).
 5. **Decision/enforcement layer** — maps score to allow (0–30) / challenge via Cloudflare Turnstile (31–70) / block + exclude (71–100); syncs confirmed-fraud sources to Google Ads and Meta exclusion APIs, honoring the per-tenant `EnforcementMode` (`AutoEnforce` vs `ApprovalQueue`, D21).
 6. **Event store + offline side** — every raw event and verdict persisted to ClickHouse; feeds retraining, false-positive review, dashboards. The real-time path never blocks on this.
 

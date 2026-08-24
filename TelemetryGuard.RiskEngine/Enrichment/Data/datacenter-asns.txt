@@ -1,7 +1,10 @@
+# Well-known hosting / cloud ASNs. Seed FALLBACK only — a dataset usage_type or
+# is_hosting_provider trait always outranks this list (AsnClassifier).
+# Consumer-egress ASNs (Cloudflare, Fastly, Google) live in cdn-asns.txt: they type
+# as Cdn, which the ip_datacenter_paid T1 rule deliberately ignores.
 16509   # Amazon AWS
 14618   # Amazon EC2 legacy
 8075    # Microsoft Azure
-15169   # Google
 396982  # Google Cloud
 14061   # DigitalOcean
 16276   # OVH
@@ -11,5 +14,3 @@
 51167   # Contabo
 45102   # Alibaba Cloud
 132203  # Tencent Cloud
-13335   # Cloudflare
-54113   # Fastly

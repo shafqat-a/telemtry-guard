@@ -44,6 +44,14 @@ param deployGrafana bool = false
 param opsClientIp string = ''
 
 param sqlAdminLogin string = 'tgadmin'
+@description('0013: least-privilege SQL user for the API request path (tg_app role). Created by the SQL migration job via `provision create-db-user`.')
+param sqlAppLogin string = 'tg_app'
+@secure()
+param sqlAppPassword string
+@description('0013: least-privilege SQL user for background jobs (tg_system role) — the only application principal the SYSTEM sentinel bypass honours.')
+param sqlSystemLogin string = 'tg_system'
+@secure()
+param sqlSystemPassword string
 @secure()
 param sqlAdminPassword string
 @secure()
@@ -140,6 +148,10 @@ module keyvault 'modules/keyvault.bicep' = {
     sqlServerFqdn: sql.outputs.sqlServerFqdn
     sqlAdminLogin: sqlAdminLogin
     sqlAdminPassword: sqlAdminPassword
+    sqlAppLogin: sqlAppLogin
+    sqlAppPassword: sqlAppPassword
+    sqlSystemLogin: sqlSystemLogin
+    sqlSystemPassword: sqlSystemPassword
     databaseName: databaseName
     redisHostName: redis.outputs.redisHostName
     redisPrimaryKey: redis.outputs.redisPrimaryKey

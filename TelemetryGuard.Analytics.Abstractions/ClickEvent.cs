@@ -14,6 +14,8 @@ public sealed record ClickEvent
     public required TenantId TenantId { get; init; }
     public required string SiteKey { get; init; }
     public required string SessionId { get; init; }
+    /// <summary>One document/page load. Empty only for legacy SDK and tracker events.</summary>
+    public string VisitId { get; init; } = "";
     public required EventKind Kind { get; init; }
 
     // ---- click ids (one field per supported ad platform — API-02 extracts all four) ----
@@ -24,6 +26,52 @@ public sealed record ClickEvent
     public string Ttclid { get; init; } = "";          // TikTok Ads
     public bool? ClickIdInvalid { get; init; }        // null = not applicable (organic)
 
+    // ---- attribution (ANA-08): which ad, on which platform, sent this visit ----
+    // Google Ads sends gbraid/wbraid INSTEAD of gclid on iOS and consent-limited
+    // traffic. Without them a growing share of paid Google clicks looks organic.
+    public string Gbraid { get; init; } = "";          // Google Ads, app->web, no user id
+    public string Wbraid { get; init; } = "";          // Google Ads, web->app, no user id
+
+    // UTM parameters exactly as received. utm_id is the campaign id in GA4's
+    // manual-tagging scheme; utm_content/utm_term usually carry the ad or keyword id.
+    public string UtmSource { get; init; } = "";
+    public string UtmMedium { get; init; } = "";
+    public string UtmCampaign { get; init; } = "";
+    public string UtmTerm { get; init; } = "";
+    public string UtmContent { get; init; } = "";
+    public string UtmId { get; init; } = "";
+
+    // Platform first-party attribution cookies, promoted to their own columns because
+    // reporting filters on them. The complete cookie jar is in Cookies below.
+    public string CookieFbc { get; init; } = "";       // Meta click id, persisted by the pixel
+    public string CookieFbp { get; init; } = "";       // Meta browser id
+    public string CookieGclAw { get; init; } = "";     // Google Ads click id
+    public string CookieTtp { get; init; } = "";       // TikTok pixel id
+
+    /// <summary>Derived channel: "google_ads" | "meta_ads" | "tiktok_ads" |
+    /// "microsoft_ads" | "paid_other" | "organic_search" | "referral" | "direct".
+    /// Stored rather than computed at query time so dashboards and rollups do not each
+    /// re-implement the precedence rules.</summary>
+    public string AttributionChannel { get; init; } = "";
+
+    /// <summary>Full landing URL including its query string.</summary>
+    public string? LandingUrl { get; init; }
+
+    /// <summary>Landing page path without the query, for cheap grouping by page.</summary>
+    public string? LandingPath { get; init; }
+    public IReadOnlyList<string> LandingQueryKeys { get; init; } = Array.Empty<string>();
+
+    /// <summary>Every request header, verbatim (D25, owner decision: capture the whole
+    /// request). Includes Cookie and Authorization when present.</summary>
+    public IReadOnlyDictionary<string, string> Headers { get; init; }
+        = new Dictionary<string, string>();
+
+    /// <summary>Every cookie sent with the request, verbatim — the identifier that lets a
+    /// visitor be followed across pages. Includes session and auth cookies, so read access
+    /// to this store is equivalent to holding them.</summary>
+    public IReadOnlyDictionary<string, string> Cookies { get; init; }
+        = new Dictionary<string, string>();
+
     // ---- HTTP layer ----
     public required string Ip { get; init; }           // textual IPv4 or IPv6
     public IReadOnlyList<string> HeaderNames { get; init; } = Array.Empty<string>(); // ordered as received
@@ -33,6 +81,9 @@ public sealed record ClickEvent
     public string? SecChUaPlatform { get; init; }
     public string? AcceptLanguage { get; init; }
     public string? Referrer { get; init; }
+    /// <summary>The page's document.referrer as reported by the browser SDK. Unlike
+    /// Referrer, this preserves the external source when telemetry is cross-origin.</summary>
+    public string? DocumentReferrer { get; init; }
     public string? TlsJa3 { get; init; }               // null unless Cloudflare-fronted (D13)
     public string? TlsJa4 { get; init; }
     public uint? CfAsn { get; init; }                  // ASN as reported by Cloudflare header

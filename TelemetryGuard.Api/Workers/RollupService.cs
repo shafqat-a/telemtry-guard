@@ -8,6 +8,7 @@ using TelemetryGuard.Core.Time;
 using TelemetryGuard.Data;
 using TelemetryGuard.Data.Models;
 using TelemetryGuard.Data.Repositories;
+using TelemetryGuard.Api.Services;
 
 namespace TelemetryGuard.Api.Workers;
 
@@ -103,6 +104,7 @@ public sealed class RollupService(
         var watermarks  = sp.GetRequiredService<IRollupWatermarkRepository>(); // DAT-06, scoped
         var connFactory = sp.GetRequiredService<ITenantConnectionFactory>();   // DAT-03, campaigns query
         var publishers  = sp.GetRequiredService<IPublisherSummaryRepository>(); // P2-01, scoped
+        var webhooks     = sp.GetService<IWebhookPublisher>();
 
         var now = clock.UtcNow.UtcDateTime;
         var rollupName = options.Value.RollupName;
@@ -117,7 +119,7 @@ public sealed class RollupService(
         {
             campaignIds = (await conn.QueryAsync<Guid>(
                 "SELECT CampaignId FROM dbo.Campaigns WHERE TenantId = @TenantId",
-                new { TenantId = tid })).AsList();
+                new { TenantId = tid })).Append(Guid.Empty).Distinct().ToList();
         }
 
         long rows = 0;
@@ -126,7 +128,8 @@ public sealed class RollupService(
             // ClickHouse stores campaign_id as the Guid in "D" format (lowercase,
             // hyphenated) — the same string API-02 stamps onto ClickEvent.CampaignId
             // from the /c?cid= parameter.
-            var report = await queries.GetCampaignReportAsync(campaignId.ToString("D"), range, ct);
+            var report = await queries.GetCampaignReportAsync(
+                campaignId == Guid.Empty ? CampaignScopes.Campaignless : campaignId.ToString("D"), range, ct);
             foreach (var d in report.Days)
             {
                 await summaries.UpsertDailySummaryAsync(MapDay(tid, campaignId, d), ct);
@@ -149,7 +152,10 @@ public sealed class RollupService(
                     Value: s.SourceValue,
                     FlaggedCount: checked((int)s.FlaggedEvents),
                     BlockedCount: checked((int)s.BlockedEvents),
-                    ScoreSum: s.ScoreSum), ct);
+                ScoreSum: s.ScoreSum)
+                {
+                    ScoreDistribution = s.ScoreDistribution,
+                }, ct);
                 rows++;
             }
         }
@@ -189,7 +195,10 @@ public sealed class RollupService(
                 Challenged: checked((int)p.Challenged),
                 Blocked: checked((int)p.Blocked),
                 ScoreSum: p.ScoreSum,                          // AvgScore (NaN included) is never stored
-                NoJsBeaconCount: checked((int)p.NoJsBeaconCount)), ct);
+                NoJsBeaconCount: checked((int)p.NoJsBeaconCount))
+                {
+                    ScoreDistribution = p.ScoreDistribution,
+                }, ct);
             rows++;
         }
 
@@ -204,7 +213,10 @@ public sealed class RollupService(
                 Challenged: checked((int)s.Challenged),
                 Blocked: checked((int)s.Blocked),
                 ScoreSum: s.ScoreSum,
-                NoJsBeaconCount: checked((int)s.NoJsBeaconCount)), ct);
+                NoJsBeaconCount: checked((int)s.NoJsBeaconCount))
+                {
+                    ScoreDistribution = s.ScoreDistribution,
+                }, ct);
             rows++;
         }
 
@@ -212,6 +224,14 @@ public sealed class RollupService(
 
         await watermarks.SetAsync(rollupName, now, ct);  // advance ONLY after all upserts succeeded
         RowsUpserted.Add(rows);
+        if (webhooks is not null)
+            await webhooks.PublishAsync("rollup.completed", $"{rollupName}:{now:O}", new
+            {
+                tenantId = tid,
+                rollup = rollupName,
+                completedUtc = now,
+                rowsUpserted = rows,
+            }, ct);
     }
 
     /// <summary>
@@ -221,10 +241,13 @@ public sealed class RollupService(
     /// missing ≠ zero; AvgScore, NaN included, is deliberately never consumed here).
     /// </summary>
     internal static VerdictDailySummaryRow MapDay(Guid tenantId, Guid campaignId, CampaignDailyCounts d) =>
-        new(TenantId: tenantId, CampaignId: campaignId, Date: d.Day,
+        new VerdictDailySummaryRow(TenantId: tenantId, CampaignId: campaignId, Date: d.Day,
             Allowed: checked((int)d.Allowed), Challenged: checked((int)d.Challenged),
             Blocked: checked((int)d.Blocked), ScoreSum: d.ScoreSum,
-            Events: checked((int)d.ScoredEvents)); // Events = scored (verdict) events; avg = ScoreSum/Events
+            Events: checked((int)d.ScoredEvents))
+        {
+            ScoreDistribution = d.ScoreDistribution,
+        }; // Events = scored (verdict) events; avg = ScoreSum/Events
 
     /// <summary>
     /// Pure window math, all UTC. First run (no watermark) backfills LookbackDays;

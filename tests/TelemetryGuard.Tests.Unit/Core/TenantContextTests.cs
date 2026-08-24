@@ -39,6 +39,21 @@ public class TenantContextTests
         Assert.True(context.IsResolved);
         Assert.Equal(id, context.TenantId);
         Assert.Equal("sk_live_x", context.SiteKey);
+        Assert.Empty(context.Scopes);   // site-key resolutions carry no scopes
+    }
+
+    [Fact]
+    public void Resolve_CopiesScopes_AndUnresolvedScopesThrow()
+    {
+        var context = new TenantContext();
+        Assert.Throws<TenantNotResolvedException>(() => context.Scopes);
+
+        var granted = new List<string> { ApiKeyScopes.Admin, ApiKeyScopes.Report };
+        context.Resolve(new TenantId(Guid.NewGuid()), siteKey: null, scopes: granted);
+        granted.Clear();   // the context must not alias the caller's list
+
+        Assert.Equal(new[] { ApiKeyScopes.Admin, ApiKeyScopes.Report }, context.Scopes);
+        Assert.Null(context.SiteKey);
     }
 
     [Fact]

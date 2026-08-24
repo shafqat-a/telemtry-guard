@@ -167,7 +167,11 @@ public sealed class ClickHouseAnalyticsQueriesTests(ClickHouseAnalyticsQueriesFi
 
         Assert.Equal(3, report.Days.Count);
         Assert.Equal(
-            new CampaignDailyCounts(new DateOnly(2026, 8, 8), 4, 2, 1, 0, 1, 100, 50.0, 1),
+            new CampaignDailyCounts(new DateOnly(2026, 8, 8), 4, 2, 1, 0, 1, 100, 50.0, 1)
+            {
+                ScoreDistribution = new ScoreDistribution(
+                    0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 8_200),
+            },
             report.Days[0]);
 
         var day2 = report.Days[1];

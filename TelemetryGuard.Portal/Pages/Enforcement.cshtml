@@ -19,7 +19,7 @@
     <p class="tg-filter-form">
         @foreach (var s in TelemetryGuard.Portal.Pages.EnforcementModel.AllStatuses)
         {
-            <a href="/enforcement?status=@s" class="badge badge-@s">@s@(s == Model.Status ? " (current)" : "")</a>
+            <a href="@Url.Content("~/enforcement")?status=@s" class="badge badge-@s">@s@(s == Model.Status ? " (current)" : "")</a>
         }
     </p>
 

@@ -36,7 +36,7 @@ public interface IVerdictSummaryRepository
 
     /// <summary>Read for API-07/dashboards: inclusive date range, one campaign.</summary>
     Task<IReadOnlyList<VerdictDailySummaryRow>> GetDailySummariesAsync(
-        Guid campaignId, DateOnly from, DateOnly to, CancellationToken ct);
+        Guid? campaignId, DateOnly from, DateOnly to, CancellationToken ct);
 
     /// <summary>Top flagged sources over an inclusive date range, ordered by
     /// BlockedCount desc then FlaggedCount desc.</summary>

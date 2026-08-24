@@ -76,6 +76,28 @@ RUN mkdir -p /out/app/wwwroot/sdk \
  && test -f /out/app/wwwroot/sdk/tg.js.map \
  && ls -1 /out/app/wwwroot/sdk
 
+# ---------- portal publish (P2-03; only reached via `--target portal`) ----------
+FROM mcr.microsoft.com/dotnet/sdk:8.0 AS portal-build
+WORKDIR /src
+COPY Directory.Build.props ./
+COPY TelemetryGuard.Portal/TelemetryGuard.Portal.csproj TelemetryGuard.Portal/
+RUN dotnet restore TelemetryGuard.Portal/TelemetryGuard.Portal.csproj
+COPY TelemetryGuard.Portal/ TelemetryGuard.Portal/
+RUN dotnet publish TelemetryGuard.Portal/TelemetryGuard.Portal.csproj \
+        -c Release --no-restore -o /out/portal
+
+# ---------- portal runtime (docker build --target portal) ----------
+# Kept ABOVE the API runtime stage on purpose: the LAST stage is the default build
+# target, and CI's plain `docker build .` must keep producing the API image.
+FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS portal
+WORKDIR /app
+COPY --from=portal-build /out/portal ./
+ENV ASPNETCORE_ENVIRONMENT=Production \
+    ASPNETCORE_HTTP_PORTS=8080
+EXPOSE 8080
+USER $APP_UID
+CMD ["dotnet", "/app/TelemetryGuard.Portal.dll"]
+
 # ---------- stage 3: runtime ----------
 FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS runtime
 ARG GIT_SHA=unknown

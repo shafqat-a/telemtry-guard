@@ -20,10 +20,10 @@ const FALLBACK_DELAY_MS = 500;
 const INIT_WAIT_MAX_MS = 4000;
 const INIT_POLL_MS = 100;
 
-/** One fingerprint event per session: sessionStorage keys off the sid. */
+/** One fingerprint event per page visit. */
 function alreadySentThisSession(): boolean {
   try {
-    return sessionStorage.getItem(SENT_KEY) === state.sid;
+    return sessionStorage.getItem(SENT_KEY) === state.visitId;
   } catch {
     return false;
   }
@@ -31,7 +31,7 @@ function alreadySentThisSession(): boolean {
 
 function markSent(): void {
   try {
-    sessionStorage.setItem(SENT_KEY, state.sid);
+    sessionStorage.setItem(SENT_KEY, state.visitId);
   } catch {
     /* storage may throw (privacy modes) */
   }

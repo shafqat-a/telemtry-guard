@@ -12,6 +12,7 @@ using NSubstitute;
 using StackExchange.Redis;
 using TelemetryGuard.Analytics.Abstractions;
 using TelemetryGuard.Api.Services;
+using TelemetryGuard.Api.Options;
 using TelemetryGuard.Core.Tenancy;
 using TelemetryGuard.Core.Time;
 using TelemetryGuard.Data.Models;
@@ -122,6 +123,8 @@ public sealed class BeaconEndpointTests
         public readonly Dictionary<string, string> Strings = [];
         public readonly Dictionary<string, TimeSpan?> StringTtls = [];
         public readonly Dictionary<string, Dictionary<string, string>> Hashes = [];
+        public readonly Dictionary<string, Dictionary<string, double>> SortedSets = [];
+        public readonly Dictionary<string, HashSet<string>> Sets = [];
         public readonly List<(string Key, TimeSpan? Ttl)> Expires = [];
         private readonly object _gate = new();
 
@@ -162,6 +165,14 @@ public sealed class BeaconEndpointTests
                           : Array.Empty<HashEntry>();
               });
 
+            db.KeyExistsAsync(Arg.Any<RedisKey>(), Arg.Any<CommandFlags>())
+              .Returns(ci =>
+              {
+                  lock (_gate)
+                      return Hashes.ContainsKey(ci.ArgAt<RedisKey>(0).ToString())
+                          || Strings.ContainsKey(ci.ArgAt<RedisKey>(0).ToString());
+              });
+
             db.When(d => d.HashSetAsync(Arg.Any<RedisKey>(), Arg.Any<HashEntry[]>()))
               .Do(ci =>
               {
@@ -182,6 +193,35 @@ public sealed class BeaconEndpointTests
                   lock (_gate)
                       Expires.Add((ci.ArgAt<RedisKey>(0).ToString(), ci.ArgAt<TimeSpan?>(1)));
               });
+
+            db.SortedSetAddAsync(Arg.Any<RedisKey>(), Arg.Any<RedisValue>(), Arg.Any<double>(),
+                    Arg.Any<When>(), Arg.Any<CommandFlags>())
+              .Returns(ci => AddSorted(
+                  ci.ArgAt<RedisKey>(0).ToString(), ci.ArgAt<RedisValue>(1).ToString(),
+                  ci.ArgAt<double>(2), ci.ArgAt<When>(3)));
+
+            db.SetAddAsync(Arg.Any<RedisKey>(), Arg.Any<RedisValue>(), Arg.Any<CommandFlags>())
+              .Returns(ci =>
+              {
+                  lock (_gate)
+                  {
+                      var key = ci.ArgAt<RedisKey>(0).ToString();
+                      if (!Sets.TryGetValue(key, out var set)) Sets[key] = set = [];
+                      return set.Add(ci.ArgAt<RedisValue>(1).ToString());
+                  }
+              });
+        }
+
+        private bool AddSorted(string key, string member, double score, When when)
+        {
+            lock (_gate)
+            {
+                if (!SortedSets.TryGetValue(key, out var set)) SortedSets[key] = set = [];
+                if (when == When.NotExists && set.ContainsKey(member)) return false;
+                var added = !set.ContainsKey(member);
+                set[member] = score;
+                return added;
+            }
         }
 
         private bool SetString(string key, string value, TimeSpan? ttl, When when)
@@ -284,6 +324,15 @@ public sealed class BeaconEndpointTests
         => $"{{\"k\":\"{k}\",\"sid\":\"{sid}\",\"seq\":{seq},\"nonce\":\"{nonce}\"," +
            $"\"sent_at\":{sentAt ?? NowMs},\"events\":{eventsJson}}}";
 
+    /// <summary>The shipped SDK envelope shape (3afde1a): session_id is the persistent
+    /// session, sid == visit_id is the per-document-load identity the server scopes the
+    /// aggregate hash, nonce and seq counter on.</summary>
+    private static string VisitEnvelope(
+        long seq, string eventsJson, string sessionId, string visitId, string nonce = "")
+        => $"{{\"k\":\"{SiteKey}\",\"session_id\":\"{sessionId}\",\"sid\":\"{visitId}\"," +
+           $"\"visit_id\":\"{visitId}\",\"seq\":{seq},\"nonce\":\"{nonce}\"," +
+           $"\"sent_at\":{NowMs},\"events\":{eventsJson}}}";
+
     private static HttpRequestMessage Post(
         string body, string contentType = "text/plain", string k = SiteKey,
         params (string Name, string Value)[] headers)
@@ -330,7 +379,7 @@ public sealed class BeaconEndpointTests
 
         // Nonce persisted under t:{tid}:nonce:{sid} with the configured TTL.
         Assert.Equal(nonce, app.Redis.Strings[$"t:{Tid}:nonce:{HexSid}"]);
-        Assert.Equal(TimeSpan.FromSeconds(900), app.Redis.StringTtls[$"t:{Tid}:nonce:{HexSid}"]);
+        Assert.Equal(TimeSpan.FromSeconds(1800), app.Redis.StringTtls[$"t:{Tid}:nonce:{HexSid}"]); // == SessionTtlSeconds by default
     }
 
     [Theory]
@@ -462,6 +511,92 @@ public sealed class BeaconEndpointTests
     }
 
     [Fact]
+    public async Task Post_AcceptedBatches_RegisterAndRefreshBeaconQuietPeriod_ReplayDoesNot()
+    {
+        using var app = new BeaconApp(new() { ["Beacon:FinalizeQuietSeconds"] = "30" });
+        using var client = app.Client();
+        var graceKey = $"t:{Tid}:grace";
+
+        await client.SendAsync(Post(Envelope(0, "[]")));
+        Assert.Equal(FixedNow.AddSeconds(30).ToUnixTimeSeconds(),
+            app.Redis.SortedSets[graceKey][HexSid]);
+        Assert.Contains(Tid, app.Redis.Sets["grace:tenants"]);
+        var context = app.Redis.Hashes[$"t:{Tid}:click:{HexSid}"];
+        Assert.Equal("beacon", context["kind"]);
+        Assert.Equal(RemoteIp.ToString(), context["ip"]);
+        Assert.Equal(SiteKey, context["site_key"]);
+
+        app.Clock.UtcNow = FixedNow.AddSeconds(12);
+        await client.SendAsync(Post(Envelope(1, "[]", sentAt: app.Clock.UtcNow.ToUnixTimeMilliseconds())));
+        Assert.Equal(FixedNow.AddSeconds(42).ToUnixTimeSeconds(),
+            app.Redis.SortedSets[graceKey][HexSid]);
+
+        app.Clock.UtcNow = FixedNow.AddSeconds(20);
+        await client.SendAsync(Post(Envelope(1, "[]", sentAt: app.Clock.UtcNow.ToUnixTimeMilliseconds())));
+        Assert.Equal(FixedNow.AddSeconds(42).ToUnixTimeSeconds(),
+            app.Redis.SortedSets[graceKey][HexSid]);
+    }
+
+    /// <summary>The page-2 regression: one browser session, two document loads. The
+    /// SDK restarts seq at 0 and fetches a fresh nonce on every load, so nonce and
+    /// last_seq MUST be scoped per visit — otherwise every multi-page visit reads as a
+    /// replayed, tampered beacon (integrity_fails → the beacon_integrity_failed T1
+    /// floor of 85) and its events are dropped.</summary>
+    [Fact]
+    public async Task Post_TwoVisitsOfOneSession_EachStartAtSeqZero_NeitherIsAReplay()
+    {
+        using var app = new BeaconApp();
+        using var client = app.Client();
+        const string sessionId = "9f8e7d6c5b4a39281706f5e4d3c2b1a0";
+        const string visit1 = "11111111-2222-4333-8444-555555555555";
+        const string visit2 = "66666666-7777-4888-9999-aaaaaaaaaaaa";
+        const string pv = """[{"e":"pv","t":1}]""";
+
+        async Task<string> InitAsync(string visitId)
+        {
+            var init = await client.GetAsync($"/i/init?k={SiteKey}&sid={visitId}");
+            return JsonSerializer.Deserialize<JsonElement>(await init.Content.ReadAsStringAsync())
+                .GetProperty("nonce").GetString()!;
+        }
+
+        // Visit 1 (landing page): init, then seq 0 and 1.
+        var nonce1 = await InitAsync(visit1);
+        await client.SendAsync(Post(VisitEnvelope(0, pv, sessionId, visit1, nonce1)));
+        await client.SendAsync(Post(VisitEnvelope(1, pv, sessionId, visit1, nonce1)));
+
+        // Visit 2 (next page in the same tab): a NEW init overwrites nothing of visit 1,
+        // and seq restarts at 0 without being a replay.
+        var nonce2 = await InitAsync(visit2);
+        Assert.NotEqual(nonce1, nonce2);
+        var second = await client.SendAsync(Post(VisitEnvelope(0, pv, sessionId, visit2, nonce2)));
+        Assert.Equal(HttpStatusCode.NoContent, second.StatusCode);
+
+        // Visit 1's late pagehide flush (racing visit 2's init) still verifies.
+        await client.SendAsync(Post(VisitEnvelope(2, pv, sessionId, visit1, nonce1)));
+
+        var h1 = app.Redis.SessionHash(visit1);
+        var h2 = app.Redis.SessionHash(visit2);
+        Assert.Equal("3", h1["n_pv"]);
+        Assert.Equal("2", h1["last_seq"]);
+        Assert.Equal("1", h2["n_pv"]);
+        Assert.Equal("0", h2["last_seq"]);
+        foreach (var h in new[] { h1, h2 })
+        {
+            Assert.Equal("1", h["nonce_ok"]);
+            Assert.DoesNotContain("seq_replays", h.Keys);
+            Assert.DoesNotContain("integrity_fails", h.Keys);
+        }
+
+        // The nonce lives at least as long as the visit's aggregate hash.
+        Assert.True(app.Redis.StringTtls[$"t:{Tid}:nonce:{visit1}"]
+            >= TimeSpan.FromSeconds(new BeaconOptions().SessionTtlSeconds));
+
+        // Journey linkage survives: both visits carry the canonical session id.
+        Assert.Equal(sessionId, app.Redis.Hashes[$"t:{Tid}:click:{visit1}"]["session_id"]);
+        Assert.Equal(sessionId, app.Redis.Hashes[$"t:{Tid}:click:{visit2}"]["session_id"]);
+    }
+
+    [Fact]
     public async Task Post_NonceRoundTrip_ThroughARealInitCall()
     {
         using var app = new BeaconApp();
@@ -521,9 +656,8 @@ public sealed class BeaconEndpointTests
     }
 
     /// <summary>INT-05: no Cloudflare fronting -> the beacon's own snapshot
-    /// ClickEvent carries null TlsJa3/TlsJa4/CfAsn (missing ≠ zero); no click-context
-    /// hash write happens on this path at all (that stays API-02/API-03's job) —
-    /// only t:{tid}:sess:{sid} is touched here.</summary>
+    /// ClickEvent carries null TlsJa3/TlsJa4/CfAsn (missing ≠ zero), while the
+    /// organic-beacon HTTP context is retained for later scoring.</summary>
     [Fact]
     public async Task EdgeSignals_Absent_SnapshotClickEventStaysNull_NoClickContextHashWritten()
     {
@@ -536,12 +670,12 @@ public sealed class BeaconEndpointTests
         Assert.Null(evt.TlsJa3);
         Assert.Null(evt.TlsJa4);
         Assert.Null(evt.CfAsn);
-        Assert.False(app.Redis.Hashes.ContainsKey($"t:{Tid}:click:{HexSid}"));
+        Assert.Equal("", app.Redis.Hashes[$"t:{Tid}:click:{HexSid}"]["tls_fp"]);
     }
 
     /// <summary>INT-05: Cloudflare-fronted + a Cloudflare-range direct peer -> the
     /// snapshot ClickEvent for THIS beacon POST carries TlsJa3/TlsJa4/CfAsn (analytics
-    /// completeness for the beacon path); still no click-context hash write.</summary>
+    /// completeness for the beacon path) and the fingerprint is retained for scoring.</summary>
     [Fact]
     public async Task EdgeSignals_Present_WhenCloudflareFronted_PopulatesTheSnapshotClickEvent()
     {
@@ -557,7 +691,8 @@ public sealed class BeaconEndpointTests
         Assert.Equal("cd08e31494f9531f560d64c695473da9", evt.TlsJa3);
         Assert.Null(evt.TlsJa4);
         Assert.Equal(13335u, evt.CfAsn);
-        Assert.False(app.Redis.Hashes.ContainsKey($"t:{Tid}:click:{HexSid}"));
+        Assert.Equal("cd08e31494f9531f560d64c695473da9",
+            app.Redis.Hashes[$"t:{Tid}:click:{HexSid}"]["tls_fp"]);
     }
 
     [Fact]
@@ -615,6 +750,69 @@ public sealed class BeaconEndpointTests
         Assert.Empty(app.Redis.Hashes);
         Assert.Empty(app.Sink.Events);
         Assert.Empty(app.Velocity.Sessions);
+    }
+
+    [Fact]
+    public async Task Post_SiteKeyFromEnvelopeOnly_IsAccepted_AsTheShippedSdkSendsIt()
+    {
+        // SDK-02 is the canonical wire contract and puts `k` INSIDE the envelope for
+        // POST /i — only /i/init and /decide take it as a query param. The server used to
+        // require the query form, so every real beacon was silently 204'd: bundle loads,
+        // /i/init succeeds, POST /i returns 204, and nothing is ever recorded.
+        using var app = new BeaconApp();
+        using var client = app.Client();
+
+        var req = new HttpRequestMessage(HttpMethod.Post, "/i")   // no ?k=
+        {
+            Content = new StringContent(
+                Envelope(0, """[{"e":"pv","t":1}]"""), Encoding.UTF8, "text/plain"),
+        };
+        req.Headers.TryAddWithoutValidation("User-Agent", "TestUA/1.0");
+
+        var resp = await client.SendAsync(req);
+
+        Assert.Equal(HttpStatusCode.NoContent, resp.StatusCode);
+        Assert.NotEmpty(app.Redis.Hashes);   // session aggregate written
+        Assert.NotEmpty(app.Sink.Events);    // first beacon always snapshots
+    }
+
+    [Fact]
+    public async Task Post_UnknownSiteKeyInEnvelopeOnly_StaysASuccessShapedDrop()
+    {
+        using var app = new BeaconApp();
+        using var client = app.Client();
+
+        var req = new HttpRequestMessage(HttpMethod.Post, "/i")
+        {
+            Content = new StringContent(
+                Envelope(0, """[{"e":"pv","t":1}]""", k: "who-dis"), Encoding.UTF8, "text/plain"),
+        };
+
+        var resp = await client.SendAsync(req);
+
+        Assert.Equal(HttpStatusCode.NoContent, resp.StatusCode);
+        Assert.Empty(app.Redis.Hashes);
+        Assert.Empty(app.Sink.Events);
+    }
+
+    [Fact]
+    public async Task Post_QuerySiteKeyStillWins_AndAMismatchedEnvelopeKeyIsStillDropped()
+    {
+        // The query form must keep working: it is what lets the tenant middleware (and
+        // the per-tenant rate-limit partition) resolve a beacon before the handler runs.
+        using var app = new BeaconApp();
+        using var client = app.Client();
+
+        var accepted = await client.SendAsync(Post(Envelope(0, """[{"e":"pv","t":1}]""")));
+        Assert.Equal(HttpStatusCode.NoContent, accepted.StatusCode);
+        Assert.NotEmpty(app.Redis.Hashes);
+
+        using var app2 = new BeaconApp();
+        using var client2 = app2.Client();
+        var mismatched = await client2.SendAsync(Post(
+            Envelope(0, """[{"e":"pv","t":1}]""", k: "tg_sk_someoneelse")));   // query != body
+        Assert.Equal(HttpStatusCode.NoContent, mismatched.StatusCode);
+        Assert.Empty(app2.Redis.Hashes);
     }
 
     [Fact]

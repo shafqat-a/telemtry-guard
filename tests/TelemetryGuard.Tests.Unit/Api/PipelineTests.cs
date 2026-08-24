@@ -145,6 +145,73 @@ public sealed class PipelineTests
     }
 
     [Fact]
+    public async Task TwoProxyChain_ResolvesTheClientIp_WhenForwardLimitCoversBothHops()
+    {
+        // A platform edge (203.0.113.1) in front of a local nginx (127.0.0.1) that also
+        // appends: X-Forwarded-For ends up "<client>, <edge>" with the socket on nginx.
+        var socketIp = IPAddress.Parse("127.0.0.1");
+        using var factory = CreateFactory(
+            settings: new()
+            {
+                ["ForwardedHeaders:TrustedProxyCidrs:0"] = "127.0.0.1/32",
+                ["ForwardedHeaders:TrustedProxyCidrs:1"] = "203.0.113.1/32",
+                ["ForwardedHeaders:ForwardLimit"] = "2",
+            },
+            remoteIp: socketIp);
+        using var client = factory.CreateClient();
+
+        var resp = await client.SendAsync(Get("/__test/ip",
+            ("X-Api-Key", ApiKey), ("X-Forwarded-For", "198.51.100.7, 203.0.113.1")));
+        var body = await resp.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+        Assert.Equal("198.51.100.7", body); // both trusted hops unwound, real client left
+    }
+
+    [Fact]
+    public async Task TwoProxyChain_StopsAtTheEdge_WhenForwardLimitIsLeftAtOne()
+    {
+        // Same chain, default limit: only nginx is unwound, so the edge's own address is
+        // what the app sees. This is the misconfiguration that silently collapses every
+        // visitor onto one IP — geo, ASN and velocity all become meaningless.
+        var socketIp = IPAddress.Parse("127.0.0.1");
+        using var factory = CreateFactory(
+            settings: new()
+            {
+                ["ForwardedHeaders:TrustedProxyCidrs:0"] = "127.0.0.1/32",
+                ["ForwardedHeaders:TrustedProxyCidrs:1"] = "203.0.113.1/32",
+            },
+            remoteIp: socketIp);
+        using var client = factory.CreateClient();
+
+        var resp = await client.SendAsync(Get("/__test/ip",
+            ("X-Api-Key", ApiKey), ("X-Forwarded-For", "198.51.100.7, 203.0.113.1")));
+
+        Assert.Equal("203.0.113.1", await resp.Content.ReadAsStringAsync());
+    }
+
+    [Fact]
+    public async Task ForwardLimit_DoesNotLetAnUntrustedHopBeUnwound()
+    {
+        // ForwardLimit 2 but only nginx trusted: the middleware must stop at the first
+        // untrusted address instead of walking further up a client-supplied header.
+        var socketIp = IPAddress.Parse("127.0.0.1");
+        using var factory = CreateFactory(
+            settings: new()
+            {
+                ["ForwardedHeaders:TrustedProxyCidrs:0"] = "127.0.0.1/32",
+                ["ForwardedHeaders:ForwardLimit"] = "2",
+            },
+            remoteIp: socketIp);
+        using var client = factory.CreateClient();
+
+        var resp = await client.SendAsync(Get("/__test/ip",
+            ("X-Api-Key", ApiKey), ("X-Forwarded-For", "1.2.3.4, 198.51.100.9")));
+
+        Assert.Equal("198.51.100.9", await resp.Content.ReadAsStringAsync());
+    }
+
+    [Fact]
     public async Task RateLimiter_Returns429_WhenTenantBucketIsExhausted()
     {
         using var factory = CreateFactory(settings: new()

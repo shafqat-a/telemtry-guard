@@ -10,6 +10,7 @@
 using System.Text.RegularExpressions;
 using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.HttpOverrides;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.AspNetCore.StaticFiles;
 using Microsoft.Extensions.FileProviders;
 using OpenTelemetry.Metrics;
@@ -23,6 +24,7 @@ using TelemetryGuard.Api.Health;
 using TelemetryGuard.Api.Middleware;
 using TelemetryGuard.Api.Options;
 using TelemetryGuard.Api.Services;
+using TelemetryGuard.Api.Workers;
 using TelemetryGuard.Core.Tenancy;
 using TelemetryGuard.Core.Time;
 using TelemetryGuard.Data;
@@ -97,6 +99,13 @@ builder.Services.AddOptions<BeaconOptions>()
     .Validate(
         o => !string.IsNullOrEmpty(o.HmacSecret) && o.HmacSecret.Length >= 32,
         "Beacon:HmacSecret must be set and at least 32 characters (API-04).")
+    .Validate(
+        o => o.FinalizeQuietSeconds > 0 && o.FinalizeQuietSeconds < o.SessionTtlSeconds,
+        "Beacon:FinalizeQuietSeconds must be positive and shorter than SessionTtlSeconds.")
+    .Validate(
+        o => o.NonceTtlSeconds >= o.SessionTtlSeconds,
+        "Beacon:NonceTtlSeconds must be at least SessionTtlSeconds — a nonce that expires " +
+        "before the visit's session hash makes late flushes look tampered.")
     .ValidateOnStart();
 
 // P2-02: registry-driven model selection (D18). When Scoring:ModelSource is
@@ -144,13 +153,30 @@ builder.Services.Configure<ScoringBandOptions>(
 // (per-tenant dbo.Tenants.EnforcementMode via TenantRecord is authoritative).
 builder.Services.Configure<TelemetryGuard.Api.Options.EnforcementOptions>(
     builder.Configuration.GetSection(TelemetryGuard.Api.Options.EnforcementOptions.SectionName));
+builder.Services.Configure<WebhookOptions>(builder.Configuration.GetSection(WebhookOptions.SectionName));
+builder.Services.AddScoped<IWebhookPublisher, WebhookPublisher>();
+builder.Services.AddHostedService<WebhookDeliveryService>();
 
 // API-06: real verdict finalizer (verdict persistence, exclusion-queue writes,
 // EnforcementMode handling, summary MERGEs) — replaces API-05's build-order
 // stub. Scoped: it consumes scoped tenant-bound repositories and must be
 // resolved from a scope (API-05's per-request scope or the grace worker's
 // manual scope below both satisfy this).
-builder.Services.AddScoped<IVerdictFinalizer, VerdictFinalizer>();
+builder.Services.AddScoped<IVerdictFinalizer>(sp => new VerdictFinalizer(
+    sp.GetRequiredService<IScoringPipeline>(),
+    sp.GetRequiredService<TelemetryGuard.Analytics.Abstractions.IEventSink>(),
+    sp.GetRequiredService<TelemetryGuard.Data.Repositories.IExclusionQueueRepository>(),
+    sp.GetRequiredService<TelemetryGuard.Data.Repositories.IVerdictSummaryRepository>(),
+    sp.GetRequiredService<TelemetryGuard.Analytics.Abstractions.ILabelSink>(),
+    sp.GetRequiredService<ITenantPolicyProvider>(),
+    sp.GetRequiredService<TelemetryGuard.Data.Repositories.ICampaignRepository>(),
+    sp.GetRequiredService<IConnectionMultiplexer>(),
+    sp.GetRequiredService<IClock>(),
+    sp.GetRequiredService<Microsoft.Extensions.Caching.Memory.IMemoryCache>(),
+    sp.GetRequiredService<ITenantContext>(),
+    sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<RetentionOptions>>(),
+    sp.GetRequiredService<ILogger<VerdictFinalizer>>()));
+builder.Services.AddScoped<ITenantPolicyProvider, TenantPolicyProvider>();
 
 // API-06: grace-period worker — every second, finalizes sessions whose ~10 s
 // beacon grace period (API-02/API-03) expired with no beacon ever arriving.
@@ -198,7 +224,14 @@ builder.Services.AddSingleton<IEdgeSignalReader, EdgeSignalReader>();
 builder.Services.Configure<ForwardedHeadersOptions>(o =>
 {
     o.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
-    o.ForwardLimit = 1;
+    // How many proxy hops to unwind. 1 is right for a single edge in front of Kestrel
+    // (the Cloudflare deployment, D13). Raise it ONLY to the exact number of proxies you
+    // actually operate, and list every one of them in TrustedProxyCidrs: each extra hop
+    // is one more X-Forwarded-For entry the middleware will accept, so a limit larger
+    // than the real chain lets a client prepend a forged address and be believed.
+    // Example — a platform edge in front of a local nginx that also appends
+    // ($proxy_add_x_forwarded_for) — needs ForwardLimit 2 and both CIDRs trusted.
+    o.ForwardLimit = Math.Max(1, builder.Configuration.GetValue("ForwardedHeaders:ForwardLimit", 1));
     o.KnownNetworks.Clear();
     o.KnownProxies.Clear();
     var cidrs = builder.Configuration.GetSection("ForwardedHeaders:TrustedProxyCidrs")
@@ -235,6 +268,12 @@ var bucketSize      = builder.Configuration.GetValue("RateLimiting:BucketSize", 
 builder.Services.AddRateLimiter(o =>
 {
     o.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    o.AddFixedWindowLimiter("verdict-export", limiter =>
+    {
+        limiter.PermitLimit = 30;
+        limiter.Window = TimeSpan.FromMinutes(1);
+        limiter.QueueLimit = 0;
+    });
     o.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(ctx =>
     {
         var path = ctx.Request.Path;
@@ -366,6 +405,9 @@ app.MapPixelEndpoints();         // API-03  GET /p.gif
 app.MapBeaconEndpoints();        // API-04  GET /i/init, POST /i
 app.MapDecisionEndpoints();      // API-05  POST /decide
 app.MapAdminEndpoints();         // API-07  /admin/*
+app.MapPolicyAdminEndpoints();   // REQ-06 /admin/policy
+app.MapVerdictEvidenceEndpoints(); // REQ-04/05 projected verdict evidence
+app.MapLabelAdminEndpoints();     // REQ-09 durable reviewer labels
 app.MapEnforcementAdminEndpoints(); // INT-02  /admin/enforcement/*
 app.Run();
 

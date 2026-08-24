@@ -24,10 +24,19 @@ export interface TgEvent {
  */
 export interface Envelope {
   k: string;
+  session_id: string;
   sid: string;
+  visit_id: string;
   seq: number;
   nonce: string;
   sent_at: number;
+  // SDK-09 page context. Present so the API keeps working when it is mounted on a
+  // different origin than the page, where the server can see neither the landing URL
+  // (Referer is trimmed to the origin) nor the cookies (SameSite=Lax). Same-origin the
+  // server observes both itself and these are redundant — it prefers what it observed.
+  u?: string;                    // location.href, query string included
+  r?: string;                    // document.referrer — the TRUE external referrer
+  ck?: Record<string, string>;   // cookies readable by script (never HttpOnly ones)
   events: TgEvent[];
 }
 

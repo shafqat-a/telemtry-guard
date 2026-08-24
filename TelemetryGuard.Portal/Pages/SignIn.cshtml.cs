@@ -73,5 +73,5 @@ public sealed class SignInModel(IAdminApiClient api, IMemoryCache cache, IOption
 
     /// <summary>Open-redirect guard, same discipline as API-02's LandingUrl rule.</summary>
     private string SafeReturn(string? returnUrl)
-        => Url.IsLocalUrl(returnUrl) ? returnUrl! : "/";
+        => Url.IsLocalUrl(returnUrl) ? returnUrl! : Url.Content("~/");
 }

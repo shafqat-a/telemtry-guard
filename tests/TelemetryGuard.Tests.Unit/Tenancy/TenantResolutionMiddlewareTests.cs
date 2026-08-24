@@ -73,6 +73,8 @@ public sealed class TenantResolutionMiddlewareTests
         Assert.True(h.Tenant.IsResolved);
         Assert.Equal(TenantA, h.Tenant.TenantId.Value);
         Assert.Null(h.Tenant.SiteKey);
+        // API-07: the key's granted scopes ride into ambient state for AdminScopeFilter.
+        Assert.Equal(new[] { "read", "write" }, h.Tenant.Scopes);
     }
 
     // 2. Admin route with no header -> 401 problem+json, next NOT invoked.

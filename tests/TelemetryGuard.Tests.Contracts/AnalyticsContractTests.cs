@@ -154,6 +154,11 @@ public abstract class AnalyticsContractTests<TFixture>(TFixture fx) : IClassFixt
         Assert.Equal(1, report.Challenged);
         Assert.Equal(1, report.Blocked);
         Assert.Equal((10 + 20 + 90 + 50) / 4.0, report.AvgScore, 0.01); // seeded weighted mean
+        Assert.Equal(new long[] { 0, 1, 1, 0, 0, 1, 0, 0, 0, 1, 0 },
+            report.ScoreDistribution.Counts);
+        Assert.Equal(10L * 10 + 20L * 20 + 50L * 50 + 90L * 90,
+            report.ScoreDistribution.SumSq);
+        Assert.Equal(report.ScoredEvents, report.ScoreDistribution.Count);
 
         Assert.Equal(2, report.Days.Count);         // empty day 3 absent
         Assert.True(report.Days[0].Day < report.Days[1].Day, "Days must be ordered ascending");
@@ -167,6 +172,7 @@ public abstract class AnalyticsContractTests<TFixture>(TFixture fx) : IClassFixt
         Assert.Equal(1, d1.Blocked);
         Assert.Equal(10 + 20 + 90, d1.ScoreSum);    // sum of seeded scores
         Assert.Equal((10 + 20 + 90) / 3.0, d1.AvgScore, 0.01);
+        Assert.Equal(d1.ScoredEvents, d1.ScoreDistribution.Count);
 
         var d2 = report.Days[1];
         Assert.Equal(DateOnly.FromDateTime(day2), d2.Day);
@@ -249,6 +255,9 @@ public abstract class AnalyticsContractTests<TFixture>(TFixture fx) : IClassFixt
         var chal = Assert.Single(all, s => SameIp(s.SourceValue, ipChal));
         Assert.Equal(2, chal.FlaggedEvents);   // challenge verdicts count as flagged...
         Assert.Equal(0, chal.BlockedEvents);   // ...but never as blocked
+        Assert.Equal(chal.FlaggedEvents, chal.ScoreDistribution.Count);
+        Assert.Equal(new long[] { 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0 },
+            chal.ScoreDistribution.Counts);
 
         var limited = await queries.GetTopFlaggedSourcesAsync(range, 2, Ct);
         Assert.Equal(2, limited.Count);        // limit respected exactly

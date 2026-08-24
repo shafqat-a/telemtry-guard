@@ -74,7 +74,7 @@ After `FND-01`, four tracks proceed **in parallel**:
 | INT-01 | Turnstile verification service | S | FND-01 | [`INT-01-turnstile-verification-service.md`](tasks/INT-01-turnstile-verification-service.md) |
 | OPS-01 | Grafana provisioning and starter dashboards | M | FND-02, ANA-02 | [`OPS-01-grafana-provisioning-and-dashboards.md`](tasks/OPS-01-grafana-provisioning-and-dashboards.md) |
 | RSK-01 | "Risk contracts: FraudFeatureVector and IScorer" | L | FND-01 | [`RSK-01-risk-contracts-feature-vector-iscorer.md`](tasks/RSK-01-risk-contracts-feature-vector-iscorer.md) |
-| RSK-02 | "IP enrichment (GeoIP, ASN, proxy, Tor, Private Relay)" | M | FND-01 | [`RSK-02-ip-enrichment.md`](tasks/RSK-02-ip-enrichment.md) |
+| RSK-02 | "IP enrichment (GeoIP, ASN, proxy, Tor, Private Relay)" — *amended by D24: provider model, iplegence default* | M | FND-01 | [`RSK-02-ip-enrichment.md`](tasks/RSK-02-ip-enrichment.md) |
 | RSK-03 | "Redis velocity store and click-id dedupe" | M | FND-02, FND-04 | [`RSK-03-redis-velocity-store.md`](tasks/RSK-03-redis-velocity-store.md) |
 | RSK-04 | "Feature extraction" | L | RSK-01, RSK-02, RSK-03 | [`RSK-04-feature-extraction.md`](tasks/RSK-04-feature-extraction.md) |
 | RSK-05 | "T1 rule engine" | M | RSK-01 | [`RSK-05-t1-rule-engine.md`](tasks/RSK-05-t1-rule-engine.md) |
@@ -290,6 +290,9 @@ graph TD
 Surfaced during plan verification; create numbered task files when their phase approaches:
 
 - **1.5** — Label/feature export query for training (tg_labels ⋈ tg_events); site-level (non-campaign) rollup summaries; rules/weights tuning playbook for the listen-only window; add `cf_bot_score` to ClickEvent + schema (feature-set v2); tenant integration docs (JS vs pixel embed).
+- **1.5 / 2 (D25 follow-up)** — nothing aggregates by `attribution_channel` yet: the rollup job and admin reports still summarize without it, so "how much of last week's paid Meta traffic was fraudulent" needs a raw ClickHouse query. Also: forward `document.referrer` from the SDK so untagged JS visits can be split into organic_search vs direct (today they are all `direct`).
+- **1.5 (contract gap, found 2026-08-16)** — there is no test that exercises the **real** SDK bundle against the **real** API. The SDK e2e suite runs against a mock `/i`, and `BeaconEndpointTests` hand-builds its requests, so the two sides disagreed for the entire MVP without failing anything: the shipped SDK posts `POST /i` with the site key inside the envelope (SDK-02, canonical), while the API required it as a `?k=` query param and silently 204'd every real beacon. Fixed in `BeaconEndpoints` (query first, then envelope `k`), but the class of bug needs a browser-drives-real-API smoke test in CI to stay fixed.
+- **1.5 / 2 (D24 follow-up)** — validate iplegence's *inferred* `traits.usage_type` against live data (it now supplies `AsnType`, including `Mobile`, for ~45% of routable IPv4 space); the composite provider layering IP2Proxy `usage_type` over iplegence remains the fallback only if that inference proves unreliable. Also: scheduled (cron/timer) invocation of `scripts/update-iplegence.sh` in the deployed environment, and an Azure Blob source for it alongside P2-04.
 - **2 / later** — decaying IP-reputation store (`ip_reputation_bad` producer); per-tenant Turnstile keys; per-tenant rate-limit quotas from config; admin re-queue for failed exclusion pushes; exclusion expiry/un-exclusion policy; multi-instance verdict-finalizer claiming (Lua/leader election).
 
 ## Provenance

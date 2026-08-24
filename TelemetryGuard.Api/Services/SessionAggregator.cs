@@ -113,16 +113,16 @@ public static class SessionAggregator
             SetLong(hash, "last_seq", seq);
         }
 
-        // ---- clock skew (recorded, never rejected) ----
+        // ---- clock skew (recorded as its own signal, never rejected, never an
+        // integrity failure: a device clock that is minutes off is ordinary — corporate
+        // images, old Androids — and must not earn the beacon_integrity_failed T1
+        // floor. skew_bad is sticky once tripped; skew_max_ms tracks the worst.) ----
         if (body.TryGetProperty("sent_at", out var sentAtEl) && sentAtEl.ValueKind == JsonValueKind.Number)
         {
             var skew = Math.Abs(nowMs - (long)sentAtEl.GetDouble());
             SetLong(hash, "skew_max_ms", Math.Max(GetLong(hash, "skew_max_ms") ?? 0, skew));
             if (skew > opts.MaxClockSkewMs)
-            {
-                hash["skew_bad"] = "1";
-                integrityFails++;
-            }
+                hash["skew_bad"] = "1";   // absent = never tripped (missing ≠ zero convention)
         }
 
         if (integrityFails > 0)

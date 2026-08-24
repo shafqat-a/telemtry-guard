@@ -28,6 +28,11 @@ public sealed class TenantRepositoryTests(SqlServerFixture fx)
         Assert.Equal((byte)0, tenant.Status);
         Assert.Equal(90, tenant.RetentionDays);      // D20 default
         Assert.Equal((byte)0, tenant.EnforcementMode); // D21 AutoEnforce default
+        Assert.False(tenant.ExternalAuthority);       // REQ-07 backwards-compatible default
+        Assert.Null(tenant.AllowMax);
+        Assert.Null(tenant.ChallengeMax);
+        Assert.Null(tenant.ObserveOnly);
+        Assert.Null(tenant.PolicyUpdatedUtc);
     }
 
     [Fact]
@@ -44,6 +49,30 @@ public sealed class TenantRepositoryTests(SqlServerFixture fx)
         Assert.True(await repo.UpdateRetentionDaysAsync(30, CancellationToken.None));
         Assert.True(await repo.UpdateRetentionDaysAsync(180, CancellationToken.None));
         Assert.Equal(180, (await repo.GetCurrentAsync(CancellationToken.None))!.RetentionDays);
+    }
+
+    [Fact]
+    public async Task UpdatePolicyAsync_null_ExternalAuthority_leaves_the_stored_value_alone()
+    {
+        // REQ-07 regression: a partial policy PUT that omits externalAuthority used to
+        // reset it to false, silently handing enforcement ownership back to the tenant.
+        await using var provider = RepositoryFactory.BuildServices(fx, SqlServerFixture.TenantB);
+        using var scope = provider.CreateScope();
+        var repo = scope.ServiceProvider.GetRequiredService<ITenantRepository>();
+
+        var granted = await repo.UpdatePolicyAsync(
+            new TenantPolicyUpdate(null, null, null, 0, ExternalAuthority: true), null, CancellationToken.None);
+        Assert.True(granted!.ExternalAuthority);
+
+        var partial = await repo.UpdatePolicyAsync(
+            new TenantPolicyUpdate(20, 60, true, 1, ExternalAuthority: null), null, CancellationToken.None);
+        Assert.True(partial!.ExternalAuthority);           // untouched
+        Assert.Equal((byte)20, partial.AllowMax);
+        Assert.Equal((byte)1, partial.EnforcementMode);
+
+        var revoked = await repo.UpdatePolicyAsync(
+            new TenantPolicyUpdate(null, null, null, 0, ExternalAuthority: false), null, CancellationToken.None);
+        Assert.False(revoked!.ExternalAuthority);
     }
 
     [Fact]

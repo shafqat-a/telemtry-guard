@@ -8,6 +8,7 @@ using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Options;
 using StackExchange.Redis;
 using TelemetryGuard.Analytics.Abstractions;
+using TelemetryGuard.Api.Attribution;
 using TelemetryGuard.Api.Edge;
 using TelemetryGuard.Api.Options;
 using TelemetryGuard.Api.Services;
@@ -121,17 +122,6 @@ public static partial class BeaconEndpoints
     {
         var opts = beaconOpts.Value;
 
-        // Tenant resolution, first thing. Unknown key -> success-shaped 204,
-        // indistinguishable in status from an accepted beacon (anti-probing).
-        var k = ctx.Request.Query["k"].ToString();
-        var resolved = string.IsNullOrEmpty(k)
-            ? null
-            : await resolver.ResolveSiteKeyAsync(k, ct);
-        if (resolved is null)
-            return Results.NoContent();
-        tenantContext.Resolve(new TenantId(resolved.TenantId), resolved.SiteKey);
-        var tid = resolved.TenantId.ToString("D");
-
         // Body cap: 413 is the ONLY non-204 status this endpoint produces.
         if (ctx.Request.ContentLength > opts.MaxBodyBytes)
             return Results.StatusCode(StatusCodes.Status413PayloadTooLarge);
@@ -155,6 +145,9 @@ public static partial class BeaconEndpoints
         if (Encoding.UTF8.GetByteCount(rawBody) > opts.MaxBodyBytes)
             return Results.StatusCode(StatusCodes.Status413PayloadTooLarge);
 
+        // Set once the envelope's site key resolves; only used for logging before that.
+        var tid = "(unresolved)";
+
         // Everything after body-read: failures are logged and swallowed — 204 always.
         try
         {
@@ -165,15 +158,51 @@ public static partial class BeaconEndpoints
             }
             catch (JsonException)
             {
-                Log(loggerFactory, null, "Beacon drop: unparsable JSON for tenant {TenantId}", tid);
+                Log(loggerFactory, null, "Beacon drop: unparsable JSON");
                 return Results.NoContent();
             }
+
+            // Site key: query string first, then the envelope's own `k`. SDK-02 — the
+            // canonical wire contract — carries the key INSIDE the envelope for POST /i
+            // (only /i/init and /decide take it as a query param), so a body-only key is
+            // the normal case for the shipped SDK, not a fallback. The query form is kept
+            // because it is what lets TenantResolutionMiddleware (and therefore the
+            // per-tenant rate-limit partition) resolve a beacon before this handler runs.
+            //
+            // Resolution has to happen after the body read for that reason, which is safe:
+            // the size caps above are tenant-independent and already ran.
+            var k = ctx.Request.Query["k"].ToString();
+            if (string.IsNullOrEmpty(k)
+                && body.ValueKind == JsonValueKind.Object
+                && body.TryGetProperty("k", out var envelopeKey)
+                && envelopeKey.ValueKind == JsonValueKind.String)
+            {
+                k = envelopeKey.GetString() ?? string.Empty;
+            }
+
+            // Unknown key -> success-shaped 204, indistinguishable in status from an
+            // accepted beacon (anti-probing).
+            var resolved = string.IsNullOrEmpty(k)
+                ? null
+                : await resolver.ResolveSiteKeyAsync(k, ct);
+            if (resolved is null)
+                return Results.NoContent();
+            tenantContext.Resolve(new TenantId(resolved.TenantId), resolved.SiteKey);
+            tid = resolved.TenantId.ToString("D");
 
             // Validation (silent drops). seq >= 0: SDK-02 starts at 0 — the first
             // envelope of every session is seq:0 and MUST be accepted.
             if (body.ValueKind != JsonValueKind.Object
                 || !body.TryGetProperty("sid", out var sidEl) || sidEl.ValueKind != JsonValueKind.String
                 || sidEl.GetString() is not { } sid || !SidShape().IsMatch(sid)
+                || (body.TryGetProperty("visit_id", out var visitEl)
+                    && (visitEl.ValueKind != JsonValueKind.String
+                        || visitEl.GetString() is not { } suppliedVisitId
+                        || !SidShape().IsMatch(suppliedVisitId)))
+                || (body.TryGetProperty("session_id", out var sessionEl)
+                    && (sessionEl.ValueKind != JsonValueKind.String
+                        || sessionEl.GetString() is not { } suppliedSessionId
+                        || !SidShape().IsMatch(suppliedSessionId)))
                 || (body.TryGetProperty("k", out var bodyK)
                     && bodyK.ValueKind == JsonValueKind.String
                     && !string.Equals(bodyK.GetString(), k, StringComparison.Ordinal))
@@ -190,6 +219,12 @@ public static partial class BeaconEndpoints
             var now = clock.UtcNow;
             var nowMs = now.ToUnixTimeMilliseconds();
             var sessKey = $"t:{tid}:sess:{sid}";
+            var visitId = body.TryGetProperty("visit_id", out var visitIdEl)
+                ? visitIdEl.GetString() ?? ""
+                : "";
+            var canonicalSessionId = body.TryGetProperty("session_id", out var sessionIdEl)
+                ? sessionIdEl.GetString() ?? sid
+                : sid;
 
             // Load-modify-store (single-instance MVP): beacons for one session
             // arrive serially from one browser, so read-modify-write is
@@ -206,6 +241,8 @@ public static partial class BeaconEndpoints
                 hash, body, rawBody, nowMs, opts, tid,
                 storedNonce.IsNullOrEmpty ? null : storedNonce.ToString(),
                 string.IsNullOrEmpty(referer) ? null : referer);
+            if (visitId.Length > 0)
+                hash["visit_id"] = visitId;
 
             var entries = new HashEntry[hash.Count];
             var i = 0;
@@ -241,19 +278,79 @@ public static partial class BeaconEndpoints
             // Periodic sink snapshot: first beacon, fp-bearing, fs-bearing, or
             // every Nth. Sink enqueue only — never blocks on ClickHouse (ANA-03).
             var nBeacons = SessionAggregator.GetLong(hash, "n_beacons") ?? 0;
+            var edge = edgeSignals.Read(ctx);
+
+            // Preserve the HTTP identity needed by the scoring pipeline after this
+            // request has ended. Never overwrite tracker/pixel context: those paths
+            // carry paid-click and campaign semantics that an SDK beacon cannot infer.
+            var clickKey = $"t:{tid}:click:{sid}";
+            if (result.EventsAggregated && !await db.KeyExistsAsync(clickKey))
+            {
+                await db.HashSetAsync(clickKey,
+                [
+                    new("kind", "beacon"),
+                    new("ts", nowMs),
+                    new("ip", ip),
+                    new("ua", ua ?? ""),
+                    new("ch_ua", NullIfEmpty(ctx.Request.Headers["Sec-CH-UA"].ToString()) ?? ""),
+                    new("ch_mobile", NullIfEmpty(ctx.Request.Headers["Sec-CH-UA-Mobile"].ToString()) ?? ""),
+                    new("ch_platform", NullIfEmpty(ctx.Request.Headers["Sec-CH-UA-Platform"].ToString()) ?? ""),
+                    new("accept_language", NullIfEmpty(ctx.Request.Headers.AcceptLanguage.ToString()) ?? ""),
+                    new("referrer", NullIfEmpty(ctx.Request.Headers.Referer.ToString()) ?? ""),
+                    new("header_order", string.Join(',', ctx.Request.Headers.Select(h => h.Key))),
+                    new("site_key", k),
+                    new("session_id", canonicalSessionId),
+                    new("visit_id", visitId),
+                    new("campaign_id", ""),
+                    new("click_id_type", ""),
+                    new("click_id", ""),
+                    new("click_id_invalid", ""),
+                    new("tls_fp", edge.Ja4 ?? edge.Ja3 ?? ""),
+                ]);
+                await db.KeyExpireAsync(clickKey, TimeSpan.FromSeconds(opts.SessionTtlSeconds));
+            }
+            // A tracker/pixel may have created the click context before the SDK
+            // arrived. Add journey identities without replacing its paid-click fields.
+            if (result.EventsAggregated && visitId.Length > 0)
+            {
+                await db.HashSetAsync(clickKey,
+                [
+                    new("session_id", canonicalSessionId),
+                    new("visit_id", visitId),
+                ]);
+            }
+
+            // SDK-only sessions have no tracker/pixel request to put them on the
+            // verdict worker's grace queue. Register the first accepted batch with
+            // NX so an existing tracker deadline keeps its original semantics; later
+            // accepted batches move an SDK session's deadline forward, making this a
+            // quiet-period timer. Replays do not keep a session alive indefinitely.
+            if (result.EventsAggregated)
+            {
+                var deadline = now.ToUnixTimeSeconds() + opts.FinalizeQuietSeconds;
+                await db.SortedSetAddAsync(
+                    $"t:{tid}:grace", sid, deadline,
+                    nBeacons == 1 ? When.NotExists : When.Always);
+                await db.SetAddAsync("grace:tenants", tid);
+            }
+
             if (nBeacons == 1 || result.SawFp || result.SawFs
                 || (opts.SinkEveryNthBeacon > 0 && nBeacons % opts.SinkEveryNthBeacon == 0))
             {
                 var retentionDays = await ResolveRetentionDaysAsync(
                     ctx, cache, retentionOpts.Value, tid, ct);
-                // INT-05: this beacon POST is its own HTTP request — no click-context
-                // hash write happens here (that stays API-02/API-03's job); only the
-                // snapshot ClickEvent gets the edge fields, for analytics completeness.
-                var edge = edgeSignals.Read(ctx);
+                // INT-05: this beacon POST is its own HTTP request, so its snapshot
+                // receives edge fields directly as well as the minimal scoring context
+                // retained above.
+                // ANA-08: the beacon POST's Referer is the page URL (full path+query,
+                // because /i is same-origin with the page), so utm_* and click ids can be
+                // recovered here even for a visit that never went through the tracker.
+                var attribution = AttributionExtractor.Extract(ctx, client: ReadClientContext(body));
                 var evt = BuildSnapshot(
-                    tenantContext.TenantId, k, sid, hash, ip, ua,
+                    tenantContext.TenantId, k, canonicalSessionId, visitId, hash, ip, ua,
                     ctx.Request.Headers.Select(h => h.Key).ToArray(),
                     retentionDays, now.UtcDateTime, edge);
+                evt = evt.WithAttributionAndClickIds(attribution);
                 await sink.WriteBatchAsync(new[] { evt }, ct);
             }
 
@@ -306,7 +403,7 @@ public static partial class BeaconEndpoints
     /// modality mismatch, headless tiers) are RSK-04's — never computed here.
     /// Missing ≠ zero: absent aggregates stay NaN/null on the event.</summary>
     private static ClickEvent BuildSnapshot(
-        TenantId tenantId, string siteKey, string sid, Dictionary<string, string> h,
+        TenantId tenantId, string siteKey, string sid, string visitId, Dictionary<string, string> h,
         string ip, string? ua, string[] headerNames, ushort retentionDays, DateTime nowUtc,
         EdgeSignals edge)
     {
@@ -315,6 +412,7 @@ public static partial class BeaconEndpoints
             TenantId = tenantId,
             SiteKey = siteKey,
             SessionId = sid,
+            VisitId = visitId,
             Kind = EventKind.Beacon,
             Ip = ip,
             HeaderNames = headerNames,
@@ -370,6 +468,41 @@ public static partial class BeaconEndpoints
     }
 
     private static string? NullIfEmpty(string s) => string.IsNullOrEmpty(s) ? null : s;
+
+    /// <summary>SDK-09 page context out of the envelope: `u` (location.href), `r`
+    /// (document.referrer) and `ck` (cookies readable by script). Absent for older
+    /// bundles and irrelevant same-origin, where the server observes all three itself —
+    /// AttributionExtractor prefers what it observed and uses these only to fill gaps.</summary>
+    private static AttributionExtractor.ClientContext? ReadClientContext(JsonElement body)
+    {
+        if (body.ValueKind != JsonValueKind.Object)
+            return null;
+
+        var pageUrl = body.TryGetProperty("u", out var u) && u.ValueKind == JsonValueKind.String
+            ? u.GetString() : null;
+        var referrer = body.TryGetProperty("r", out var r) && r.ValueKind == JsonValueKind.String
+            ? r.GetString() : null;
+
+        Dictionary<string, string>? cookies = null;
+        if (body.TryGetProperty("ck", out var ck) && ck.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var property in ck.EnumerateObject())
+            {
+                if (property.Value.ValueKind != JsonValueKind.String)
+                    continue;
+                var value = property.Value.GetString();
+                if (string.IsNullOrEmpty(value))
+                    continue;
+                cookies ??= new Dictionary<string, string>(StringComparer.Ordinal);
+                cookies[property.Name] = value;
+            }
+        }
+
+        if (pageUrl is null && referrer is null && cookies is null)
+            return null;
+
+        return new AttributionExtractor.ClientContext(pageUrl, referrer, cookies);
+    }
 
     private static void Log(ILoggerFactory factory, Exception? ex, string message, params object?[] args)
         => factory.CreateLogger("TelemetryGuard.Api.Endpoints.BeaconEndpoints")

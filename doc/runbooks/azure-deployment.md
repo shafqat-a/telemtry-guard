@@ -18,8 +18,8 @@ live deployment. Treat the first real run as the actual validation.
 | Compose service | Azure target | Notes |
 |---|---|---|
 | *(none — API runs on the host)* | Container App `tguard-api-<env>` | 1 replica, ingress 8080, Cloudflare-only IP allow-list, OTel sidecar |
-| migration runner | Container Apps **jobs** `tguard-migrate-sql-<env>`, `tguard-migrate-clickhouse-<env>` | same image as the app, `dotnet /app/migrator/TelemetryGuard.MigrationRunner.dll [--clickhouse]`; run **before** the app rolls |
-| `mssql` | Azure SQL Database, `GP_S_Gen5` serverless, auto-pause disabled | `ConnectionStrings__Main`; migrations and RLS unchanged (D8/D10/D11) |
+| migration runner | Container Apps **jobs** `tguard-migrate-sql-<env>`, `tguard-migrate-clickhouse-<env>` | same image as the app; the SQL job runs the migrations **then** `provision create-db-user` for `tg_app`/`tg_system` (0013) — the only place the admin login is used; run **before** the app rolls |
+| `mssql` | Azure SQL Database, `GP_S_Gen5` serverless, auto-pause disabled | `ConnectionStrings__Main` = `tg_app` (request path), `ConnectionStrings__System` = `tg_system` (background jobs) — both contained users created by the migration job; migrations and RLS unchanged (D8/D10/D11) |
 | `redis` | Azure Cache for Redis (Basic C0 dev / Standard C1 prod), TLS-only 6380 | `ConnectionStrings__Redis`; connection-string change only (D5) |
 | `clickhouse` | Ubuntu 22.04 VM in `snet-data`, no public IP, `clickhouse/clickhouse-server:24.8` on a Premium SSD | `Analytics__ClickHouse__ConnectionString`; provider code unchanged (D6/D7) |
 | `grafana` | Azure Managed Grafana (optional, `deployGrafana=false` by default) | dashboards imported from `ops/grafana/dashboards/*.json` |
@@ -106,7 +106,10 @@ workflow supplies from GitHub secrets:
 
 | Secret | Source |
 |---|---|
-| `sql-connection-string` | Built from `sql.bicep`'s output FQDN + `sqlAdminLogin`/`sqlAdminPassword` |
+| `sql-connection-string` | Built from `sql.bicep`'s output FQDN + `sqlAdminLogin`/`sqlAdminPassword` — referenced by the SQL migration job only |
+| `sql-app-connection-string` | Same FQDN + `sqlAppLogin`/`sqlAppPassword` (`tg_app`, request path) → `ConnectionStrings__Main` |
+| `sql-system-connection-string` | Same FQDN + `sqlSystemLogin`/`sqlSystemPassword` (`tg_system`, background jobs) → `ConnectionStrings__System` |
+| `sql-app-password`, `sql-system-password` | The raw passwords, read by the migration job's `provision create-db-user` step (0013) |
 | `redis-connection-string` | Built from `redis.bicep`'s output host name + primary key |
 | `clickhouse-connection-string` | Built from the fixed private IP/db/user + `clickHousePassword` |
 | `beacon-hmac-secret` | Passed straight through from the `beaconHmacSecret` parameter |
@@ -128,7 +131,8 @@ Then flip `integrationSecretsEnabled=true` on the next deploy so the Container A
 **GitHub repository secrets `deploy.yml` reads** (all must be present for the
 `preflight` gate to enable the rest of the workflow):
 `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`, `AZURE_RESOURCE_GROUP`,
-`TG_SQL_ADMIN_PASSWORD`, `TG_CLICKHOUSE_PASSWORD`, `TG_BEACON_HMAC_SECRET`. Optional:
+`TG_SQL_ADMIN_PASSWORD`, `TG_SQL_APP_PASSWORD`, `TG_SQL_SYSTEM_PASSWORD`,
+`TG_CLICKHOUSE_PASSWORD`, `TG_BEACON_HMAC_SECRET`. Optional:
 `TG_SMOKE_BASE_URL` (the Cloudflare-proxied hostname, enables the through-Cloudflare
 smoke check). No client secret is stored anywhere — `azure/login@v2` federates via
 OIDC (`permissions: id-token: write`).

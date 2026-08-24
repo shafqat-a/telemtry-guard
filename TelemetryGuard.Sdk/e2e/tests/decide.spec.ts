@@ -89,8 +89,11 @@ async function pollRaw<T>(
   }
 }
 
-function pageSid(page: Page): Promise<string | null> {
-  return page.evaluate(() => sessionStorage.getItem('tg_sid'));
+function visitSid(captured: RawCapture[]): string {
+  const beacon = captured.find((x) => !x.kind && x.parsed && typeof x.parsed === 'object');
+  const sid = (beacon?.parsed as { sid?: string } | undefined)?.sid;
+  if (!sid) throw new Error('no beacon visit sid captured');
+  return sid;
 }
 
 test.beforeEach(async ({ request }) => {
@@ -113,8 +116,7 @@ test('allow: exactly one /decide with sid + k, then the form submits', async ({
   expect(dec).toHaveLength(1);
 
   // Body is valid JSON {sid} — exactly that, no turnstileToken on first call.
-  const sid = await pageSid(page);
-  expect(sid).toBeTruthy();
+  const sid = visitSid(captured);
   expect(JSON.parse(dec[0]!.raw)).toEqual({ sid });
   // ?k= carries the page's site key.
   expect(dec[0]!.url).toContain('k=e2e-site');
@@ -171,7 +173,7 @@ test('challenge then allow: lazy Turnstile, token re-POSTed, form submits', asyn
   const dec = decides(captured);
   expect(dec).toHaveLength(2);
 
-  const sid = await pageSid(page);
+  const sid = visitSid(captured);
   expect(JSON.parse(dec[0]!.raw)).toEqual({ sid });
   // Second /decide carries the widget token from the stub.
   expect(JSON.parse(dec[1]!.raw)).toEqual({ sid, turnstileToken: 'e2e-token' });
@@ -201,7 +203,7 @@ test('challenge then block: form held', async ({ page, request }) => {
   const captured = await getRawCaptured(request);
   const dec = decides(captured);
   expect(dec).toHaveLength(2);
-  const sid = await pageSid(page);
+  const sid = visitSid(captured);
   expect(JSON.parse(dec[1]!.raw)).toEqual({ sid, turnstileToken: 'e2e-token' });
   expect(submissions(captured)).toHaveLength(0);
   expect(turnstile.requestedAt()).not.toBeNull();

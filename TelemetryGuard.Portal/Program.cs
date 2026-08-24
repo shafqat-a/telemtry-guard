@@ -1,8 +1,12 @@
 using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.HttpOverrides;
 using TelemetryGuard.Portal.Api;
 using TelemetryGuard.Portal.Options;
 
 var builder = WebApplication.CreateBuilder(args);
+var portalPathBase = builder.Configuration["Portal:PathBase"]?.TrimEnd('/') ?? "";
+if (portalPathBase.Length > 0 && !portalPathBase.StartsWith('/'))
+    throw new InvalidOperationException("Portal:PathBase must be empty or start with '/'.");
 
 builder.Logging.ClearProviders();
 builder.Logging.AddJsonConsole(o =>
@@ -28,6 +32,7 @@ builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationSc
         o.Cookie.Name = "tg_portal";
         o.Cookie.HttpOnly = true;                 // the API key is NEVER reachable from script
         o.Cookie.SameSite = SameSiteMode.Strict;
+        o.Cookie.Path = portalPathBase.Length == 0 ? "/" : portalPathBase;
         o.Cookie.SecurePolicy = builder.Environment.IsDevelopment()
             ? CookieSecurePolicy.SameAsRequest
             : CookieSecurePolicy.Always;
@@ -39,6 +44,12 @@ builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationSc
         o.SlidingExpiration = true;
     });
 builder.Services.AddAuthorization();
+builder.Services.Configure<ForwardedHeadersOptions>(o =>
+{
+    o.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+    o.KnownNetworks.Clear();
+    o.KnownProxies.Clear();
+});
 
 builder.Services.AddRazorPages(o =>
 {
@@ -48,6 +59,11 @@ builder.Services.AddRazorPages(o =>
 });
 
 var app = builder.Build();
+
+app.UseForwardedHeaders();
+
+if (portalPathBase.Length > 0)
+    app.UsePathBase(portalPathBase);
 
 app.UseExceptionHandler("/Error");
 app.UseStatusCodePagesWithReExecute("/Error", "?code={0}");

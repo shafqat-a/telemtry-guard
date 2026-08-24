@@ -50,6 +50,7 @@ public sealed class SessionStateStoreTests : IClassFixture<SessionStateRedisFixt
         public TenantId TenantId { get; } = new(tenant);
         public string? SiteKey => null;
         public bool IsResolved => true;
+        public IReadOnlyList<string> Scopes => Array.Empty<string>();
     }
 
     private RedisSessionStateStore Store(Guid? tenant = null)

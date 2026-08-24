@@ -50,6 +50,68 @@ public class PrivateRelayMatcherTests
     }
 
     [Fact]
+    public void Overlapping_and_adjacent_ranges_merge_without_losing_members()
+    {
+        // The lookup is a binary search over merged intervals, so unsorted input,
+        // duplicates, nesting and exact adjacency all have to collapse correctly.
+        var matcher = LoadFromLines(
+            "10.0.1.0/24,ZZ,,A,",       // out of order
+            "10.0.0.0/24,ZZ,,B,",       // adjacent below 10.0.1.0/24
+            "10.0.0.128/25,ZZ,,C,",     // nested inside 10.0.0.0/24
+            "10.0.9.0/24,ZZ,,D,",       // detached island
+            "2606:54c0:aa00::/40,ZZ,,E,",
+            "2606:54c0:aa01::/48,ZZ,,F,");
+
+        Assert.True(matcher.Contains(IPAddress.Parse("10.0.0.0")));
+        Assert.True(matcher.Contains(IPAddress.Parse("10.0.0.200")));
+        Assert.True(matcher.Contains(IPAddress.Parse("10.0.1.255")));
+        Assert.False(matcher.Contains(IPAddress.Parse("10.0.2.0")));   // gap between the merged block and the island
+        Assert.False(matcher.Contains(IPAddress.Parse("10.0.8.255")));
+        Assert.True(matcher.Contains(IPAddress.Parse("10.0.9.9")));
+        Assert.False(matcher.Contains(IPAddress.Parse("10.0.10.0")));
+
+        Assert.True(matcher.Contains(IPAddress.Parse("2606:54c0:aa01::1")));  // nested /48
+        Assert.True(matcher.Contains(IPAddress.Parse("2606:54c0:aaff::1")));  // still inside the /40
+        Assert.False(matcher.Contains(IPAddress.Parse("2606:54c0:ab00::1"))); // just past it
+    }
+
+    [Fact]
+    public void Ranges_touching_the_top_of_each_address_space_do_not_overflow()
+    {
+        var matcher = LoadFromLines(
+            "255.255.255.254/31,ZZ,,A,",
+            "ffff:ffff:ffff:ffff:ffff:ffff:ffff:fffe/127,ZZ,,B,");
+
+        Assert.True(matcher.Contains(IPAddress.Parse("255.255.255.255")));
+        Assert.False(matcher.Contains(IPAddress.Parse("255.255.255.253")));
+        Assert.True(matcher.Contains(IPAddress.Parse("ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff")));
+        Assert.False(matcher.Contains(IPAddress.Parse("ffff:ffff:ffff:ffff:ffff:ffff:ffff:fffd")));
+    }
+
+    [Fact]
+    public void Empty_list_matches_nothing()
+    {
+        var matcher = LoadFromLines("# nothing but a comment");
+
+        Assert.False(matcher.Contains(IPAddress.Parse("8.8.8.8")));
+        Assert.False(matcher.Contains(IPAddress.Parse("2001:db8::1")));
+    }
+
+    private static PrivateRelayMatcher LoadFromLines(params string[] lines)
+    {
+        var path = Path.Combine(Path.GetTempPath(), "tg-relay-" + Guid.NewGuid().ToString("N") + ".csv");
+        File.WriteAllLines(path, lines);
+        try
+        {
+            return PrivateRelayMatcher.LoadCsv(path);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
     public void LoadCsv_honors_exact_prefix_boundaries_for_both_families()
     {
         var path = Path.Combine(Path.GetTempPath(), "tg-relay-" + Guid.NewGuid().ToString("N") + ".csv");

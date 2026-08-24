@@ -45,9 +45,10 @@ public class T1RuleEngineTests
         { "ip_click_flood", new FraudFeatureVector { IpClicksLastMin = 30 }, 75 },
         { "ua_os_mismatch", new FraudFeatureVector { UaOsMismatch = true }, 71 },
         { "linear_mouse_path", new FraudFeatureVector { MousePathLinearity = 1.0f, InputEventCount = 20f }, 85 },
-        { "robotic_cadence", new FraudFeatureVector { StdInterEventMs = 0.5f, InputEventCount = 10f }, 85 },
         { "click_id_invalid", new FraudFeatureVector { ClickIdInvalid = true }, 71 },
     };
+
+    private static RulesOptions CadenceOn() => new() { RoboticCadenceEnabled = true };
 
     [Theory]
     [MemberData(nameof(SingleRuleCases))]
@@ -143,24 +144,71 @@ public class T1RuleEngineTests
         Assert.Equal(85, result.Floor);
     }
 
+    // robotic_cadence: disabled by default (the SDK-throttled σ is unreliable on high-refresh
+    // displays and privacy browsers — see RulesOptions), gated on MouseMoveGaps when enabled.
+
     [Fact]
-    public void Robotic_cadence_below_min_events_does_not_fire()
+    public void Robotic_cadence_is_off_by_default_even_with_overwhelming_evidence()
     {
         var result = CreateEngine().Evaluate(
-            new FraudFeatureVector { StdInterEventMs = 0.5f, InputEventCount = 9f });
+            new FraudFeatureVector { StdInterEventMs = 0f, MouseMoveGaps = 500f, InputEventCount = 500f });
 
         Assert.Null(result.Floor);
         Assert.Empty(result.Hits);
     }
 
     [Fact]
-    public void Robotic_cadence_at_min_events_fires()
+    public void Robotic_cadence_enabled_fires_with_its_floor_when_gated_on_gaps()
     {
-        var result = CreateEngine().Evaluate(
-            new FraudFeatureVector { StdInterEventMs = 0.5f, InputEventCount = 10f });
+        var result = CreateEngine(CadenceOn()).Evaluate(
+            new FraudFeatureVector { StdInterEventMs = 0.1f, MouseMoveGaps = 20f });
 
         Assert.Equal(new[] { "robotic_cadence" }, result.Hits);
         Assert.Equal(85, result.Floor);
+    }
+
+    [Fact]
+    public void Robotic_cadence_enabled_below_min_gaps_does_not_fire()
+    {
+        var result = CreateEngine(CadenceOn()).Evaluate(
+            new FraudFeatureVector { StdInterEventMs = 0.1f, MouseMoveGaps = 19f });
+
+        Assert.Null(result.Floor);
+        Assert.Empty(result.Hits);
+    }
+
+    [Fact]
+    public void Robotic_cadence_gates_on_gaps_not_on_keystrokes_and_clicks()
+    {
+        // The old gate counted keys+clicks: 3 pointer samples (2 gaps) + 7 keystrokes
+        // used to qualify. InputEventCount no longer substitutes for gaps.
+        var result = CreateEngine(CadenceOn()).Evaluate(
+            new FraudFeatureVector { StdInterEventMs = 0.1f, MouseMoveGaps = 2f, InputEventCount = 100f });
+
+        Assert.Null(result.Floor);
+        Assert.Empty(result.Hits);
+    }
+
+    [Fact]
+    public void Robotic_cadence_threshold_excludes_a_240Hz_human()
+    {
+        // Throttled 50 ms sampling: gaps uniform on [50, 50+frame] → σ ≈ frame/√12
+        // ≈ 1.2 ms at 240 Hz. The default threshold sits below that.
+        var result = CreateEngine(CadenceOn()).Evaluate(
+            new FraudFeatureVector { StdInterEventMs = 1.2f, MouseMoveGaps = 200f });
+
+        Assert.Null(result.Floor);
+        Assert.Empty(result.Hits);
+    }
+
+    [Fact]
+    public void Robotic_cadence_NaN_gaps_never_fires()
+    {
+        var result = CreateEngine(CadenceOn()).Evaluate(
+            new FraudFeatureVector { StdInterEventMs = 0f, MouseMoveGaps = float.NaN });
+
+        Assert.Null(result.Floor);
+        Assert.Empty(result.Hits);
     }
 
     [Fact]

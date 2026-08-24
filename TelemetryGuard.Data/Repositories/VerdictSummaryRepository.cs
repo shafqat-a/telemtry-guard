@@ -35,12 +35,25 @@ internal sealed class VerdictSummaryRepository(ITenantConnectionFactory connecti
                 ON t.TenantId = s.TenantId AND t.CampaignId = s.CampaignId AND t.[Date] = s.[Date]
             WHEN MATCHED THEN UPDATE SET
                 Allowed = @Allowed, Challenged = @Challenged, Blocked = @Blocked,
-                ScoreSum = @ScoreSum, Events = @Events, UpdatedUtc = SYSUTCDATETIME()
+                ScoreSum = @ScoreSum, Events = @Events,
+                ScoreBucket00 = @ScoreBucket00, ScoreBucket10 = @ScoreBucket10,
+                ScoreBucket20 = @ScoreBucket20, ScoreBucket30 = @ScoreBucket30,
+                ScoreBucket40 = @ScoreBucket40, ScoreBucket50 = @ScoreBucket50,
+                ScoreBucket60 = @ScoreBucket60, ScoreBucket70 = @ScoreBucket70,
+                ScoreBucket80 = @ScoreBucket80, ScoreBucket90 = @ScoreBucket90,
+                ScoreBucket100 = @ScoreBucket100, ScoreSumSq = @ScoreSumSq,
+                UpdatedUtc = SYSUTCDATETIME()
             WHEN NOT MATCHED THEN INSERT
-                (TenantId, CampaignId, [Date], Allowed, Challenged, Blocked, ScoreSum, Events)
-                VALUES (@TenantId, @CampaignId, @Date, @Allowed, @Challenged, @Blocked, @ScoreSum, @Events);
+                (TenantId, CampaignId, [Date], Allowed, Challenged, Blocked, ScoreSum, Events,
+                 ScoreBucket00, ScoreBucket10, ScoreBucket20, ScoreBucket30, ScoreBucket40,
+                 ScoreBucket50, ScoreBucket60, ScoreBucket70, ScoreBucket80, ScoreBucket90,
+                 ScoreBucket100, ScoreSumSq)
+                VALUES (@TenantId, @CampaignId, @Date, @Allowed, @Challenged, @Blocked, @ScoreSum, @Events,
+                 @ScoreBucket00, @ScoreBucket10, @ScoreBucket20, @ScoreBucket30, @ScoreBucket40,
+                 @ScoreBucket50, @ScoreBucket60, @ScoreBucket70, @ScoreBucket80, @ScoreBucket90,
+                 @ScoreBucket100, @ScoreSumSq);
             """,
-            new
+            WithDistribution(new
             {
                 TenantId = tenant.TenantId.Value,
                 row.CampaignId,
@@ -50,7 +63,7 @@ internal sealed class VerdictSummaryRepository(ITenantConnectionFactory connecti
                 row.Blocked,
                 row.ScoreSum,
                 row.Events,
-            },
+            }, row.ScoreDistribution),
             cancellationToken: ct));
     }
 
@@ -73,12 +86,31 @@ internal sealed class VerdictSummaryRepository(ITenantConnectionFactory connecti
             WHEN MATCHED THEN UPDATE SET
                 Allowed = t.Allowed + @Allowed, Challenged = t.Challenged + @Challenged,
                 Blocked = t.Blocked + @Blocked, ScoreSum = t.ScoreSum + @ScoreSum,
-                Events = t.Events + @Events, UpdatedUtc = SYSUTCDATETIME()
+                Events = t.Events + @Events,
+                ScoreBucket00 = t.ScoreBucket00 + @ScoreBucket00,
+                ScoreBucket10 = t.ScoreBucket10 + @ScoreBucket10,
+                ScoreBucket20 = t.ScoreBucket20 + @ScoreBucket20,
+                ScoreBucket30 = t.ScoreBucket30 + @ScoreBucket30,
+                ScoreBucket40 = t.ScoreBucket40 + @ScoreBucket40,
+                ScoreBucket50 = t.ScoreBucket50 + @ScoreBucket50,
+                ScoreBucket60 = t.ScoreBucket60 + @ScoreBucket60,
+                ScoreBucket70 = t.ScoreBucket70 + @ScoreBucket70,
+                ScoreBucket80 = t.ScoreBucket80 + @ScoreBucket80,
+                ScoreBucket90 = t.ScoreBucket90 + @ScoreBucket90,
+                ScoreBucket100 = t.ScoreBucket100 + @ScoreBucket100,
+                ScoreSumSq = t.ScoreSumSq + @ScoreSumSq,
+                UpdatedUtc = SYSUTCDATETIME()
             WHEN NOT MATCHED THEN INSERT
-                (TenantId, CampaignId, [Date], Allowed, Challenged, Blocked, ScoreSum, Events)
-                VALUES (@TenantId, @CampaignId, @Date, @Allowed, @Challenged, @Blocked, @ScoreSum, @Events);
+                (TenantId, CampaignId, [Date], Allowed, Challenged, Blocked, ScoreSum, Events,
+                 ScoreBucket00, ScoreBucket10, ScoreBucket20, ScoreBucket30, ScoreBucket40,
+                 ScoreBucket50, ScoreBucket60, ScoreBucket70, ScoreBucket80, ScoreBucket90,
+                 ScoreBucket100, ScoreSumSq)
+                VALUES (@TenantId, @CampaignId, @Date, @Allowed, @Challenged, @Blocked, @ScoreSum, @Events,
+                 @ScoreBucket00, @ScoreBucket10, @ScoreBucket20, @ScoreBucket30, @ScoreBucket40,
+                 @ScoreBucket50, @ScoreBucket60, @ScoreBucket70, @ScoreBucket80, @ScoreBucket90,
+                 @ScoreBucket100, @ScoreSumSq);
             """,
-            new
+            WithDistribution(new
             {
                 TenantId = tenant.TenantId.Value,
                 delta.CampaignId,
@@ -88,7 +120,7 @@ internal sealed class VerdictSummaryRepository(ITenantConnectionFactory connecti
                 delta.Blocked,
                 delta.ScoreSum,
                 delta.Events,
-            },
+            }, delta.ScoreDistribution),
             cancellationToken: ct));
     }
 
@@ -115,12 +147,25 @@ internal sealed class VerdictSummaryRepository(ITenantConnectionFactory connecti
                AND t.SourceType = s.SourceType AND t.Value = s.Value
             WHEN MATCHED THEN UPDATE SET
                 FlaggedCount = @FlaggedCount, BlockedCount = @BlockedCount,
-                ScoreSum = @ScoreSum, UpdatedUtc = SYSUTCDATETIME()
+                ScoreSum = @ScoreSum,
+                ScoreBucket00 = @ScoreBucket00, ScoreBucket10 = @ScoreBucket10,
+                ScoreBucket20 = @ScoreBucket20, ScoreBucket30 = @ScoreBucket30,
+                ScoreBucket40 = @ScoreBucket40, ScoreBucket50 = @ScoreBucket50,
+                ScoreBucket60 = @ScoreBucket60, ScoreBucket70 = @ScoreBucket70,
+                ScoreBucket80 = @ScoreBucket80, ScoreBucket90 = @ScoreBucket90,
+                ScoreBucket100 = @ScoreBucket100, ScoreSumSq = @ScoreSumSq,
+                UpdatedUtc = SYSUTCDATETIME()
             WHEN NOT MATCHED THEN INSERT
-                (TenantId, [Date], SourceType, Value, FlaggedCount, BlockedCount, ScoreSum)
-                VALUES (@TenantId, @Date, @SourceType, @Value, @FlaggedCount, @BlockedCount, @ScoreSum);
+                (TenantId, [Date], SourceType, Value, FlaggedCount, BlockedCount, ScoreSum,
+                 ScoreBucket00, ScoreBucket10, ScoreBucket20, ScoreBucket30, ScoreBucket40,
+                 ScoreBucket50, ScoreBucket60, ScoreBucket70, ScoreBucket80, ScoreBucket90,
+                 ScoreBucket100, ScoreSumSq)
+                VALUES (@TenantId, @Date, @SourceType, @Value, @FlaggedCount, @BlockedCount, @ScoreSum,
+                 @ScoreBucket00, @ScoreBucket10, @ScoreBucket20, @ScoreBucket30, @ScoreBucket40,
+                 @ScoreBucket50, @ScoreBucket60, @ScoreBucket70, @ScoreBucket80, @ScoreBucket90,
+                 @ScoreBucket100, @ScoreSumSq);
             """,
-            new
+            WithDistribution(new
             {
                 TenantId = tenant.TenantId.Value,
                 Date = row.Date.ToDateTime(TimeOnly.MinValue),
@@ -129,21 +174,41 @@ internal sealed class VerdictSummaryRepository(ITenantConnectionFactory connecti
                 row.FlaggedCount,
                 row.BlockedCount,
                 row.ScoreSum,
-            },
+            }, row.ScoreDistribution),
             cancellationToken: ct));
     }
 
     public async Task<IReadOnlyList<VerdictDailySummaryRow>> GetDailySummariesAsync(
-        Guid campaignId, DateOnly from, DateOnly to, CancellationToken ct)
+        Guid? campaignId, DateOnly from, DateOnly to, CancellationToken ct)
     {
         await using var conn = await connections.OpenAsync(ct);
+        var sql = campaignId is null
+            ? """
+              SELECT TenantId, CAST('00000000-0000-0000-0000-000000000000' AS uniqueidentifier) AS CampaignId,
+                     [Date], SUM(Allowed) AS Allowed, SUM(Challenged) AS Challenged,
+                     SUM(Blocked) AS Blocked, SUM(ScoreSum) AS ScoreSum, SUM(Events) AS Events,
+                     SUM(ScoreBucket00) AS ScoreBucket00, SUM(ScoreBucket10) AS ScoreBucket10,
+                     SUM(ScoreBucket20) AS ScoreBucket20, SUM(ScoreBucket30) AS ScoreBucket30,
+                     SUM(ScoreBucket40) AS ScoreBucket40, SUM(ScoreBucket50) AS ScoreBucket50,
+                     SUM(ScoreBucket60) AS ScoreBucket60, SUM(ScoreBucket70) AS ScoreBucket70,
+                     SUM(ScoreBucket80) AS ScoreBucket80, SUM(ScoreBucket90) AS ScoreBucket90,
+                     SUM(ScoreBucket100) AS ScoreBucket100, SUM(ScoreSumSq) AS ScoreSumSq
+              FROM dbo.VerdictDailySummaries
+              WHERE TenantId = @TenantId AND [Date] BETWEEN @From AND @To
+              GROUP BY TenantId, [Date]
+              ORDER BY [Date];
+              """
+            : """
+              SELECT TenantId, CampaignId, [Date], Allowed, Challenged, Blocked, ScoreSum, Events,
+                     ScoreBucket00, ScoreBucket10, ScoreBucket20, ScoreBucket30, ScoreBucket40,
+                     ScoreBucket50, ScoreBucket60, ScoreBucket70, ScoreBucket80, ScoreBucket90,
+                     ScoreBucket100, ScoreSumSq
+              FROM dbo.VerdictDailySummaries
+              WHERE TenantId = @TenantId AND CampaignId = @CampaignId AND [Date] BETWEEN @From AND @To
+              ORDER BY [Date];
+              """;
         var rows = await conn.QueryAsync<VerdictDailySummaryDbRow>(new CommandDefinition(
-            """
-            SELECT TenantId, CampaignId, [Date], Allowed, Challenged, Blocked, ScoreSum, Events
-            FROM dbo.VerdictDailySummaries
-            WHERE TenantId = @TenantId AND CampaignId = @CampaignId AND [Date] BETWEEN @From AND @To
-            ORDER BY [Date];
-            """,
+            sql,
             new
             {
                 TenantId = tenant.TenantId.Value,
@@ -167,7 +232,10 @@ internal sealed class VerdictSummaryRepository(ITenantConnectionFactory connecti
         await using var conn = await connections.OpenAsync(ct);
         var rows = await conn.QueryAsync<FlaggedSourceDailyDbRow>(new CommandDefinition(
             """
-            SELECT TOP (@Limit) TenantId, [Date], SourceType, Value, FlaggedCount, BlockedCount, ScoreSum
+            SELECT TOP (@Limit) TenantId, [Date], SourceType, Value, FlaggedCount, BlockedCount, ScoreSum,
+                   ScoreBucket00, ScoreBucket10, ScoreBucket20, ScoreBucket30, ScoreBucket40,
+                   ScoreBucket50, ScoreBucket60, ScoreBucket70, ScoreBucket80, ScoreBucket90,
+                   ScoreBucket100, ScoreSumSq
             FROM dbo.FlaggedSourcesDaily
             WHERE TenantId = @TenantId AND [Date] BETWEEN @From AND @To
             ORDER BY BlockedCount DESC, FlaggedCount DESC;
@@ -196,9 +264,25 @@ internal sealed class VerdictSummaryRepository(ITenantConnectionFactory connecti
         public long ScoreSum { get; init; }
         public int Events { get; init; }
 
+        public int ScoreBucket00 { get; init; }
+        public int ScoreBucket10 { get; init; }
+        public int ScoreBucket20 { get; init; }
+        public int ScoreBucket30 { get; init; }
+        public int ScoreBucket40 { get; init; }
+        public int ScoreBucket50 { get; init; }
+        public int ScoreBucket60 { get; init; }
+        public int ScoreBucket70 { get; init; }
+        public int ScoreBucket80 { get; init; }
+        public int ScoreBucket90 { get; init; }
+        public int ScoreBucket100 { get; init; }
+        public long ScoreSumSq { get; init; }
+
         public VerdictDailySummaryRow ToRecord() => new(
             TenantId, CampaignId, DateOnly.FromDateTime(Date),
-            Allowed, Challenged, Blocked, ScoreSum, Events);
+            Allowed, Challenged, Blocked, ScoreSum, Events)
+        {
+            ScoreDistribution = Distribution(this),
+        };
     }
 
     private sealed class FlaggedSourceDailyDbRow
@@ -211,8 +295,41 @@ internal sealed class VerdictSummaryRepository(ITenantConnectionFactory connecti
         public int BlockedCount { get; init; }
         public long ScoreSum { get; init; }
 
+        public int ScoreBucket00 { get; init; }
+        public int ScoreBucket10 { get; init; }
+        public int ScoreBucket20 { get; init; }
+        public int ScoreBucket30 { get; init; }
+        public int ScoreBucket40 { get; init; }
+        public int ScoreBucket50 { get; init; }
+        public int ScoreBucket60 { get; init; }
+        public int ScoreBucket70 { get; init; }
+        public int ScoreBucket80 { get; init; }
+        public int ScoreBucket90 { get; init; }
+        public int ScoreBucket100 { get; init; }
+        public long ScoreSumSq { get; init; }
+
         public FlaggedSourceDailyRow ToRecord() => new(
             TenantId, DateOnly.FromDateTime(Date), SourceType, Value,
-            FlaggedCount, BlockedCount, ScoreSum);
+            FlaggedCount, BlockedCount, ScoreSum)
+        {
+            ScoreDistribution = Distribution(this),
+        };
     }
+
+    private static DynamicParameters WithDistribution(object values, TelemetryGuard.Analytics.Abstractions.ScoreDistribution d)
+    {
+        var p = new DynamicParameters(values);
+        p.Add("ScoreBucket00", d.Bucket00); p.Add("ScoreBucket10", d.Bucket10);
+        p.Add("ScoreBucket20", d.Bucket20); p.Add("ScoreBucket30", d.Bucket30);
+        p.Add("ScoreBucket40", d.Bucket40); p.Add("ScoreBucket50", d.Bucket50);
+        p.Add("ScoreBucket60", d.Bucket60); p.Add("ScoreBucket70", d.Bucket70);
+        p.Add("ScoreBucket80", d.Bucket80); p.Add("ScoreBucket90", d.Bucket90);
+        p.Add("ScoreBucket100", d.Bucket100); p.Add("ScoreSumSq", d.SumSq);
+        return p;
+    }
+
+    private static TelemetryGuard.Analytics.Abstractions.ScoreDistribution Distribution(dynamic row) => new(
+        row.ScoreBucket00, row.ScoreBucket10, row.ScoreBucket20, row.ScoreBucket30,
+        row.ScoreBucket40, row.ScoreBucket50, row.ScoreBucket60, row.ScoreBucket70,
+        row.ScoreBucket80, row.ScoreBucket90, row.ScoreBucket100, row.ScoreSumSq);
 }

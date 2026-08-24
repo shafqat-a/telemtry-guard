@@ -1,5 +1,5 @@
 import { readConfig } from './config';
-import { resolveSid } from './session';
+import { createVisitId, resolveSid } from './session';
 import { initState } from './state';
 import { fetchInit } from './init-fetch';
 import { enqueue, startTransport } from './transport';
@@ -12,7 +12,7 @@ import { startGate } from './gate';
   try {
     const cfg = readConfig();
     if (!cfg) return; // inert without a site key
-    initState(cfg, resolveSid());
+    initState(cfg, resolveSid(), createVisitId());
     startTransport();
     enqueue({ e: 'pv', t: nowT() }); // guarantees >=1 envelope per JS session,
     // so has_js_beacon=1 lands inside the ~10 s grace period

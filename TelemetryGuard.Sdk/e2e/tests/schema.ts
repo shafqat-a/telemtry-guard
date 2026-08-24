@@ -161,10 +161,15 @@ export const anyEvent = z.discriminatedUnion('e', [
 export const envelope = z
   .object({
     k: z.string().min(1),
+    session_id: z.string().min(8),
     sid: z.string().min(8),
+    visit_id: z.string().uuid(),
     seq: z.number().int().nonnegative(),
     nonce: z.string(),
     sent_at: z.number().int().positive(),
+    u: z.string().optional(),
+    r: z.string().optional(),
+    ck: z.record(z.string()).optional(),
     events: z.array(z.unknown()).min(1),
     c: z.string().regex(/^[0-9a-f]{8}$/).optional(), // added by SDK-05; optional until it lands
   })
@@ -184,7 +189,7 @@ export function fnv1aHex(input: string): string {
 }
 
 /** Canonical key order pinned on the raw wire string. */
-export const KEY_ORDER_RE = /^\{"k":.*"sid":.*"seq":.*"nonce":.*"sent_at":.*"events":/s;
+export const KEY_ORDER_RE = /^\{"k":.*"session_id":.*"sid":.*"visit_id":.*"seq":.*"nonce":.*"sent_at":.*"events":/s;
 
 /**
  * Raw-string checks for one captured payload:

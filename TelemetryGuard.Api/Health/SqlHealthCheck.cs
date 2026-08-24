@@ -16,7 +16,7 @@ public sealed class SqlHealthCheck(IConfiguration cfg) : IHealthCheck
         try
         {
             await using var conn = new Microsoft.Data.SqlClient.SqlConnection(
-                cfg.GetConnectionString("Main"));
+                TelemetryGuard.Data.SqlConnectionStrings.Main(cfg));
             await conn.OpenAsync(ct);
             await using var cmd = conn.CreateCommand();
             cmd.CommandText = "SELECT 1";

@@ -14,6 +14,17 @@ export MIGRATIONS_CONNECTIONSTRING="Server=localhost,1433;Database=TelemetryGuar
 echo "== Applying SQL Server migrations (DAT-01) =="
 dotnet run --project TelemetryGuard.MigrationRunner
 
+# 0013: the API (ConnectionStrings:Main) and background jobs (ConnectionStrings:System)
+# run as least-privilege users, never as sa. Defaults match appsettings.json's dev
+# connection strings; override both in .env for anything that is not a laptop.
+export TG_APP_DB_PASSWORD="${TG_APP_DB_PASSWORD:-TgApp!Dev0Passw0rd}"
+export TG_SYSTEM_DB_PASSWORD="${TG_SYSTEM_DB_PASSWORD:-TgSys!Dev0Passw0rd}"
+echo "== Creating least-privilege database users tg_app / tg_system (0013, idempotent) =="
+dotnet run --project TelemetryGuard.MigrationRunner -- provision create-db-user \
+  --name tg_app --role tg_app --password-env TG_APP_DB_PASSWORD
+dotnet run --project TelemetryGuard.MigrationRunner -- provision create-db-user \
+  --name tg_system --role tg_system --password-env TG_SYSTEM_DB_PASSWORD
+
 echo "== Applying ClickHouse schema (no-op until ANA-02 lands) =="
 CLICKHOUSE_CONNECTIONSTRING="Host=localhost;Port=8123;Database=${CLICKHOUSE_DB:-telemetry_guard};Username=${CLICKHOUSE_USER:-tg};Password=${CLICKHOUSE_PASSWORD:-tg-dev-password}" \
   dotnet run --project TelemetryGuard.MigrationRunner -- --clickhouse
@@ -43,6 +54,7 @@ dotnet run --project TelemetryGuard.MigrationRunner -- provision create-campaign
 cat <<'EOF'
 
 == Dev seed complete — well-known values ==
+SQL users: tg_app (ConnectionStrings:Main) / tg_system (ConnectionStrings:System) — sa is for migrations only
 TenantId : 33333333-3333-3333-3333-333333333333
 API key  : tg_ak_dev0000000000000000000000000000000000000000  (scopes: admin ingest report)
 Site key : tg_sk_dev0000000000000000000  (localhost, js mode)

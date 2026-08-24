@@ -40,12 +40,15 @@ jobs:
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           AZURE_RESOURCE_GROUP: ${{ secrets.AZURE_RESOURCE_GROUP }}
           TG_SQL_ADMIN_PASSWORD: ${{ secrets.TG_SQL_ADMIN_PASSWORD }}
+          TG_SQL_APP_PASSWORD: ${{ secrets.TG_SQL_APP_PASSWORD }}
+          TG_SQL_SYSTEM_PASSWORD: ${{ secrets.TG_SQL_SYSTEM_PASSWORD }}
           TG_CLICKHOUSE_PASSWORD: ${{ secrets.TG_CLICKHOUSE_PASSWORD }}
           TG_BEACON_HMAC_SECRET: ${{ secrets.TG_BEACON_HMAC_SECRET }}
         run: |
           missing=""
           for v in AZURE_CLIENT_ID AZURE_TENANT_ID AZURE_SUBSCRIPTION_ID AZURE_RESOURCE_GROUP \
-                   TG_SQL_ADMIN_PASSWORD TG_CLICKHOUSE_PASSWORD TG_BEACON_HMAC_SECRET; do
+                   TG_SQL_ADMIN_PASSWORD TG_SQL_APP_PASSWORD TG_SQL_SYSTEM_PASSWORD \
+                   TG_CLICKHOUSE_PASSWORD TG_BEACON_HMAC_SECRET; do
             [ -n "${!v}" ] || missing="$missing $v"
           done
           if [ -n "$missing" ]; then
@@ -141,6 +144,8 @@ jobs:
           IMAGE: ${{ needs.build-push.outputs.image }}
           COLLECTOR_IMAGE: ${{ needs.build-push.outputs.collectorImage }}
           TG_SQL_ADMIN_PASSWORD: ${{ secrets.TG_SQL_ADMIN_PASSWORD }}
+          TG_SQL_APP_PASSWORD: ${{ secrets.TG_SQL_APP_PASSWORD }}
+          TG_SQL_SYSTEM_PASSWORD: ${{ secrets.TG_SQL_SYSTEM_PASSWORD }}
           TG_CLICKHOUSE_PASSWORD: ${{ secrets.TG_CLICKHOUSE_PASSWORD }}
           TG_BEACON_HMAC_SECRET: ${{ secrets.TG_BEACON_HMAC_SECRET }}
         run: |
@@ -150,6 +155,7 @@ jobs:
             -p containerImage="$IMAGE" -p otelCollectorImage="$COLLECTOR_IMAGE" \
             -p cloudflareIpv4Ranges="$CF" -p deployApiApp=false \
             -p sqlAdminPassword="$TG_SQL_ADMIN_PASSWORD" \
+            -p sqlAppPassword="$TG_SQL_APP_PASSWORD" -p sqlSystemPassword="$TG_SQL_SYSTEM_PASSWORD" \
             -p clickHousePassword="$TG_CLICKHOUSE_PASSWORD" \
             -p beaconHmacSecret="$TG_BEACON_HMAC_SECRET"
 
@@ -213,6 +219,8 @@ jobs:
           IMAGE: ${{ needs.build-push.outputs.image }}
           COLLECTOR_IMAGE: ${{ needs.build-push.outputs.collectorImage }}
           TG_SQL_ADMIN_PASSWORD: ${{ secrets.TG_SQL_ADMIN_PASSWORD }}
+          TG_SQL_APP_PASSWORD: ${{ secrets.TG_SQL_APP_PASSWORD }}
+          TG_SQL_SYSTEM_PASSWORD: ${{ secrets.TG_SQL_SYSTEM_PASSWORD }}
           TG_CLICKHOUSE_PASSWORD: ${{ secrets.TG_CLICKHOUSE_PASSWORD }}
           TG_BEACON_HMAC_SECRET: ${{ secrets.TG_BEACON_HMAC_SECRET }}
         run: |
@@ -222,6 +230,7 @@ jobs:
             -p containerImage="$IMAGE" -p otelCollectorImage="$COLLECTOR_IMAGE" \
             -p cloudflareIpv4Ranges="$CF" -p deployApiApp=true \
             -p sqlAdminPassword="$TG_SQL_ADMIN_PASSWORD" \
+            -p sqlAppPassword="$TG_SQL_APP_PASSWORD" -p sqlSystemPassword="$TG_SQL_SYSTEM_PASSWORD" \
             -p clickHousePassword="$TG_CLICKHOUSE_PASSWORD" \
             -p beaconHmacSecret="$TG_BEACON_HMAC_SECRET"
 

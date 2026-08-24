@@ -229,12 +229,18 @@ public sealed class RollupServiceTests(RollupServiceFixture fixture) : IClassFix
         await using (var conn = await fixture.OpenStampedAsync(RollupServiceFixture.TenantA))
         {
             var rows = (await conn.QueryAsync<(Guid CampaignId, DateTime Date, int Allowed, int Challenged, int Blocked, long ScoreSum, int Events)>(
-                "SELECT CampaignId, [Date], Allowed, Challenged, Blocked, ScoreSum, Events FROM dbo.VerdictDailySummaries ORDER BY [Date]")).ToList();
+                "SELECT CampaignId, [Date], Allowed, Challenged, Blocked, ScoreSum, Events FROM dbo.VerdictDailySummaries WHERE CampaignId = @CampaignId ORDER BY [Date]",
+                new { CampaignId = RollupServiceFixture.CampaignShared })).ToList();
 
             Assert.Equal(2, rows.Count); // zero-verdict CampaignQuiet produced NO row (never Events=0 fabrication)
             Assert.All(rows, r => Assert.Equal(RollupServiceFixture.CampaignShared, r.CampaignId));
             Assert.Equal((RollupServiceFixture.CampaignShared, Day1, 1, 1, 1, 150L, 3), rows[0]);
             Assert.Equal((RollupServiceFixture.CampaignShared, Day2, 1, 0, 1, 100L, 2), rows[1]);
+
+            var campaignless = (await conn.QueryAsync<(DateTime Date, int Events)>(
+                "SELECT [Date], Events FROM dbo.VerdictDailySummaries WHERE CampaignId = @CampaignId ORDER BY [Date]",
+                new { CampaignId = Guid.Empty })).ToList();
+            Assert.Equal(new[] { (Day1, 4), (Day2, 1) }, campaignless);
 
             // Flagged sources: only IPs with challenge/block verdicts; allow-only
             // 10.0.0.x and the P2-01 allow-band IPs (20.0.0.1, 20.0.0.5) never appear;
@@ -292,11 +298,17 @@ public sealed class RollupServiceTests(RollupServiceFixture fixture) : IClassFix
         await using (var conn = await fixture.OpenStampedAsync(RollupServiceFixture.TenantB))
         {
             var rows = (await conn.QueryAsync<(Guid CampaignId, DateTime Date, int Allowed, int Challenged, int Blocked, long ScoreSum, int Events)>(
-                "SELECT CampaignId, [Date], Allowed, Challenged, Blocked, ScoreSum, Events FROM dbo.VerdictDailySummaries ORDER BY [Date]")).ToList();
+                "SELECT CampaignId, [Date], Allowed, Challenged, Blocked, ScoreSum, Events FROM dbo.VerdictDailySummaries WHERE CampaignId = @CampaignId ORDER BY [Date]",
+                new { CampaignId = RollupServiceFixture.CampaignShared })).ToList();
 
             Assert.Equal(2, rows.Count);
             Assert.Equal((RollupServiceFixture.CampaignShared, Day1, 0, 0, 1, 99L, 1), rows[0]);
             Assert.Equal((RollupServiceFixture.CampaignShared, Day2, 0, 1, 0, 60L, 1), rows[1]);
+
+            var campaignless = Assert.Single(await conn.QueryAsync<(DateTime Date, int Events)>(
+                "SELECT [Date], Events FROM dbo.VerdictDailySummaries WHERE CampaignId = @CampaignId",
+                new { CampaignId = Guid.Empty }));
+            Assert.Equal((Day1, 1), campaignless);
 
             var flagged = (await conn.QueryAsync<(DateTime Date, string Value, int FlaggedCount, int BlockedCount, long ScoreSum)>(
                 "SELECT [Date], Value, FlaggedCount, BlockedCount, ScoreSum FROM dbo.FlaggedSourcesDaily ORDER BY [Date], Value")).ToList();

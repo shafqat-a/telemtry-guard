@@ -20,22 +20,22 @@ async function sidOf(page: Page): Promise<string> {
   return sid!;
 }
 
-/** Waits for the fp event of the given sid and validates it strictly. */
-async function awaitFp(request: APIRequestContext, sid: string): Promise<Fp> {
+/** Waits for the fp event of a journey and returns its page-visit id. */
+async function awaitFp(request: APIRequestContext, sessionId: string): Promise<{ fp: Fp; visitId: string }> {
   const raw = await pollCaptured(
     request,
     (c: Captured[]) => {
       for (const cap of c) {
-        if (cap.parsed?.sid !== sid) continue;
+        if (cap.parsed?.session_id !== sessionId) continue;
         for (const ev of cap.parsed.events as Array<Record<string, unknown>>) {
-          if (ev['e'] === 'fp') return ev;
+          if (ev['e'] === 'fp') return { ev, visitId: cap.parsed.sid };
         }
       }
       return undefined;
     },
-    { timeoutMs: 25_000, what: `fp event for sid ${sid}` }
+    { timeoutMs: 25_000, what: `fp event for session ${sessionId}` }
   );
-  return fpEvent.parse(raw);
+  return { fp: fpEvent.parse(raw.ev), visitId: raw.visitId };
 }
 
 async function tgFpCookie(context: BrowserContext): Promise<string | undefined> {
@@ -55,7 +55,8 @@ test('storage-age: fresh write, aged report, restore from localStorage', async (
   // ---- Visit 1 (fresh context): no pair anywhere; SDK writes /i/init's pair.
   await page.goto('/fixtures/landing.html');
   const sid1 = await sidOf(page);
-  const fp1 = await awaitFp(request, sid1);
+  const first = await awaitFp(request, sid1);
+  const fp1 = first.fp;
 
   expect(fp1.storage, 'fp must carry the storage report').toBeTruthy();
   expect(fp1.storage!.fresh).toBe(true);
@@ -67,7 +68,7 @@ test('storage-age: fresh write, aged report, restore from localStorage', async (
   // mock's /i/init response for sid1.
   const inits = await request.get('/__inits').then((r) => r.json());
   const init1 = (inits as Array<{ sid: string; storageTs: number; storageSig: string }>).find(
-    (i) => i.sid === sid1
+    (i) => i.sid === first.visitId
   );
   expect(init1, 'mock must have issued an init for sid1').toBeTruthy();
   const pair1 = `${init1!.storageTs}.${init1!.storageSig}`;
@@ -80,7 +81,7 @@ test('storage-age: fresh write, aged report, restore from localStorage', async (
   await page2.goto('/fixtures/landing.html');
   const sid2 = await sidOf(page2);
   expect(sid2).not.toBe(sid1);
-  const fp2 = await awaitFp(request, sid2);
+  const fp2 = (await awaitFp(request, sid2)).fp;
 
   expect(fp2.storage!.ck.present).toBe(true);
   // ts equals the FIRST visit's value — never the second /i/init's.
@@ -99,7 +100,7 @@ test('storage-age: fresh write, aged report, restore from localStorage', async (
   await page3.goto('/fixtures/landing.html');
   const sid3 = await sidOf(page3);
   expect(sid3).not.toBe(sid2);
-  const fp3 = await awaitFp(request, sid3);
+  const fp3 = (await awaitFp(request, sid3)).fp;
 
   // Report reflects entry state: cookie gone, localStorage survived with the
   // ORIGINAL ts (never the fresh /i/init pair).

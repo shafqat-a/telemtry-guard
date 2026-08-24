@@ -31,12 +31,25 @@ internal sealed class PublisherSummaryRepository(ITenantConnectionFactory connec
                 ON t.TenantId = s.TenantId AND t.[Date] = s.[Date] AND t.Placement = s.Placement
             WHEN MATCHED THEN UPDATE SET
                 Events = @Events, Allowed = @Allowed, Challenged = @Challenged, Blocked = @Blocked,
-                ScoreSum = @ScoreSum, NoJsBeaconCount = @NoJsBeaconCount, UpdatedUtc = SYSUTCDATETIME()
+                ScoreSum = @ScoreSum, NoJsBeaconCount = @NoJsBeaconCount,
+                ScoreBucket00 = @ScoreBucket00, ScoreBucket10 = @ScoreBucket10,
+                ScoreBucket20 = @ScoreBucket20, ScoreBucket30 = @ScoreBucket30,
+                ScoreBucket40 = @ScoreBucket40, ScoreBucket50 = @ScoreBucket50,
+                ScoreBucket60 = @ScoreBucket60, ScoreBucket70 = @ScoreBucket70,
+                ScoreBucket80 = @ScoreBucket80, ScoreBucket90 = @ScoreBucket90,
+                ScoreBucket100 = @ScoreBucket100, ScoreSumSq = @ScoreSumSq,
+                UpdatedUtc = SYSUTCDATETIME()
             WHEN NOT MATCHED THEN INSERT
-                (TenantId, [Date], Placement, Events, Allowed, Challenged, Blocked, ScoreSum, NoJsBeaconCount)
-                VALUES (@TenantId, @Date, @Placement, @Events, @Allowed, @Challenged, @Blocked, @ScoreSum, @NoJsBeaconCount);
+                (TenantId, [Date], Placement, Events, Allowed, Challenged, Blocked, ScoreSum, NoJsBeaconCount,
+                 ScoreBucket00, ScoreBucket10, ScoreBucket20, ScoreBucket30, ScoreBucket40,
+                 ScoreBucket50, ScoreBucket60, ScoreBucket70, ScoreBucket80, ScoreBucket90,
+                 ScoreBucket100, ScoreSumSq)
+                VALUES (@TenantId, @Date, @Placement, @Events, @Allowed, @Challenged, @Blocked, @ScoreSum, @NoJsBeaconCount,
+                 @ScoreBucket00, @ScoreBucket10, @ScoreBucket20, @ScoreBucket30, @ScoreBucket40,
+                 @ScoreBucket50, @ScoreBucket60, @ScoreBucket70, @ScoreBucket80, @ScoreBucket90,
+                 @ScoreBucket100, @ScoreSumSq);
             """,
-            new
+            WithDistribution(new
             {
                 TenantId = tenant.TenantId.Value,
                 Date = row.Date.ToDateTime(TimeOnly.MinValue),
@@ -47,7 +60,7 @@ internal sealed class PublisherSummaryRepository(ITenantConnectionFactory connec
                 row.Blocked,
                 row.ScoreSum,
                 row.NoJsBeaconCount,
-            },
+            }, row.ScoreDistribution),
             cancellationToken: ct));
     }
 
@@ -68,12 +81,25 @@ internal sealed class PublisherSummaryRepository(ITenantConnectionFactory connec
             WHEN MATCHED THEN UPDATE SET
                 TotalEvents = @TotalEvents, Events = @Events, Allowed = @Allowed,
                 Challenged = @Challenged, Blocked = @Blocked, ScoreSum = @ScoreSum,
-                NoJsBeaconCount = @NoJsBeaconCount, UpdatedUtc = SYSUTCDATETIME()
+                NoJsBeaconCount = @NoJsBeaconCount,
+                ScoreBucket00 = @ScoreBucket00, ScoreBucket10 = @ScoreBucket10,
+                ScoreBucket20 = @ScoreBucket20, ScoreBucket30 = @ScoreBucket30,
+                ScoreBucket40 = @ScoreBucket40, ScoreBucket50 = @ScoreBucket50,
+                ScoreBucket60 = @ScoreBucket60, ScoreBucket70 = @ScoreBucket70,
+                ScoreBucket80 = @ScoreBucket80, ScoreBucket90 = @ScoreBucket90,
+                ScoreBucket100 = @ScoreBucket100, ScoreSumSq = @ScoreSumSq,
+                UpdatedUtc = SYSUTCDATETIME()
             WHEN NOT MATCHED THEN INSERT
-                (TenantId, [Date], SiteKey, TotalEvents, Events, Allowed, Challenged, Blocked, ScoreSum, NoJsBeaconCount)
-                VALUES (@TenantId, @Date, @SiteKey, @TotalEvents, @Events, @Allowed, @Challenged, @Blocked, @ScoreSum, @NoJsBeaconCount);
+                (TenantId, [Date], SiteKey, TotalEvents, Events, Allowed, Challenged, Blocked, ScoreSum, NoJsBeaconCount,
+                 ScoreBucket00, ScoreBucket10, ScoreBucket20, ScoreBucket30, ScoreBucket40,
+                 ScoreBucket50, ScoreBucket60, ScoreBucket70, ScoreBucket80, ScoreBucket90,
+                 ScoreBucket100, ScoreSumSq)
+                VALUES (@TenantId, @Date, @SiteKey, @TotalEvents, @Events, @Allowed, @Challenged, @Blocked, @ScoreSum, @NoJsBeaconCount,
+                 @ScoreBucket00, @ScoreBucket10, @ScoreBucket20, @ScoreBucket30, @ScoreBucket40,
+                 @ScoreBucket50, @ScoreBucket60, @ScoreBucket70, @ScoreBucket80, @ScoreBucket90,
+                 @ScoreBucket100, @ScoreSumSq);
             """,
-            new
+            WithDistribution(new
             {
                 TenantId = tenant.TenantId.Value,
                 Date = row.Date.ToDateTime(TimeOnly.MinValue),
@@ -85,7 +111,7 @@ internal sealed class PublisherSummaryRepository(ITenantConnectionFactory connec
                 row.Blocked,
                 row.ScoreSum,
                 row.NoJsBeaconCount,
-            },
+            }, row.ScoreDistribution),
             cancellationToken: ct));
     }
 
@@ -109,6 +135,18 @@ internal sealed class PublisherSummaryRepository(ITenantConnectionFactory connec
                 SUM(Blocked)         AS Blocked,
                 SUM(ScoreSum)        AS ScoreSum,
                 SUM(NoJsBeaconCount) AS NoJsBeaconCount,
+                SUM(ScoreBucket00)   AS ScoreBucket00,
+                SUM(ScoreBucket10)   AS ScoreBucket10,
+                SUM(ScoreBucket20)   AS ScoreBucket20,
+                SUM(ScoreBucket30)   AS ScoreBucket30,
+                SUM(ScoreBucket40)   AS ScoreBucket40,
+                SUM(ScoreBucket50)   AS ScoreBucket50,
+                SUM(ScoreBucket60)   AS ScoreBucket60,
+                SUM(ScoreBucket70)   AS ScoreBucket70,
+                SUM(ScoreBucket80)   AS ScoreBucket80,
+                SUM(ScoreBucket90)   AS ScoreBucket90,
+                SUM(ScoreBucket100)  AS ScoreBucket100,
+                SUM(ScoreSumSq)      AS ScoreSumSq,
                 MIN([Date])          AS FirstDay,
                 MAX([Date])          AS LastDay
             FROM dbo.PublisherDailySummaries
@@ -134,7 +172,10 @@ internal sealed class PublisherSummaryRepository(ITenantConnectionFactory connec
         var rows = await conn.QueryAsync<SiteDailySummaryDbRow>(new CommandDefinition(
             """
             SELECT TenantId, [Date], SiteKey, TotalEvents, Events, Allowed, Challenged,
-                   Blocked, ScoreSum, NoJsBeaconCount
+                   Blocked, ScoreSum, NoJsBeaconCount,
+                   ScoreBucket00, ScoreBucket10, ScoreBucket20, ScoreBucket30, ScoreBucket40,
+                   ScoreBucket50, ScoreBucket60, ScoreBucket70, ScoreBucket80, ScoreBucket90,
+                   ScoreBucket100, ScoreSumSq
             FROM dbo.SiteDailySummaries
             WHERE TenantId = @TenantId AND [Date] BETWEEN @From AND @To
             ORDER BY [Date], SiteKey;
@@ -163,9 +204,28 @@ internal sealed class PublisherSummaryRepository(ITenantConnectionFactory connec
         public DateTime FirstDay { get; init; }
         public DateTime LastDay { get; init; }
 
+        public int ScoreBucket00 { get; init; }
+        public int ScoreBucket10 { get; init; }
+        public int ScoreBucket20 { get; init; }
+        public int ScoreBucket30 { get; init; }
+        public int ScoreBucket40 { get; init; }
+        public int ScoreBucket50 { get; init; }
+        public int ScoreBucket60 { get; init; }
+        public int ScoreBucket70 { get; init; }
+        public int ScoreBucket80 { get; init; }
+        public int ScoreBucket90 { get; init; }
+        public int ScoreBucket100 { get; init; }
+        public long ScoreSumSq { get; init; }
+
         public PlacementRangeTotalsRow ToRecord() => new(
             Placement, Events, Allowed, Challenged, Blocked, ScoreSum, NoJsBeaconCount,
-            DateOnly.FromDateTime(FirstDay), DateOnly.FromDateTime(LastDay));
+            DateOnly.FromDateTime(FirstDay), DateOnly.FromDateTime(LastDay))
+        {
+            ScoreDistribution = Distribution(
+                ScoreBucket00, ScoreBucket10, ScoreBucket20, ScoreBucket30, ScoreBucket40,
+                ScoreBucket50, ScoreBucket60, ScoreBucket70, ScoreBucket80, ScoreBucket90,
+                ScoreBucket100, ScoreSumSq),
+        };
     }
 
     private sealed class SiteDailySummaryDbRow
@@ -181,8 +241,44 @@ internal sealed class PublisherSummaryRepository(ITenantConnectionFactory connec
         public long ScoreSum { get; init; }
         public int NoJsBeaconCount { get; init; }
 
+        public int ScoreBucket00 { get; init; }
+        public int ScoreBucket10 { get; init; }
+        public int ScoreBucket20 { get; init; }
+        public int ScoreBucket30 { get; init; }
+        public int ScoreBucket40 { get; init; }
+        public int ScoreBucket50 { get; init; }
+        public int ScoreBucket60 { get; init; }
+        public int ScoreBucket70 { get; init; }
+        public int ScoreBucket80 { get; init; }
+        public int ScoreBucket90 { get; init; }
+        public int ScoreBucket100 { get; init; }
+        public long ScoreSumSq { get; init; }
+
         public SiteDailySummaryRow ToRecord() => new(
             TenantId, DateOnly.FromDateTime(Date), SiteKey,
-            TotalEvents, Events, Allowed, Challenged, Blocked, ScoreSum, NoJsBeaconCount);
+            TotalEvents, Events, Allowed, Challenged, Blocked, ScoreSum, NoJsBeaconCount)
+        {
+            ScoreDistribution = Distribution(
+                ScoreBucket00, ScoreBucket10, ScoreBucket20, ScoreBucket30, ScoreBucket40,
+                ScoreBucket50, ScoreBucket60, ScoreBucket70, ScoreBucket80, ScoreBucket90,
+                ScoreBucket100, ScoreSumSq),
+        };
     }
+
+    private static DynamicParameters WithDistribution(object values, TelemetryGuard.Analytics.Abstractions.ScoreDistribution d)
+    {
+        var p = new DynamicParameters(values);
+        p.Add("ScoreBucket00", d.Bucket00); p.Add("ScoreBucket10", d.Bucket10);
+        p.Add("ScoreBucket20", d.Bucket20); p.Add("ScoreBucket30", d.Bucket30);
+        p.Add("ScoreBucket40", d.Bucket40); p.Add("ScoreBucket50", d.Bucket50);
+        p.Add("ScoreBucket60", d.Bucket60); p.Add("ScoreBucket70", d.Bucket70);
+        p.Add("ScoreBucket80", d.Bucket80); p.Add("ScoreBucket90", d.Bucket90);
+        p.Add("ScoreBucket100", d.Bucket100); p.Add("ScoreSumSq", d.SumSq);
+        return p;
+    }
+
+    private static TelemetryGuard.Analytics.Abstractions.ScoreDistribution Distribution(
+        long b00, long b10, long b20, long b30, long b40, long b50,
+        long b60, long b70, long b80, long b90, long b100, long sumSq) =>
+        new(b00, b10, b20, b30, b40, b50, b60, b70, b80, b90, b100, sumSq);
 }

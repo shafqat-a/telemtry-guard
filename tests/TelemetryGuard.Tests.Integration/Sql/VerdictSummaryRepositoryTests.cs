@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using TelemetryGuard.Data.Models;
 using TelemetryGuard.Data.Repositories;
+using TelemetryGuard.Analytics.Abstractions;
 
 namespace TelemetryGuard.Tests.Integration.Sql;
 
@@ -27,7 +28,10 @@ public sealed class VerdictSummaryRepositoryTests(SqlServerFixture fx)
         var date = new DateOnly(2024, 3, 10);
         var row = new VerdictDailySummaryRow(
             SqlServerFixture.TenantA, campaignId, date,
-            Allowed: 10, Challenged: 5, Blocked: 2, ScoreSum: 850, Events: 17);
+            Allowed: 10, Challenged: 5, Blocked: 2, ScoreSum: 850, Events: 17)
+        {
+            ScoreDistribution = new ScoreDistribution(1, 2, 3, 4, 1, 1, 1, 1, 1, 1, 1, 55_000),
+        };
 
         await repo.UpsertDailySummaryAsync(row, CancellationToken.None);
         await repo.UpsertDailySummaryAsync(row, CancellationToken.None); // identical re-run
@@ -105,6 +109,36 @@ public sealed class VerdictSummaryRepositoryTests(SqlServerFixture fx)
         Assert.Equal(2, rows.Count);                       // d3 outside range; campaignY filtered out
         Assert.Equal(new[] { d1, d2 }, rows.Select(r => r.Date).ToArray()); // ascending by date
         Assert.All(rows, r => Assert.Equal(campaignX, r.CampaignId));
+    }
+
+    [Fact]
+    public async Task GetDailySummariesAsync_without_campaign_sums_all_campaigns_and_histograms()
+    {
+        await using var provider = RepositoryFactory.BuildServices(fx, SqlServerFixture.TenantA);
+        using var scope = provider.CreateScope();
+        var repo = scope.ServiceProvider.GetRequiredService<IVerdictSummaryRepository>();
+
+        var date = new DateOnly(2024, 8, 20);
+        var first = new VerdictDailySummaryRow(
+            SqlServerFixture.TenantA, Guid.NewGuid(), date, 1, 0, 0, 10, 1)
+        {
+            ScoreDistribution = ScoreDistribution.ForScore(10),
+        };
+        var campaignless = new VerdictDailySummaryRow(
+            SqlServerFixture.TenantA, Guid.Empty, date, 0, 0, 1, 100, 1)
+        {
+            ScoreDistribution = ScoreDistribution.ForScore(100),
+        };
+        await repo.UpsertDailySummaryAsync(first, CancellationToken.None);
+        await repo.UpsertDailySummaryAsync(campaignless, CancellationToken.None);
+
+        var total = Assert.Single(await repo.GetDailySummariesAsync(null, date, date, CancellationToken.None));
+
+        Assert.Equal(2, total.Events);
+        Assert.Equal(110, total.ScoreSum);
+        Assert.Equal(new long[] { 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1 },
+            total.ScoreDistribution.Counts);
+        Assert.Equal(10_100, total.ScoreDistribution.SumSq);
     }
 
     [Fact]

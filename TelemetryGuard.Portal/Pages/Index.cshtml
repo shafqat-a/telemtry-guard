@@ -12,7 +12,7 @@
     {
         <div class="panel-error" role="alert">@Model.CampaignsResult.Error</div>
     }
-    <form method="get" action="/" class="tg-filter-form">
+    <form method="get" action="@Url.Content("~/")" class="tg-filter-form">
         <label>
             Campaign
             <select name="CampaignId">
@@ -93,18 +93,18 @@
     else
     {
         <p>
-            <a href="/enforcement?status=pending">
+            <a href="@Url.Content("~/enforcement")?status=pending">
                 <span class="badge badge-pending">Pending: @TelemetryGuard.Portal.Pages.IndexModel.CountBadge(Model.PendingResult?.Value?.Count)</span>
             </a>
             @if (Model.FailedResult?.Error is null)
             {
-                <a href="/enforcement?status=failed">
+                <a href="@Url.Content("~/enforcement")?status=failed">
                     <span class="badge badge-failed">Failed: @TelemetryGuard.Portal.Pages.IndexModel.CountBadge(Model.FailedResult?.Value?.Count)</span>
                 </a>
             }
             @if (Model.UnsupportedResult?.Error is null)
             {
-                <a href="/enforcement?status=unsupported">
+                <a href="@Url.Content("~/enforcement")?status=unsupported">
                     <span class="badge badge-unsupported">Unsupported: @TelemetryGuard.Portal.Pages.IndexModel.CountBadge(Model.UnsupportedResult?.Value?.Count)</span>
                 </a>
             }

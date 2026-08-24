@@ -21,6 +21,8 @@ public static class DataServiceCollectionExtensions
         // DAT-05 config repositories — scoped: they depend on the scoped ITenantContext
         // via ITenantConnectionFactory.
         services.TryAddScoped<Repositories.ITenantRepository, Repositories.TenantRepository>();
+        services.TryAddScoped<Repositories.ILabelSubmissionRepository, Repositories.LabelSubmissionRepository>();
+        services.TryAddScoped<Repositories.IWebhookOutboxRepository, Repositories.WebhookOutboxRepository>();
         services.TryAddScoped<Repositories.ISiteRepository, Repositories.SiteRepository>();
         services.TryAddScoped<Repositories.ICampaignRepository, Repositories.CampaignRepository>();
 

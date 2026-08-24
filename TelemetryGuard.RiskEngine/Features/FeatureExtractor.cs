@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Microsoft.Extensions.Options;
 using TelemetryGuard.RiskEngine.Contracts;
+using TelemetryGuard.RiskEngine.Enrichment;
 
 namespace TelemetryGuard.RiskEngine.Features;
 
@@ -86,7 +87,7 @@ public sealed class FeatureExtractor : IFeatureExtractor
             BeaconIntegrityOk = beacon?.IntegrityOk,
             IpTor = enrichment.IsTor,
             TlsUaMismatch = ComputeTlsUaMismatch(raw.TlsFingerprint, uaInfo),
-            IpDatacenterAsn = enrichment.IsDatacenter,
+            IpDatacenterAsn = ComputeIpDatacenterAsn(enrichment),
             IpClicksLastMin = velocity.IpClicksLastMin,
             UaOsMismatch = ComputeUaOsMismatch(raw.Headers, uaInfo),
             MousePathLinearity = beacon is null ? float.NaN : TrajectoryStats.MousePathLinearity(beacon),
@@ -121,6 +122,7 @@ public sealed class FeatureExtractor : IFeatureExtractor
             PasteInIdentityFields = beacon?.PasteInIdentityFields,
             ReferrerMissing = !(raw.Headers.TryGetValue("Referer", out var referer)
                                 && !string.IsNullOrEmpty(referer)),
+            ClockSkewBad = beacon?.ClockSkewBad,
             InputEventCount = beacon is null ? float.NaN : TrajectoryStats.InputEventCount(beacon),
             ScrollEvents = beacon is null ? float.NaN : beacon.ScrollEventCount,
             PagesViewed = beacon is null ? float.NaN : beacon.PagesViewed,
@@ -129,11 +131,26 @@ public sealed class FeatureExtractor : IFeatureExtractor
             IsMobile = isMobile,
             AsnType = enrichment.AsnType,
             IsPrivateRelay = enrichment.IsPrivateRelay,
+            MouseMoveGaps = beacon is null ? float.NaN : beacon.MmN,
             FormSubmitted = beacon?.FormSubmitted,
             AutofillDetected = beacon?.AutofillDetected,
             IsPaidClick = raw.IsPaidClick,
             ChallengeOutcome = raw.ChallengeOutcome,
         };
+    }
+
+    /// <summary>ip_datacenter_asn as the T1 rule should see it. The provider's IsDatacenter
+    /// is "Datacenter or Cdn" (D24) — right for the flag, wrong for a rule that challenges
+    /// every paid click: Private Relay users egress via Cloudflare/Fastly/Akamai, WARP and
+    /// Google One VPN users via Cloudflare/Google, and all of them are people. The §7
+    /// Private Relay carve-out therefore applies here exactly as it does to IpProxyOrVpn,
+    /// and a CDN classification is not a datacenter for this feature (the model still
+    /// sees it through the AsnType CTX one-hot). null (unknown) propagates unchanged.</summary>
+    private static bool? ComputeIpDatacenterAsn(IpEnrichment enrichment)
+    {
+        if (enrichment.IsPrivateRelay) return false;
+        if (enrichment.AsnType == AsnType.Cdn) return false;
+        return enrichment.IsDatacenter;
     }
 
     /// <summary>Step 6 is_mobile: Sec-CH-UA-Mobile wins when present ("?1"/"?0"); else

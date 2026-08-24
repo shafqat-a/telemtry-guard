@@ -23,7 +23,7 @@ function uuidFromRandomValues(): string {
   );
 }
 
-function generateSid(): string {
+function generateUuid(): string {
   try {
     if (typeof crypto.randomUUID === 'function') return crypto.randomUUID();
   } catch {
@@ -58,7 +58,7 @@ export function resolveSid(): string {
     }
   }
 
-  if (!sid) sid = generateSid();
+  if (!sid) sid = generateUuid();
 
   try {
     sessionStorage.setItem('tg_sid', sid);
@@ -67,4 +67,43 @@ export function resolveSid(): string {
   }
 
   return sid;
+}
+
+const TRACKED_VISIT_KEY = 'tg_vid_used';
+
+/**
+ * A fresh identifier for this document load; never persisted as the visit id itself.
+ *
+ * A tracker redirect already minted a unique request id (`tg_sid`); the FIRST
+ * document load that carries it adopts it, which keeps the paid-click Redis
+ * context and the landing-page visit on one identity. It is adopted at most once
+ * per tab: the server scopes the envelope sequence counter and the /i/init nonce
+ * per visit id, so a reload (F5) of the tagged landing URL must NOT reuse it —
+ * `seq` restarts at 0 on every document load and a reused id would read as a
+ * replay of the first visit. The reload gets a fresh id; `session_id` (resolveSid)
+ * still links it to the same session.
+ */
+export function createVisitId(): string {
+  try {
+    const tracked = new URLSearchParams(location.search).get('tg_sid');
+    if (tracked && SID_PATTERN.test(tracked)) {
+      let used: string | null = null;
+      try {
+        used = sessionStorage.getItem(TRACKED_VISIT_KEY);
+      } catch {
+        /* privacy modes may throw — fall through and adopt (single-page safe) */
+      }
+      if (used !== tracked) {
+        try {
+          sessionStorage.setItem(TRACKED_VISIT_KEY, tracked);
+        } catch {
+          /* ignore */
+        }
+        return tracked;
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  return generateUuid();
 }

@@ -11,8 +11,20 @@ public sealed class RulesOptions
     public double MousePathLinearityThreshold { get; set; } = 0.99;
     public int LinearMousePathMinEvents { get; set; } = 20;   // evidence gate
     public int LinearMousePathFloor { get; set; } = 85;
-    public double StdInterEventMsThreshold { get; set; } = 2.0;
-    public int RoboticCadenceMinEvents { get; set; } = 10;    // evidence gate
+    // robotic_cadence — OFF by default until real σ distributions have been observed in
+    // listen-only (D18). What the server measures is the std of gaps between pointer
+    // samples the SDK has ALREADY throttled to one per 50 ms (pointer.ts), rounded to
+    // whole milliseconds: during continuous movement each gap is the first frame after
+    // the 50 ms boundary, so σ ≈ frame/√12 — ~4.8 ms at 60 Hz but ~1.2 ms at 240 Hz —
+    // and Firefox with privacy.resistFingerprinting (100 ms timer precision) yields
+    // σ = 0 exactly. A threshold that catches scripted cadence also catches those
+    // humans; the honest fix is cadence statistics over un-throttled events on the
+    // client, which is a wire-contract change. Until then: disabled, and when enabled
+    // it gates on the number of GAPS behind the σ (MouseMoveGaps), never on keystrokes
+    // or clicks (InputEventCount), with a threshold below the 240 Hz figure.
+    public bool RoboticCadenceEnabled { get; set; } = false;
+    public double StdInterEventMsThreshold { get; set; } = 0.5;
+    public int RoboticCadenceMinGaps { get; set; } = 20;      // evidence gate on MouseMoveGaps
     public int RoboticCadenceFloor { get; set; } = 85;
     public int ClickIdInvalidFloor { get; set; } = 71;        // missing/replayed gclid on paid traffic
 }

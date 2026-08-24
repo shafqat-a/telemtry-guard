@@ -94,20 +94,21 @@ public class HeuristicScorerTests
         IpReputationBad = 1f,         // 1 * IpReputationBadMax (0 by default — no producer exists)
         PasteInIdentityFields = true, // 2
         ReferrerMissing = true,       // 2
+        ClockSkewBad = true,          // 2 (a wrong clock is T3, never the integrity floor)
     };
 
     [Fact]
     public void All_seven_T3_signals_cap_at_T3TotalCap_with_default_weights()
     {
-        // Six non-reputation defaults sum to 16; IpReputationBadMax defaults to 0.
-        // The joint cap binds: exactly 15, not 16.
+        // Seven non-reputation defaults sum to 18; IpReputationBadMax defaults to 0.
+        // The joint cap binds: exactly 15, not 18.
         Assert.Equal(15, CreateScorer().Score(AllSevenT3Firing()).Score);
     }
 
     [Fact]
     public void All_seven_T3_signals_still_cap_at_15_when_reputation_weight_raised()
     {
-        // With IpReputationBadMax = 5 the raw T3 sum is 21 — the cap binds either way.
+        // With IpReputationBadMax = 5 the raw T3 sum is 23 — the cap binds either way.
         var scorer = CreateScorer(new HeuristicWeights { IpReputationBadMax = 5 });
 
         Assert.Equal(15, scorer.Score(AllSevenT3Firing()).Score);

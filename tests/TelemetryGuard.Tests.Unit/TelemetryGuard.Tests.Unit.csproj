@@ -32,6 +32,12 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- D24: 3 KB database in iplegence's Superior-IP record layout — see the README
+         next to it for the row table and how to regenerate. -->
+    <None Include="Enrichment\Data\iplegence-fixture.mmdb" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\..\TelemetryGuard.Core\TelemetryGuard.Core.csproj" />
     <ProjectReference Include="..\..\TelemetryGuard.RiskEngine\TelemetryGuard.RiskEngine.csproj" />
     <ProjectReference Include="..\..\TelemetryGuard.RiskEngine.Contracts\TelemetryGuard.RiskEngine.Contracts.csproj" />

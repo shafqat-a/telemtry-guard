@@ -10,7 +10,19 @@ public interface ITenantRepository
     Task<bool> UpdateRetentionDaysAsync(int retentionDays, CancellationToken ct);
     /// <summary>D21: 0=AutoEnforce, 1=ApprovalQueue; throws ArgumentOutOfRangeException otherwise.</summary>
     Task<bool> UpdateEnforcementModeAsync(byte enforcementMode, CancellationToken ct);
+    /// <summary>Replaces the tenant policy and appends its immutable audit row atomically.</summary>
+    Task<TenantRecord?> UpdatePolicyAsync(TenantPolicyUpdate update, byte[]? actorKeyHash, CancellationToken ct)
+        => throw new NotSupportedException("This tenant repository does not support policy mutation.");
 }
+
+/// <summary>ExternalAuthority null = leave the stored value unchanged (REQ-07: a caller
+/// that does not mention external ownership must not revoke it).</summary>
+public sealed record TenantPolicyUpdate(
+    byte? AllowMax,
+    byte? ChallengeMax,
+    bool? ObserveOnly,
+    byte EnforcementMode,
+    bool? ExternalAuthority);
 
 public interface ISiteRepository
 {

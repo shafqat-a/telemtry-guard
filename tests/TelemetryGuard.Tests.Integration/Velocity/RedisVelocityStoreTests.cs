@@ -60,6 +60,7 @@ public sealed class RedisVelocityStoreTests : IClassFixture<RedisVelocityFixture
         public string? SiteKey => null;
 
         public bool IsResolved => true;
+        public IReadOnlyList<string> Scopes => Array.Empty<string>();
     }
 
     private RedisVelocityStore Store(FakeClock clock, Guid? tenant = null)

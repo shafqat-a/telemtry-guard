@@ -68,13 +68,12 @@ public static partial class DecisionEndpoints
         ITurnstileVerifier turnstile,
         IVerdictFinalizer finalizer,
         IConnectionMultiplexer redis,
-        IOptions<ScoringBandOptions> bandOptions,
+        ITenantPolicyProvider policyProvider,
         IOptions<TurnstileOptions> turnstileOptions,
         ILoggerFactory loggerFactory,
         CancellationToken ct)
     {
         var logger = loggerFactory.CreateLogger("TelemetryGuard.Api.Endpoints.DecisionEndpoints");
-        var bands = bandOptions.Value;
         var siteKeyForWidget = turnstileOptions.Value.SiteKey;
 
         // CORS: unlike /i and /c, the caller MUST be able to READ this response
@@ -132,6 +131,8 @@ public static partial class DecisionEndpoints
             return UnknownSiteKey();
         tenantContext.Resolve(new TenantId(resolved.TenantId), resolved.SiteKey);
         var tenantId = new TenantId(resolved.TenantId);
+        var policy = await policyProvider.GetAsync(ct);
+        var observeOnly = policy.ObserveOnly;
 
         // Step 2: initial score. Tenant is ambient (just stamped above); the
         // challenge outcome defaults to NotChallenged for this first call.
@@ -143,6 +144,12 @@ public static partial class DecisionEndpoints
         {
             logger.LogWarning(
                 "Decide: unknown session {SessionId} for tenant {TenantId}", sid, tenantId);
+
+            if (observeOnly)
+            {
+                TagActivity("allow", false);
+                return ActionResult("allow");
+            }
 
             if (string.IsNullOrEmpty(req.TurnstileToken))
             {
@@ -161,13 +168,23 @@ public static partial class DecisionEndpoints
         // config the two agree; a mismatch only ever means a test/tenant override
         // moved the thresholds — that's expected, not a bug, so it's logged at
         // Debug rather than asserted/thrown.
-        var band = MapBand(outcome.Result.Score, bands);
+        var band = MapBand(outcome.Result.Score, policy.AllowMax, policy.ChallengeMax);
         if (band != outcome.Band)
         {
             logger.LogDebug(
                 "Decide: locally-mapped band {LocalBand} differs from pipeline band {PipelineBand} " +
                 "for session {SessionId} (score {Score}) — expected only under a Scoring:Bands override.",
                 band, outcome.Band, sid, outcome.Result.Score);
+        }
+
+        // Monitoring mode deliberately separates detection from enforcement. Preserve
+        // the original score/band/rules in analytics, clean up the grace entry, and
+        // allow the visitor without invoking Turnstile or returning a block action.
+        if (observeOnly)
+        {
+            await FinalizeDecisionAsync(finalizer, redis, tenantId, sid, outcome, logger, ct);
+            TagActivity("allow", false);
+            return ActionResult("allow");
         }
 
         switch (band)
@@ -228,7 +245,7 @@ public static partial class DecisionEndpoints
                 // Passed challenge: re-scored band decides. A passed challenge
                 // that STILL scores block blocks (a solved Turnstile doesn't wash
                 // out T1 evidence). Anything else allows — never re-challenge.
-                var final = rescored.Result.Score > bands.ChallengeMax ? "block" : "allow";
+                var final = rescored.Result.Score > policy.ChallengeMax ? "block" : "allow";
                 await FinalizeDecisionAsync(finalizer, redis, tenantId, sid, rescored, logger, ct);
                 TagActivity(final, true);
                 return ActionResult(final);
@@ -238,9 +255,9 @@ public static partial class DecisionEndpoints
 
     // ------------------------------------------------------------- helpers --
 
-    private static VerdictBand MapBand(int score, ScoringBandOptions bands)
-        => score <= bands.AllowMax ? VerdictBand.Allow
-         : score <= bands.ChallengeMax ? VerdictBand.Challenge
+    private static VerdictBand MapBand(int score, int allowMax, int challengeMax)
+        => score <= allowMax ? VerdictBand.Allow
+            : score <= challengeMax ? VerdictBand.Challenge
          : VerdictBand.Block;
 
     /// <summary>Finalize + grace-entry cleanup, belt-and-braces per task step 9:

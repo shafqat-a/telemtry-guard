@@ -1,10 +1,10 @@
 using MaxMind.GeoIP2;
 
-namespace TelemetryGuard.RiskEngine.Enrichment;
+namespace TelemetryGuard.RiskEngine.Enrichment.Providers;
 
-/// <summary>Immutable holder for the currently open database readers, enabling an
+/// <summary>Immutable holder for the MaxMind provider's open database readers, enabling an
 /// atomic swap when the weekly refresh script replaces files on disk. Mtimes record
-/// what was on disk at load time so the refresh service can detect changes.</summary>
+/// what was on disk at load time so the provider can detect changes.</summary>
 internal sealed class ReaderSet : IDisposable
 {
     public DatabaseReader? City { get; init; }     // opened with MaxMind.Db.FileAccessMode.MemoryMapped

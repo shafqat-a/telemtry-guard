@@ -18,7 +18,7 @@ internal sealed class ResolutionConnectionFactory(IConfiguration cfg) : IResolut
 {
     public async Task<SqlConnection> OpenAsync(CancellationToken ct)
     {
-        var conn = new SqlConnection(cfg.GetConnectionString("Main"));
+        var conn = new SqlConnection(SqlConnectionStrings.Main(cfg));
         await conn.OpenAsync(ct);
         return conn;
     }
