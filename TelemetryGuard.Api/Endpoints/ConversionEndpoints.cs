@@ -33,7 +33,10 @@ public static class ConversionEndpoints
             request=await JsonSerializer.DeserializeAsync<CollectConversionRequest>(ctx.Request.Body,
                 new JsonSerializerOptions(JsonSerializerDefaults.Web),ct);
         }
-        catch(JsonException){ return Results.NoContent(); }
+        catch(Exception ex) when(ex is JsonException or NotSupportedException or ArrayTypeMismatchException)
+        {
+            return Results.NoContent();
+        }
         if(request is null) return Results.NoContent();
         if(string.IsNullOrWhiteSpace(request.K)) return Results.NoContent();
         var resolved=await resolver.ResolveSiteKeyAsync(request.K,ct);
