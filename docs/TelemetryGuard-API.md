@@ -355,6 +355,43 @@ URL, or source control.
 | `GET /admin/reports/sites` | Daily per-site rollups | `Events` means scored verdict events |
 | `GET /admin/reports/domain-traffic` | Narrow, redacted traffic lookup | Does not expose cookies or raw headers |
 | `POST /admin/analytics/clickhouse/query` | Controlled tenant-scoped ClickHouse read | Single read-only `SELECT`/`WITH`, max 10,000 rows, 30-second timeout |
+| `POST /admin/analytics/query` | SQL-free semantic dimensions/metrics/filters | Tenant-scoped, bounded, canonical-visit aggregation |
+
+The semantic endpoint is the preferred interface for dashboards:
+
+```http
+POST /admin/analytics/query
+X-Api-Key: tg_ak_your_admin_key
+Content-Type: application/json
+```
+
+```json
+{
+  "siteKeys": ["tg_sk_your_public_site_key"],
+  "time": {
+    "from": "2026-08-23T00:00:00+06:00",
+    "to": "2026-08-26T00:00:00+06:00",
+    "bucket": "hour",
+    "timezone": "Asia/Dhaka"
+  },
+  "dimensions": ["hour", "utm_source"],
+  "metrics": ["requests", "sessions", "fraud_rate"],
+  "filters": [
+    {"field": "utm_source", "operator": "in", "value": ["facebook", "tiktok", "google"]}
+  ],
+  "orderBy": [{"field": "requests", "direction": "desc"}],
+  "limit": 500,
+  "offset": 0
+}
+```
+
+Supported dimensions include `day`, `hour`, `utm_platform`, `utm_source`, `utm_medium`,
+`utm_campaign`, `utm_campaign_id`, `utm_content`, `landing_path`, `country`, `ip_type`,
+`ga_status`, `verdict_band`, and `action`. Supported metrics include requests, sessions,
+unique visitors, average score, fraud rate, allowed/challenged/blocked requests, and GA
+page-view sent/accepted counts. Filters currently support `eq`, `neq`, `in`, `not_in`, and
+`contains`. Results are aggregated over one canonical row per `visit_id`, so beacons do not
+inflate request totals.
 
 For MarketIQ or another approved analytics consumer that needs a query not covered by a
 prebuilt report, use the ClickHouse read-through endpoint. It still uses the admin API key

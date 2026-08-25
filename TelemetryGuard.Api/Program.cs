@@ -412,6 +412,7 @@ app.MapConversionEndpoints();    // browser/server conversion achievements
 app.MapDecisionEndpoints();      // API-05  POST /decide
 app.MapAdminEndpoints();         // API-07  /admin/*
 app.MapClickHouseQueryEndpoints(); // read-only tenant analytics query
+app.MapSemanticAnalyticsEndpoints(); // SQL-free dimensions, metrics, filters
 app.MapPolicyAdminEndpoints();   // REQ-06 /admin/policy
 app.MapVerdictEvidenceEndpoints(); // REQ-04/05 projected verdict evidence
 app.MapLabelAdminEndpoints();     // REQ-09 durable reviewer labels
