@@ -7,6 +7,10 @@ namespace TelemetryGuard.Analytics.ClickHouse;
 public sealed class ClickHouseAnalyticsOptions
 {
     public string ConnectionString { get; init; } = "";
+    /// <summary>Optional least-privilege connection used by the read/query API. When
+    /// empty, the provider connection is used for backward-compatible deployments;
+    /// production should set this to a ClickHouse user with SELECT-only grants.</summary>
+    public string ReadConnectionString { get; init; } = "";
     // event sink
     public int EventQueueCapacity { get; init; } = 100_000;
     public int EventMaxBatchSize { get; init; } = 5_000;

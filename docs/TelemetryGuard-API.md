@@ -354,6 +354,31 @@ URL, or source control.
 | `GET /admin/reports/publishers` | Daily placement/publisher rollups | Placement totals are scored events, not session counts |
 | `GET /admin/reports/sites` | Daily per-site rollups | `Events` means scored verdict events |
 | `GET /admin/reports/domain-traffic` | Narrow, redacted traffic lookup | Does not expose cookies or raw headers |
+| `POST /admin/analytics/clickhouse/query` | Controlled tenant-scoped ClickHouse read | Single read-only `SELECT`/`WITH`, max 10,000 rows, 30-second timeout |
+
+For MarketIQ or another approved analytics consumer that needs a query not covered by a
+prebuilt report, use the ClickHouse read-through endpoint. It still uses the admin API key
+and requires the tenant placeholder in every query:
+
+```http
+POST /admin/analytics/clickhouse/query
+X-Api-Key: tg_ak_your_admin_key
+Content-Type: application/json
+```
+
+```json
+{
+  "sql": "SELECT utm_source, countDistinct(visit_id) AS requests FROM telemetry_guard.tg_events WHERE tenant_id = {tenantId:UUID} AND site_key = 'tg_sk_your_public_site_key' AND timestamp >= now() - INTERVAL 3 DAY GROUP BY utm_source ORDER BY requests DESC",
+  "maxRows": 500
+}
+```
+
+The API binds `{tenantId:UUID}` from the authenticated tenant; callers cannot substitute
+another tenant. It accepts exactly one comment-free `SELECT` or `WITH` statement, rejects
+multi-statements, DML/DDL, system and metadata namespaces, and applies a server-side row
+limit and timeout. Configure `Analytics:ClickHouse:ReadConnectionString` to a ClickHouse
+account granted `SELECT` only. The existing provider connection is used as a compatibility
+fallback, but production deployments should always configure the separate read-only account.
 
 Date-based reports use `from` and `to` in `yyyy-MM-dd` format. For example:
 
