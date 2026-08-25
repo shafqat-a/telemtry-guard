@@ -54,9 +54,9 @@ GO
 
 ALTER SECURITY POLICY rls.TenantIsolationPolicy ADD
     FILTER PREDICATE rls.fn_tenantPredicate(TenantId) ON dbo.ConversionGoals,
-    BLOCK PREDICATE rls.fn_tenantPredicate(TenantId) ON dbo.ConversionGoals,
-    FILTER PREDICATE rls.fn_tenantPredicate(TenantId) ON dbo.ConversionEvents,
-    BLOCK PREDICATE rls.fn_tenantPredicate(TenantId) ON dbo.ConversionEvents;
+    ADD BLOCK PREDICATE rls.fn_tenantPredicate(TenantId) ON dbo.ConversionGoals,
+    ADD FILTER PREDICATE rls.fn_tenantPredicate(TenantId) ON dbo.ConversionEvents,
+    ADD BLOCK PREDICATE rls.fn_tenantPredicate(TenantId) ON dbo.ConversionEvents;
 GO
 
 GRANT SELECT,INSERT,UPDATE,DELETE ON dbo.ConversionGoals TO tg_app;
