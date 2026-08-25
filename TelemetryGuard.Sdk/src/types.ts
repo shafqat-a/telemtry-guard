@@ -27,6 +27,7 @@ export interface Envelope {
   session_id: string;
   sid: string;
   visit_id: string;
+  device_id: string;
   seq: number;
   nonce: string;
   sent_at: number;

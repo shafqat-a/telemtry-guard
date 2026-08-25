@@ -1,5 +1,5 @@
 import { readConfig } from './config';
-import { createVisitId, resolveSid } from './session';
+import { createVisitId, resolveDeviceId, resolveSid } from './session';
 import { initState } from './state';
 import { fetchInit } from './init-fetch';
 import { enqueue, startTransport } from './transport';
@@ -13,7 +13,7 @@ import { startGaStatus } from './ga-status';
   try {
     const cfg = readConfig();
     if (!cfg) return; // inert without a site key
-    initState(cfg, resolveSid(), createVisitId());
+    initState(cfg, resolveSid(), createVisitId(), resolveDeviceId());
     startGaStatus();
     startTransport();
     enqueue({ e: 'pv', t: nowT() }); // guarantees >=1 envelope per JS session,

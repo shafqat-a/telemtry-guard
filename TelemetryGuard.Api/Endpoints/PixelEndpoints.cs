@@ -154,6 +154,12 @@ public static partial class PixelEndpoints
                     new("header_order", headerOrder),
                     new("site_key", siteKey),
                     new("utm_source", attribution.UtmSource),
+                    new("utm_campaign", attribution.UtmCampaign),
+                    new("utm_id", attribution.UtmId),
+                    new("utm_content", attribution.UtmContent),
+                    new("utm_platform", attribution.UtmPlatform),
+                    new("utm_publisher_id", attribution.UtmPublisherId),
+                    new("utm_campaign_id", attribution.UtmCampaignId),
                     new("landing_url", attribution.LandingUrl ?? ""),
                     // INT-05: RSK-04's actual TlsUaMismatch contract field.
                     new("tls_fp", tlsFp ?? ""),

@@ -36,6 +36,7 @@ public static class AttributionExtractor
     private static readonly FrozenSet<string> MarketingParams = new[]
     {
         "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", "utm_id",
+        "utm_platform", "utm_publisher_id", "utm_campaign_id",
         "gclid", "gbraid", "wbraid", "fbclid", "ttclid", "msclkid",
     }.ToFrozenSet(StringComparer.OrdinalIgnoreCase);
 
@@ -66,6 +67,9 @@ public static class AttributionExtractor
         public string UtmTerm { get; init; } = "";
         public string UtmContent { get; init; } = "";
         public string UtmId { get; init; } = "";
+        public string UtmPlatform { get; init; } = "";
+        public string UtmPublisherId { get; init; } = "";
+        public string UtmCampaignId { get; init; } = "";
         public string CookieFbc { get; init; } = "";
         public string CookieFbp { get; init; } = "";
         public string CookieGclAw { get; init; } = "";
@@ -191,6 +195,9 @@ public static class AttributionExtractor
             UtmTerm = Get(marketing, "utm_term"),
             UtmContent = Get(marketing, "utm_content"),
             UtmId = Get(marketing, "utm_id"),
+            UtmPlatform = Get(marketing, "utm_platform"),
+            UtmPublisherId = Get(marketing, "utm_publisher_id"),
+            UtmCampaignId = Get(marketing, "utm_campaign_id"),
             CookieFbc = cookieFbc,
             CookieFbp = cookieFbp,
             CookieGclAw = cookieGclAw,

@@ -251,6 +251,10 @@ public static partial class BeaconEndpoints
             var canonicalSessionId = body.TryGetProperty("session_id", out var sessionIdEl)
                 ? sessionIdEl.GetString() ?? sid
                 : sid;
+            var deviceId = body.TryGetProperty("device_id", out var deviceIdEl)
+                && deviceIdEl.ValueKind == JsonValueKind.String
+                ? deviceIdEl.GetString()
+                : null;
 
             // Load-modify-store (single-instance MVP): beacons for one session
             // arrive serially from one browser, so read-modify-write is
@@ -269,6 +273,8 @@ public static partial class BeaconEndpoints
                 string.IsNullOrEmpty(referer) ? null : referer);
             if (visitId.Length > 0)
                 hash["visit_id"] = visitId;
+            if (!string.IsNullOrWhiteSpace(deviceId) && deviceId.Length <= 128)
+                hash["device_id"] = deviceId;
 
             var entries = new HashEntry[hash.Count];
             var i = 0;
@@ -330,6 +336,12 @@ public static partial class BeaconEndpoints
                     new("visit_id", visitId),
                     new("campaign_id", ""),
                     new("utm_source", attribution.UtmSource),
+                    new("utm_campaign", attribution.UtmCampaign),
+                    new("utm_id", attribution.UtmId),
+                    new("utm_content", attribution.UtmContent),
+                    new("utm_platform", attribution.UtmPlatform),
+                    new("utm_publisher_id", attribution.UtmPublisherId),
+                    new("utm_campaign_id", attribution.UtmCampaignId),
                     new("landing_url", attribution.LandingUrl ?? ""),
                     new("click_id_type", ""),
                     new("click_id", ""),

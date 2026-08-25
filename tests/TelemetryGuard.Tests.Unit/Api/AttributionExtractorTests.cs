@@ -7,6 +7,17 @@ namespace TelemetryGuard.Tests.Unit.Api;
 /// copied into the event store.</summary>
 public class AttributionExtractorTests
 {
+    [Fact]
+    public void Extract_PreservesMarketIqAttributionParameters()
+    {
+        var result = AttributionExtractor.Extract(Ctx(
+            "https://bu.edu.bd/sports?utm_platform=facebook&utm_publisher_id=pub_10457&utm_campaign_id=269"));
+
+        Assert.Equal("facebook", result.UtmPlatform);
+        Assert.Equal("pub_10457", result.UtmPublisherId);
+        Assert.Equal("269", result.UtmCampaignId);
+    }
+
     private static HttpContext Ctx(
         string? referer = null,
         (string Name, string Value)[]? cookies = null,

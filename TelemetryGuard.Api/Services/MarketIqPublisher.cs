@@ -46,13 +46,13 @@ public sealed class MarketIqPublisher(
             ["companyId"]=site.MarketIqCompanyId,
             ["event_id"]=visitId,
             ["session_id"]=sessionId,
-            ["device_id"]=Get(session,"visitor_id"),
+            ["device_id"]=Get(session,"device_id") ?? Get(session,"visitor_id"),
             ["occurred_at"]=occurredUtc.ToUniversalTime().ToString("O",CultureInfo.InvariantCulture),
             ["user_agent"]=userAgent,
             ["ip"]=ip,
-            ["utm_publisher_id"]=Get(click,"utm_source"),
-            ["utm_campaign_id"]=Get(click,"campaign_id"),
-            ["utm_platform"]=Platform(Get(click,"click_id_type")),
+            ["utm_publisher_id"]=First(click,"utm_publisher_id","utm_content"),
+            ["utm_campaign_id"]=First(click,"utm_campaign_id","utm_id","utm_campaign","campaign_id"),
+            ["utm_platform"]=Platform(First(click,"utm_platform","utm_source"),Get(click,"click_id_type")),
             ["webdriver_flag"]=f?.WebdriverFlag,
             ["headless_browser"]=f?.HeadlessBrowser,
             ["emulator_or_vm"]=f?.EmulatorOrVm,
@@ -61,10 +61,10 @@ public sealed class MarketIqPublisher(
             ["cookies_disabled"]=f?.CookiesDisabled,
             ["canvas_fp_blocked"]=f?.CanvasFpBlocked,
             ["is_mobile"]=f?.IsMobile,
-            ["mouse_events"]=MousePoints(session),
-            ["touch_events"]=Long(session,"pt_touch"),
-            ["scroll_events"]=Long(session,"n_scroll"),
-            ["keystrokes"]=Long(session,"n_key"),
+            ["mouse_events"]=MousePoints(session) ?? 0,
+            ["touch_events"]=Long(session,"pt_touch") ?? 0,
+            ["scroll_events"]=Long(session,"n_scroll") ?? 0,
+            ["keystrokes"]=Long(session,"n_key") ?? 0,
             ["mouse_path_linearity"]=Finite(f?.MousePathLinearity),
             ["mean_inter_event_ms"]=Finite(f?.MeanInterEventMs),
             ["std_inter_event_ms"]=Finite(f?.StdInterEventMs),
@@ -119,6 +119,8 @@ public sealed class MarketIqPublisher(
 
     private static string? Get(IReadOnlyDictionary<string,string> values,string key)
         => values.TryGetValue(key,out var value)&&value.Length>0?value:null;
+    private static string? First(IReadOnlyDictionary<string,string> values,params string[] keys)
+        => keys.Select(key=>Get(values,key)).FirstOrDefault(value=>value is not null);
     private static long? Long(IReadOnlyDictionary<string,string> values,string key)
         => values.TryGetValue(key,out var value)&&long.TryParse(value,out var parsed)?parsed:null;
     private static bool? Bool(IReadOnlyDictionary<string,string> values,string key)
@@ -174,11 +176,25 @@ public sealed class MarketIqPublisher(
         else if(node is JsonArray arr)
             foreach(var child in arr) ReplaceNonFinite(child);
     }
-    private static string? Platform(string? clickIdType)=>clickIdType switch
+    private static string? Platform(string? tagged,string? clickIdType)
+    {
+        if(!string.IsNullOrWhiteSpace(tagged))
+        {
+            var value=tagged.Trim().ToLowerInvariant();
+            return value switch
+            {
+                "fb" or "facebook.com" or "meta"=>"facebook",
+                "tt" or "tiktok.com"=>"tiktok",
+                "google.com" or "googleads" or "google_ads"=>"google",
+                _=>value
+            };
+        }
+        return clickIdType switch
     {
         "fbclid"=>"facebook","ttclid"=>"tiktok","gclid" or "gbraid" or "wbraid"=>"google",
         "msclkid"=>"microsoft",_=>clickIdType
     };
+    }
     private static Guid DeterministicId(string value)
         => new(SHA256.HashData(Encoding.UTF8.GetBytes(value)).AsSpan(0,16));
 }

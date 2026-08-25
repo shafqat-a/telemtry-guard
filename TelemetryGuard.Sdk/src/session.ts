@@ -32,6 +32,20 @@ function generateUuid(): string {
   return uuidFromRandomValues();
 }
 
+/** Stable first-party device identifier; falls back to a fresh id when storage is unavailable. */
+export function resolveDeviceId(): string {
+  const key = 'tg_device_id';
+  try {
+    const existing = localStorage.getItem(key);
+    if (existing && SID_PATTERN.test(existing)) return existing;
+    const created = generateUuid();
+    localStorage.setItem(key, created);
+    return created;
+  } catch {
+    return generateUuid();
+  }
+}
+
 /**
  * Session-ID resolution, priority order fixed by the design:
  * 1. `tg_sid` URL param (set by the API-02 tracker redirect), validated;

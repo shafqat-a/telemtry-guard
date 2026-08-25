@@ -71,6 +71,7 @@ export function flush(reason: 'count' | 'timer' | 'hidden' | 'pagehide'): void {
       session_id: state.sid,
       sid: state.visitId,
       visit_id: state.visitId,
+      device_id: state.deviceId,
       seq: state.seq,
       nonce: state.nonce,
       sent_at: Date.now(),

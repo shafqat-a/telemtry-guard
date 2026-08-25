@@ -169,6 +169,7 @@ export const envelope = z
     session_id: z.string().min(8),
     sid: z.string().min(8),
     visit_id: z.string().uuid(),
+    device_id: z.string().min(8),
     seq: z.number().int().nonnegative(),
     nonce: z.string(),
     sent_at: z.number().int().positive(),
@@ -194,7 +195,7 @@ export function fnv1aHex(input: string): string {
 }
 
 /** Canonical key order pinned on the raw wire string. */
-export const KEY_ORDER_RE = /^\{"k":.*"session_id":.*"sid":.*"visit_id":.*"seq":.*"nonce":.*"sent_at":.*"events":/s;
+export const KEY_ORDER_RE = /^\{"k":.*"session_id":.*"sid":.*"visit_id":.*"device_id":.*"seq":.*"nonce":.*"sent_at":.*"events":/s;
 
 /**
  * Raw-string checks for one captured payload:

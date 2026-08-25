@@ -4,6 +4,7 @@ export interface TgState {
   cfg: TgConfig;
   sid: string;
   visitId: string;
+  deviceId: string;
   nonce: string; // '' until /i/init resolves; '' forever if it fails
   storageTs: number | null; // consumed by SDK-04
   storageSig: string | null; // consumed by SDK-04
@@ -13,11 +14,12 @@ export interface TgState {
 
 export let state: TgState; // assigned once in bootstrap
 
-export function initState(cfg: TgConfig, sid: string, visitId: string): void {
+export function initState(cfg: TgConfig, sid: string, visitId: string, deviceId: string): void {
   state = {
     cfg,
     sid,
     visitId,
+    deviceId,
     nonce: '',
     storageTs: null,
     storageSig: null,
