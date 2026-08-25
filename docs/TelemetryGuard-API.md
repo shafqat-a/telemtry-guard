@@ -380,6 +380,38 @@ limit and timeout. Configure `Analytics:ClickHouse:ReadConnectionString` to a Cl
 account granted `SELECT` only. The existing provider connection is used as a compatibility
 fallback, but production deployments should always configure the separate read-only account.
 
+Successful responses have this shape:
+
+```json
+{
+  "columns": ["utm_source", "requests"],
+  "rows": [
+    {"utm_source": "facebook", "requests": 5512},
+    {"utm_source": "tiktok", "requests": 1915}
+  ],
+  "truncated": false
+}
+```
+
+`columns` preserves the ClickHouse result-column order. `rows` contains JSON-safe scalar
+values, with database `NULL` represented as JSON `null`. `truncated: true` means the
+server-side `maxRows` limit was reached and the caller must narrow the time range or query.
+
+Typical responses are:
+
+| Status | Meaning |
+|---:|---|
+| `200` | Query completed |
+| `400` | Query is not an allowed single read statement, lacks the tenant placeholder, or exceeds validation limits |
+| `401` | Missing or invalid `X-Api-Key` |
+| `403` | Key is valid but not authorized for the tenant/scope |
+| `408`/`504` | Query timed out or was cancelled |
+| `429` | Rate limit reached |
+
+The endpoint is intended for summarized and bounded drilldown queries. For repeated
+dashboards, use the prebuilt report endpoints or a saved-query layer rather than sending
+large unbounded scans on every page refresh.
+
 Date-based reports use `from` and `to` in `yyyy-MM-dd` format. For example:
 
 ```http
