@@ -65,6 +65,8 @@ public static class SessionAggregator
         SetLong(hash, "last_beacon_ts", nowMs);
         if (!hash.ContainsKey("page_url") && !string.IsNullOrEmpty(referer))
             hash["page_url"] = referer; // first non-empty Referer wins
+        if (!hash.ContainsKey("page_url") && GetString(body, "u") is { Length: > 0 } clientPageUrl)
+            hash["page_url"] = clientPageUrl;
 
         var integrityFails = 0;
 
@@ -131,6 +133,8 @@ public static class SessionAggregator
         // ---- per-event aggregation (skipped entirely on replay) ----
         var sawFp = false;
         var sawFs = false;
+        if (aggregated && GetString(body, "u") is { } pageUrl && HasHoneyIdentifier(pageUrl))
+            hash["honey_identifier_seen"] = "1";
         if (aggregated && body.TryGetProperty("events", out var events)
                        && events.ValueKind == JsonValueKind.Array)
         {
@@ -216,7 +220,13 @@ public static class SessionAggregator
                         hash["autofill"] = "1";
                         break;
                     case "hp":
-                        hash["hp_touched"] = "1"; // any kind; no field name rides the wire
+                        hash["hp_touched"] = "1";
+                        switch (GetString(ev, "kind"))
+                        {
+                            case "input":
+                            case "submit_filled": hash["hp_field_filled"] = "1"; break;
+                            case "link_clicked": hash["hp_link_clicked"] = "1"; break;
+                        }
                         break;
                     case "fi":
                         // fi.t is ms since performance.timeOrigin — already the delay.
@@ -470,6 +480,14 @@ public static class SessionAggregator
            && el.TryGetProperty(name, out var p) && p.ValueKind == JsonValueKind.String
             ? p.GetString()
             : null;
+
+    private static bool HasHoneyIdentifier(string pageUrl)
+    {
+        if (!Uri.TryCreate(pageUrl, UriKind.Absolute, out var uri)) return false;
+        return uri.Query.TrimStart('?').Split('&', StringSplitOptions.RemoveEmptyEntries)
+            .Select(part => part.Split('=', 2)[0])
+            .Any(key => string.Equals(Uri.UnescapeDataString(key), "tg_honey", StringComparison.Ordinal));
+    }
 
     private static double? GetNumber(JsonElement el, string name)
         => el.ValueKind == JsonValueKind.Object

@@ -61,6 +61,17 @@ public sealed class PortalApiClient(HttpClient http, IHttpContextAccessor access
         => SendAsync<EnforcementRejectResponseDto>(HttpMethod.Post, "/admin/enforcement/reject",
             new EnforcementBatchRequestDto([.. ids], note), SessionKey(), ct);
 
+    public Task<AdminApiResult<IReadOnlyList<ConversionGoalDto>>> ListConversionGoalsAsync(CancellationToken ct)
+        => SendAsync<IReadOnlyList<ConversionGoalDto>>(HttpMethod.Get,"/admin/conversions/goals",null,SessionKey(),ct);
+    public Task<AdminApiResult<ConversionGoalDto>> UpsertConversionGoalAsync(ConversionGoalRequestDto request,CancellationToken ct)
+        => SendAsync<ConversionGoalDto>(HttpMethod.Post,"/admin/conversions/goals",request,SessionKey(),ct);
+    public Task<AdminApiResult<NoBody>> DeleteConversionGoalAsync(Guid goalId,CancellationToken ct)
+        => SendAsync<NoBody>(HttpMethod.Delete,$"/admin/conversions/goals/{goalId:D}",null,SessionKey(),ct);
+    public Task<AdminApiResult<ConversionGoalsDocumentDto>> ExportConversionGoalsAsync(CancellationToken ct)
+        => SendAsync<ConversionGoalsDocumentDto>(HttpMethod.Get,"/admin/conversions/export",null,SessionKey(),ct);
+    public Task<AdminApiResult<ConversionImportResponseDto>> ImportConversionGoalsAsync(ConversionGoalsDocumentDto document,CancellationToken ct)
+        => SendAsync<ConversionImportResponseDto>(HttpMethod.Post,"/admin/conversions/import",document,SessionKey(),ct);
+
     /// <summary>The signed-in operator's API key, from the auth cookie's claim.
     /// Every page that calls this is behind AuthorizeFolder("/"), so a missing key
     /// is a wiring bug, not a user state.</summary>

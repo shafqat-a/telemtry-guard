@@ -20,4 +20,9 @@ public interface IAdminApiClient
     Task<AdminApiResult<IReadOnlyList<ExclusionQueueEntryDto>>> ListEnforcementAsync(string status, int limit, CancellationToken ct);
     Task<AdminApiResult<EnforcementApproveResponseDto>> ApproveEnforcementAsync(IReadOnlyList<long> ids, CancellationToken ct);
     Task<AdminApiResult<EnforcementRejectResponseDto>> RejectEnforcementAsync(IReadOnlyList<long> ids, string? note, CancellationToken ct);
+    Task<AdminApiResult<IReadOnlyList<ConversionGoalDto>>> ListConversionGoalsAsync(CancellationToken ct);
+    Task<AdminApiResult<ConversionGoalDto>> UpsertConversionGoalAsync(ConversionGoalRequestDto request,CancellationToken ct);
+    Task<AdminApiResult<NoBody>> DeleteConversionGoalAsync(Guid goalId,CancellationToken ct);
+    Task<AdminApiResult<ConversionGoalsDocumentDto>> ExportConversionGoalsAsync(CancellationToken ct);
+    Task<AdminApiResult<ConversionImportResponseDto>> ImportConversionGoalsAsync(ConversionGoalsDocumentDto document,CancellationToken ct);
 }

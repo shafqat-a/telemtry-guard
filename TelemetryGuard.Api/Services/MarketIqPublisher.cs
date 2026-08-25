@@ -50,6 +50,7 @@ public sealed class MarketIqPublisher(
             ["occurred_at"]=occurredUtc.ToUniversalTime().ToString("O",CultureInfo.InvariantCulture),
             ["user_agent"]=userAgent,
             ["ip"]=ip,
+            ["utm_publisher_id"]=Get(click,"utm_source"),
             ["utm_campaign_id"]=Get(click,"campaign_id"),
             ["utm_platform"]=Platform(Get(click,"click_id_type")),
             ["webdriver_flag"]=f?.WebdriverFlag,
@@ -75,6 +76,11 @@ public sealed class MarketIqPublisher(
             ["paste_in_identity_fields"]=f?.PasteInIdentityFields,
             ["referrer_missing"]=f?.ReferrerMissing,
             ["honeypot_touched"]=f?.HoneypotTouched,
+            ["honeypot_field_filled"]=Bool(session,"hp_field_filled"),
+            ["honeypot_link_clicked"]=Bool(session,"hp_link_clicked"),
+            ["honey_identifier_seen"]=Bool(session,"honey_identifier_seen"),
+            ["decoy_page"]=DecoyPage(site.MarketIqDecoyPathsJson,site.Domain,
+                Get(session,"page_url") ?? Get(click,"landing_url")),
             ["score"]=result.Score,
             ["band"]=band,
             ["action"]=action,
@@ -115,6 +121,29 @@ public sealed class MarketIqPublisher(
         => values.TryGetValue(key,out var value)&&value.Length>0?value:null;
     private static long? Long(IReadOnlyDictionary<string,string> values,string key)
         => values.TryGetValue(key,out var value)&&long.TryParse(value,out var parsed)?parsed:null;
+    private static bool? Bool(IReadOnlyDictionary<string,string> values,string key)
+        => values.TryGetValue(key,out var value)?value switch { "1"=>true,"0"=>false,_=>null }:null;
+    internal static bool? DecoyPage(string? configuredPathsJson,string? siteDomain,string? pageUrl)
+    {
+        if(string.IsNullOrWhiteSpace(configuredPathsJson)||string.IsNullOrWhiteSpace(siteDomain)
+            ||string.IsNullOrWhiteSpace(pageUrl)) return null;
+        if(!Uri.TryCreate(pageUrl,UriKind.Absolute,out var uri)) return null;
+        if(!string.Equals(uri.IdnHost,siteDomain.Trim().TrimEnd('.'),StringComparison.OrdinalIgnoreCase)) return false;
+        try
+        {
+            var paths=JsonSerializer.Deserialize<string[]>(configuredPathsJson);
+            if(paths is null||paths.Length==0) return null;
+            return paths.Any(path=>path is not null
+                && string.Equals(NormalizePath(path),NormalizePath(uri.AbsolutePath),StringComparison.Ordinal));
+        }
+        catch(JsonException){ return null; }
+    }
+    private static string NormalizePath(string path)
+    {
+        var normalized=path.Trim();
+        if(!normalized.StartsWith('/')) normalized="/"+normalized;
+        return normalized.Length>1?normalized.TrimEnd('/'):normalized;
+    }
     private static long? MousePoints(IReadOnlyDictionary<string,string> values)
     {
         // mm_n is the number of gaps between mouse samples. Presence of the first

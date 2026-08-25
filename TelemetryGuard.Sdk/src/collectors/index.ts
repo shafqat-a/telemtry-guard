@@ -13,7 +13,7 @@ let started = false;
  * Installs every SDK-03 behavioral collector. Module-scope `started` flag
  * guards against double-injection if the script is included twice. All
  * collectors are passive (never preventDefault, never block submits);
- * honeypot injection is the single sanctioned DOM mutation (D2).
+ * honeypot input/link injection is the sanctioned DOM mutation set (D2).
  */
 export function startCollectors(cfg: TgConfig): void {
   try {

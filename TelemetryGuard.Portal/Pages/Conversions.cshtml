@@ -1,0 +1,26 @@
+@page "/conversions"
+@model TelemetryGuard.Portal.Pages.ConversionsModel
+@{ ViewData["Title"]="Conversions"; }
+<h1>Conversion goals</h1>
+<p class="tg-explainer">Define several goals per page or reuse a goal across several paths. Browser rules never read field contents. Server-confirmed goals use the <code>server</code> trigger.</p>
+@if(Model.Message is not null){<div class="panel-message">@Model.Message</div>}
+@if(Model.Error is not null){<div class="panel-error" role="alert">@Model.Error</div>}
+<section class="panel">
+<h2>Configured goals</h2>
+@if(Model.GoalsResult?.Error is not null){<div class="panel-error">@Model.GoalsResult.Error</div>}
+else if(Model.GoalsResult?.Value is { } goals){
+<table><thead><tr><th>Name</th><th>Site</th><th>Trigger</th><th>Pages</th><th>Primary</th><th>Destinations</th><th></th></tr></thead><tbody>
+@foreach(var g in goals){<tr><td>@g.Name</td><td>@g.SiteKey</td><td>@g.TriggerType</td><td>@string.Join(", ",g.PagePaths)</td><td>@(g.IsPrimary?"yes":"no")</td><td>@string.Join(", ",new[]{g.SendMarketIq?"MarketIQ":null,g.SendMeta?"Meta":null,g.SendGoogleAds?"Google Ads":null,g.SendGa4?"GA4":null,g.SendTikTok?"TikTok":null}.Where(x=>x is not null))</td><td><form method="post" asp-page-handler="Delete">@Html.AntiForgeryToken()<input type="hidden" name="goalId" value="@g.GoalId"/><button class="secondary">Delete</button></form></td></tr>}
+</tbody></table>}
+</section>
+<section class="panel"><h2>Add goal</h2><form method="post" asp-page-handler="Save" class="tg-add-form">@Html.AntiForgeryToken()
+<label>Site<select name="siteKey">@foreach(var s in Model.SitesResult?.Value?.Sites??[]){<option value="@s.SiteKey">@s.Domain</option>}</select></label>
+<label>Name<input name="name" required maxlength="160"/></label>
+<label>Trigger<select name="triggerType"><option value="time_on_page">Time on page</option><option value="link_click">Link click</option><option value="button_click">Button click</option><option value="form_submitted">Form submitted</option><option value="server">Server confirmed</option></select></label>
+<label>Page paths<input name="pagePaths" required placeholder="/webinar, /register"/></label>
+<label>CSS selector<input name="selector" placeholder="#register-button"/></label>
+<label>Minimum seconds<input type="number" min="1" max="86400" name="minimumSeconds"/></label>
+<label><input type="checkbox" name="isPrimary" value="true"/> Primary</label><label><input type="checkbox" name="sendMarketIq" value="true" checked/> MarketIQ (active)</label><label><input type="checkbox" name="sendMeta" value="true"/> Meta route</label><label><input type="checkbox" name="sendGoogleAds" value="true"/> Google Ads route</label><label><input type="checkbox" name="sendGa4" value="true"/> GA4 route</label><label><input type="checkbox" name="sendTikTok" value="true"/> TikTok route</label>
+<button type="submit">Save goal</button></form></section>
+<p class="tg-note">MarketIQ delivery is active. Meta, Google Ads, GA4 and TikTok selections are saved routing intent; their publishers require separate platform credentials and are not enabled by this change.</p>
+<section class="panel"><h2>JSON</h2><p><a href="?handler=Export">Download all goals as JSON</a></p><form method="post" enctype="multipart/form-data" asp-page-handler="Import">@Html.AntiForgeryToken()<input type="file" name="jsonFile" accept="application/json,.json" required/><button type="submit">Upload JSON</button></form></section>

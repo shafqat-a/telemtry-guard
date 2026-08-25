@@ -65,6 +65,7 @@ public static partial class BeaconEndpoints
     private static async Task<IResult> HandleInitAsync(
         HttpContext ctx, ITenantResolver resolver, TenantContext tenantContext,
         IConnectionMultiplexer redis, IClock clock, IOptions<BeaconOptions> beaconOpts,
+        ISiteRepository sites, IConversionRepository conversions,
         ILoggerFactory loggerFactory, CancellationToken ct)
     {
         var opts = beaconOpts.Value;
@@ -101,8 +102,33 @@ public static partial class BeaconEndpoints
             // NOT sid-bound — storage outlives sessions.
             var storageTs = clock.UtcNow.ToUnixTimeMilliseconds();
             var storageSig = SessionAggregator.ComputeStorageSig(opts.HmacSecret, tid, storageTs);
+            string[] decoyPaths = [];
+            object[] conversionGoals = [];
+            try
+            {
+                var site = await sites.GetBySiteKeyAsync(k, ct);
+                if (!string.IsNullOrWhiteSpace(site?.MarketIqDecoyPathsJson))
+                {
+                    try { decoyPaths = JsonSerializer.Deserialize<string[]>(site.MarketIqDecoyPathsJson) ?? []; }
+                    catch (JsonException) { /* invalid config degrades to no decoy links */ }
+                }
+            }
+            catch { /* decoy lookup must never break nonce/bootstrap */ }
 
-            return Results.Json(new { nonce, storageTs, storageSig });
+            try
+            {
+                conversionGoals=(await conversions.ListGoalsAsync(k,ct))
+                    .Where(g=>g.IsActive&&g.TriggerType!="server")
+                    .Select(g=>(object)new
+                    {
+                        goalId=g.GoalId,name=g.Name,triggerType=g.TriggerType,
+                        pagePaths=JsonSerializer.Deserialize<string[]>(g.PagePathsJson)??[],
+                        selector=g.Selector,minimumSeconds=g.MinimumSeconds
+                    }).ToArray();
+            }
+            catch { /* conversion configuration must never break bootstrap */ }
+
+            return Results.Json(new { nonce, storageTs, storageSig, decoyPaths, conversionGoals });
         }
         catch (Exception ex)
         {
@@ -279,6 +305,7 @@ public static partial class BeaconEndpoints
             // every Nth. Sink enqueue only — never blocks on ClickHouse (ANA-03).
             var nBeacons = SessionAggregator.GetLong(hash, "n_beacons") ?? 0;
             var edge = edgeSignals.Read(ctx);
+            var attribution = AttributionExtractor.Extract(ctx, client: ReadClientContext(body));
 
             // Preserve the HTTP identity needed by the scoring pipeline after this
             // request has ended. Never overwrite tracker/pixel context: those paths
@@ -302,6 +329,8 @@ public static partial class BeaconEndpoints
                     new("session_id", canonicalSessionId),
                     new("visit_id", visitId),
                     new("campaign_id", ""),
+                    new("utm_source", attribution.UtmSource),
+                    new("landing_url", attribution.LandingUrl ?? ""),
                     new("click_id_type", ""),
                     new("click_id", ""),
                     new("click_id_invalid", ""),
@@ -345,7 +374,6 @@ public static partial class BeaconEndpoints
                 // ANA-08: the beacon POST's Referer is the page URL (full path+query,
                 // because /i is same-origin with the page), so utm_* and click ids can be
                 // recovered here even for a visit that never went through the tracker.
-                var attribution = AttributionExtractor.Extract(ctx, client: ReadClientContext(body));
                 var evt = BuildSnapshot(
                     tenantContext.TenantId, k, canonicalSessionId, visitId, hash, ip, ua,
                     ctx.Request.Headers.Select(h => h.Key).ToArray(),

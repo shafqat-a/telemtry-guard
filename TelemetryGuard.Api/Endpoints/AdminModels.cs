@@ -84,3 +84,20 @@ public sealed record SiteReportDayResponse(
 
 public sealed record SiteReportResponse(
     DateOnly From, DateOnly To, IReadOnlyList<SiteReportDayResponse> Rows);
+
+public sealed record ConversionGoalRequest(
+    Guid? GoalId, string? SiteKey, string? Name, string? TriggerType,
+    string[]? PagePaths, string? Selector, int? MinimumSeconds, bool IsPrimary,
+    bool SendMarketIq, bool SendMeta, bool SendGoogleAds, bool SendGa4, bool SendTikTok,
+    bool IsActive = true);
+public sealed record ConversionGoalResponse(
+    Guid GoalId, string SiteKey, string Name, string TriggerType,
+    IReadOnlyList<string> PagePaths, string? Selector, int? MinimumSeconds, bool IsPrimary,
+    bool SendMarketIq, bool SendMeta, bool SendGoogleAds, bool SendGa4, bool SendTikTok,
+    bool IsActive, DateTime CreatedUtc, DateTime UpdatedUtc);
+public sealed record ConversionGoalsDocument(int Version,IReadOnlyList<ConversionGoalRequest> Goals);
+public sealed record ConversionImportResponse(int Imported);
+public sealed record RecordServerConversionRequest(
+    Guid? EventId,Guid GoalId,string? SessionId,string? VisitId,string? PageUrl,
+    DateTime? OccurredAt,long? PageToConversionMs,decimal? Value,string? Currency,string? Ip);
+public sealed record RecordServerConversionResponse(Guid EventId,bool Created);

@@ -51,7 +51,8 @@ internal sealed class SiteRepository(ITenantConnectionFactory connections, ITena
             """
             SELECT TenantId, SiteKey, Domain, IntegrationMode, CreatedUtc,
                    MarketIqEnabled,MarketIqCompanyId,MarketIqCollectUrl,
-                   MarketIqHealthUrl,MarketIqHealthTokenRef,MarketIqRelayKeyRef
+                   MarketIqHealthUrl,MarketIqHealthTokenRef,MarketIqRelayKeyRef,
+                   MarketIqDecoyPathsJson
             FROM dbo.Sites WHERE TenantId = @TenantId AND SiteKey = @SiteKey;
             """,
             new { TenantId = tenant.TenantId.Value, SiteKey = siteKey },
@@ -65,7 +66,8 @@ internal sealed class SiteRepository(ITenantConnectionFactory connections, ITena
             """
             SELECT TenantId, SiteKey, Domain, IntegrationMode, CreatedUtc,
                    MarketIqEnabled,MarketIqCompanyId,MarketIqCollectUrl,
-                   MarketIqHealthUrl,MarketIqHealthTokenRef,MarketIqRelayKeyRef
+                   MarketIqHealthUrl,MarketIqHealthTokenRef,MarketIqRelayKeyRef,
+                   MarketIqDecoyPathsJson
             FROM dbo.Sites WHERE TenantId = @TenantId ORDER BY CreatedUtc;
             """,
             new { TenantId = tenant.TenantId.Value },

@@ -1,5 +1,7 @@
 import { state } from './state';
 import { notifyInitSettled } from './transport';
+import { installDecoyLinks } from './collectors/honeypot';
+import { installConversionGoals } from './conversions';
 
 const INIT_TIMEOUT_MS = 3000;
 
@@ -55,6 +57,14 @@ export function fetchInit(): Promise<void> {
           if (typeof b['nonce'] === 'string') state.nonce = b['nonce'];
           if (typeof b['storageTs'] === 'number') state.storageTs = b['storageTs'];
           if (typeof b['storageSig'] === 'string') state.storageSig = b['storageSig'];
+          if (Array.isArray(b['decoyPaths'])) {
+            installDecoyLinks(
+              b['decoyPaths'].filter((path): path is string => typeof path === 'string')
+            );
+          }
+          if (Array.isArray(b['conversionGoals'])) {
+            installConversionGoals(b['conversionGoals'] as Parameters<typeof installConversionGoals>[0]);
+          }
         }
       })
       .catch(() => {

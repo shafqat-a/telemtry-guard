@@ -217,6 +217,7 @@ public sealed class SessionAggregatorTests
              {"e":"pa","t":2000,"fk":"identity"},
              {"e":"af","t":2500,"fh":"ab12cd34"},
              {"e":"hp","t":3000,"kind":"input"},
+             {"e":"hp","t":3100,"kind":"link_clicked"},
              {"e":"fs","t":5500,"fh":"ab12cd34"}]
             """));
 
@@ -226,6 +227,18 @@ public sealed class SessionAggregatorTests
         Assert.Equal("1", hash["paste_identity"]);
         Assert.Equal("1", hash["autofill"]);
         Assert.Equal("1", hash["hp_touched"]);
+        Assert.Equal("1", hash["hp_field_filled"]);
+        Assert.Equal("1", hash["hp_link_clicked"]);
+    }
+
+    [Fact]
+    public void HoneyIdentifierInPageUrl_IsRecorded()
+    {
+        var hash = NewHash();
+        var body = Envelope("[]").Replace(
+            "\"events\":[]", "\"u\":\"https://bu.edu.bd/?tg_honey=1\",\"events\":[]");
+        Apply(hash, body);
+        Assert.Equal("1", hash["honey_identifier_seen"]);
     }
 
     [Fact]

@@ -33,7 +33,8 @@ public sealed record SiteRecord(
     Guid TenantId, string SiteKey, string Domain, string IntegrationMode, DateTime CreatedUtc,
     bool MarketIqEnabled = false, int? MarketIqCompanyId = null,
     string? MarketIqCollectUrl = null, string? MarketIqHealthUrl = null,
-    string? MarketIqHealthTokenRef = null, string? MarketIqRelayKeyRef = null);
+    string? MarketIqHealthTokenRef = null, string? MarketIqRelayKeyRef = null,
+    string? MarketIqDecoyPathsJson = null);
 
 public sealed record CampaignRecord(
     Guid TenantId, Guid CampaignId, string Platform, string? ExternalCampaignId,

@@ -21,7 +21,7 @@ Add the passive behavioral collectors to the SDK: coalesced raw pointer-move sam
 - **§7 architectural implication:** "the SDK ships *raw events*; the risk engine computes derived features (linearity, inter-event stats, all velocity…). Keeps the snippet dumb and lets features evolve without redeploying tenant pages." Do not compute `mouse_path_linearity`, `std_inter_event_ms`, fill durations, or any aggregate client-side.
 - **Signals these raw events power (server-side):** T1 `honeypot_touched` (≥95), `click_before_render` / `pointer_untrusted` (≥90), near-1.0 `mouse_path_linearity`, near-0 `std_inter_event_ms`; T2 `form_fill_time_sec` (conditioned on `autofill_detected`), `first_interaction_delay_ms`, `input_modality_mismatch`, `time_on_page_sec`; T3 `paste_in_identity_fields` (password managers cause false positives — that's why it is T3 and classification is coarse), `scroll_events`, raw event counts; CTX `form_submitted`, `autofill_detected`.
 - **§4:** honeypots are SDK-injected hidden inputs; any interaction with them is near-deterministic bot evidence.
-- **D2:** plain TS, no framework, bundle ≤ 30 KB gzipped. Collectors must be passive (never intercept/preventDefault) and must never break or visibly alter the host page — honeypot injection is the single sanctioned DOM mutation.
+- **D2:** plain TS, no framework, bundle ≤ 30 KB gzipped. Collectors must be passive and must never break or visibly alter the host page. The off-screen honeypot input and inert decoy link are the sanctioned DOM mutation set; the SDK prevents navigation only on the decoy link it owns.
 - Missing ≠ zero: if something can't be observed (e.g. no forms on the page), emit nothing — the server maps absence to NaN.
 
 ## Prerequisites

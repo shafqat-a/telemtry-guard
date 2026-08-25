@@ -30,3 +30,13 @@ public sealed record ExclusionQueueEntryDto(
 public sealed record EnforcementBatchRequestDto(long[] Ids, string? Note);
 public sealed record EnforcementApproveResponseDto(int Requested, int Approved);
 public sealed record EnforcementRejectResponseDto(int Requested, int Rejected);
+public sealed record ConversionGoalDto(
+    Guid GoalId,string SiteKey,string Name,string TriggerType,IReadOnlyList<string> PagePaths,
+    string? Selector,int? MinimumSeconds,bool IsPrimary,bool SendMarketIq,bool SendMeta,
+    bool SendGoogleAds,bool SendGa4,bool SendTikTok,bool IsActive,DateTime CreatedUtc,DateTime UpdatedUtc);
+public sealed record ConversionGoalRequestDto(
+    Guid? GoalId,string? SiteKey,string? Name,string? TriggerType,string[]? PagePaths,
+    string? Selector,int? MinimumSeconds,bool IsPrimary,bool SendMarketIq,bool SendMeta,
+    bool SendGoogleAds,bool SendGa4,bool SendTikTok,bool IsActive=true);
+public sealed record ConversionGoalsDocumentDto(int Version,IReadOnlyList<ConversionGoalRequestDto> Goals);
+public sealed record ConversionImportResponseDto(int Imported);

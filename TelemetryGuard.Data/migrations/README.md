@@ -34,3 +34,6 @@
 | 0012 | LabelSubmissions + WebhookOutbox + RLS | REQ-08 / REQ-09 |
 | 0013 | Principal-bound RLS bypass, tg_app / tg_system roles, BLOCK on ApiKeys/Sites | D11 hardening (build review 2026-08-24) |
 | 0014 | Per-site MarketIQ configuration and durable visit-delivery outbox | MarketIQ click collection |
+| 0015 | Per-site MarketIQ trusted relay key references | MarketIQ trusted relay |
+| 0016 | Per-site exact decoy-page path configuration | MarketIQ decoy evidence |
+| 0017 | Conversion goal definitions and idempotent conversion events | Conversion tracking |

@@ -408,6 +408,7 @@ if (app.Configuration.GetValue("TestHost:EnableDiagnostics", false))
 app.MapTrackerEndpoints();       // API-02  GET /c
 app.MapPixelEndpoints();         // API-03  GET /p.gif
 app.MapBeaconEndpoints();        // API-04  GET /i/init, POST /i
+app.MapConversionEndpoints();    // browser/server conversion achievements
 app.MapDecisionEndpoints();      // API-05  POST /decide
 app.MapAdminEndpoints();         // API-07  /admin/*
 app.MapPolicyAdminEndpoints();   // REQ-06 /admin/policy

@@ -76,7 +76,11 @@ export type PaEvent = { e: 'pa'; t: number; fk: 'identity' | 'other' };
 /** Autofill heuristic fired for a field (at most once per field per page load). */
 export type AfEvent = { e: 'af'; t: number; fh: string };
 /** Honeypot interaction — near-deterministic bot evidence (§4). */
-export type HpEvent = { e: 'hp'; t: number; kind: 'focus' | 'input' | 'submit_filled' };
+export type HpEvent = {
+  e: 'hp';
+  t: number;
+  kind: 'focus' | 'input' | 'submit_filled' | 'link_clicked';
+};
 /** First trusted interaction marker (once per page load). */
 export type FiEvent = { e: 'fi'; t: number; it: 'pointer' | 'key' | 'wheel' | 'touch' | 'scroll' };
 /** Render-timing mark (once per page load; fp omitted when unavailable — missing ≠ zero). */

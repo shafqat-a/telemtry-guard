@@ -10,6 +10,7 @@ const injected = new WeakSet<Element>();
 const processed = new WeakSet<HTMLFormElement>();
 // Form → its injected honeypot (for the submit-time value check).
 const hpByForm = new WeakMap<HTMLFormElement, HTMLInputElement>();
+let linkInjected = false;
 
 export function isHoneypot(el: Element): boolean {
   return injected.has(el);
@@ -76,9 +77,44 @@ function injectInto(form: HTMLFormElement, name: string): void {
       },
       { passive: true }
     );
-    form.appendChild(hp); // the single sanctioned DOM mutation (D2)
+    form.appendChild(hp); // part of the sanctioned honeypot DOM mutation set (D2)
     injected.add(hp);
     hpByForm.set(form, hp);
+  } catch {
+    /* never throw on the host page */
+  }
+}
+
+/** Inject one inert off-screen decoy link. JS-capable automation produces the
+ * link_clicked event; crawlers that follow href without running the handler load
+ * the same page with tg_honey present, which the server records separately. */
+export function installDecoyLinks(paths: string[]): void {
+  try {
+    if (linkInjected || !document.body || paths.length === 0) return;
+    linkInjected = true;
+    for (let i = 0; i < paths.length; i++) {
+      const path = paths[i];
+      if (!path || !path.startsWith('/')) continue;
+      const link = document.createElement('a');
+      const target = new URL(path, location.origin);
+      target.searchParams.set('tg_honey', '1');
+      link.href = target.toString();
+      link.rel = 'nofollow';
+      link.tabIndex = -1;
+      link.setAttribute('aria-hidden', 'true');
+      link.setAttribute('data-tg-honey-link', path);
+      link.style.cssText =
+        'position:absolute!important;left:-9999px!important;top:-9999px!important;height:1px;width:1px;opacity:0;';
+      link.addEventListener('click', (event) => {
+        try {
+          event.preventDefault();
+          report('link_clicked');
+        } catch {
+          /* ignore */
+        }
+      });
+      document.body.appendChild(link);
+    }
   } catch {
     /* never throw on the host page */
   }

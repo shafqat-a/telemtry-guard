@@ -1,6 +1,9 @@
 using System.Globalization;
 using System.Net;
 using System.Text.RegularExpressions;
+using System.Text.Json;
+using System.Security.Cryptography;
+using System.Text;
 using StackExchange.Redis;
 using TelemetryGuard.Api.Auth;
 using TelemetryGuard.Analytics.Abstractions;
@@ -56,7 +59,146 @@ public static partial class AdminEndpoints
         admin.MapGet("/reports/publishers", GetPublisherReportAsync);
         admin.MapGet("/reports/sites", GetSiteReportAsync);
         admin.MapGet("/reports/domain-traffic", GetDomainTrafficAsync);
+        admin.MapGet("/conversions/goals", ListConversionGoalsAsync);
+        admin.MapPost("/conversions/goals", UpsertConversionGoalAsync);
+        admin.MapDelete("/conversions/goals/{goalId:guid}", DeleteConversionGoalAsync);
+        admin.MapGet("/conversions/export", ExportConversionGoalsAsync);
+        admin.MapPost("/conversions/import", ImportConversionGoalsAsync);
+        admin.MapPost("/conversions/events", RecordServerConversionAsync);
         return app;
+    }
+
+    private static readonly string[] ConversionTriggerTypes =
+        ["time_on_page","link_click","button_click","form_submitted","server"];
+
+    private static async Task<IResult> ListConversionGoalsAsync(
+        string? siteKey,IConversionRepository conversions,CancellationToken ct)
+        => Results.Ok((await conversions.ListGoalsAsync(siteKey,ct)).Select(ToConversionGoal));
+
+    private static async Task<IResult> UpsertConversionGoalAsync(
+        ConversionGoalRequest request,IConversionRepository conversions,ISiteRepository sites,
+        ITenantContext tenant,CancellationToken ct)
+    {
+        var error=ValidateConversionGoal(request);
+        if(error is not null) return error;
+        if(await sites.GetBySiteKeyAsync(request.SiteKey!,ct) is null)
+            return ValidationProblem("siteKey","Unknown site key.");
+        var id=request.GoalId is { } supplied&&supplied!=Guid.Empty?supplied:Guid.NewGuid();
+        var existing=await conversions.GetGoalAsync(id,ct);
+        var now=DateTime.UtcNow;
+        await conversions.UpsertGoalAsync(new ConversionGoalRecord(
+            tenant.TenantId.Value,id,request.SiteKey!,request.Name!.Trim(),request.TriggerType!,
+            JsonSerializer.Serialize(NormalizePaths(request.PagePaths!)),NullIfWhiteSpace(request.Selector),
+            request.MinimumSeconds,request.IsPrimary,request.SendMarketIq,request.SendMeta,
+            request.SendGoogleAds,request.SendGa4,request.SendTikTok,request.IsActive,
+            existing?.CreatedUtc??now,now),ct);
+        return Results.Ok(ToConversionGoal((await conversions.GetGoalAsync(id,ct))!));
+    }
+
+    private static async Task<IResult> DeleteConversionGoalAsync(
+        Guid goalId,IConversionRepository conversions,CancellationToken ct)
+        => await conversions.DeleteGoalAsync(goalId,ct)?Results.NoContent():
+            ValidationProblem("goalId","Goal was not found or already has conversion events; deactivate it instead.");
+
+    private static async Task<IResult> ExportConversionGoalsAsync(
+        IConversionRepository conversions,CancellationToken ct)
+    {
+        var goals=(await conversions.ListGoalsAsync(null,ct)).Select(r=>ToConversionRequest(r)).ToArray();
+        return Results.Json(new ConversionGoalsDocument(1,goals));
+    }
+
+    private static async Task<IResult> ImportConversionGoalsAsync(
+        ConversionGoalsDocument document,IConversionRepository conversions,ISiteRepository sites,
+        ITenantContext tenant,CancellationToken ct)
+    {
+        if(document.Version!=1) return ValidationProblem("version","Only conversion document version 1 is supported.");
+        if(document.Goals is null) return ValidationProblem("goals","Goals array is required.");
+        if(document.Goals.Count>500) return ValidationProblem("goals","At most 500 goals may be imported at once.");
+        var known=(await sites.ListAsync(ct)).Select(s=>s.SiteKey).ToHashSet(StringComparer.Ordinal);
+        foreach(var goal in document.Goals)
+        {
+            if(ValidateConversionGoal(goal) is { } invalid) return invalid;
+            if(!known.Contains(goal.SiteKey!)) return ValidationProblem("siteKey",$"Unknown site key: {goal.SiteKey}");
+        }
+        foreach(var request in document.Goals)
+        {
+            var id=request.GoalId is { } supplied&&supplied!=Guid.Empty?supplied:Guid.NewGuid();
+            var existing=await conversions.GetGoalAsync(id,ct);
+            var now=DateTime.UtcNow;
+            await conversions.UpsertGoalAsync(new ConversionGoalRecord(
+                tenant.TenantId.Value,id,request.SiteKey!,request.Name!.Trim(),request.TriggerType!,
+                JsonSerializer.Serialize(NormalizePaths(request.PagePaths!)),NullIfWhiteSpace(request.Selector),
+                request.MinimumSeconds,request.IsPrimary,request.SendMarketIq,request.SendMeta,
+                request.SendGoogleAds,request.SendGa4,request.SendTikTok,request.IsActive,
+                existing?.CreatedUtc??now,now),ct);
+        }
+        return Results.Ok(new ConversionImportResponse(document.Goals.Count));
+    }
+
+    private static IResult? ValidateConversionGoal(ConversionGoalRequest r)
+    {
+        if(string.IsNullOrWhiteSpace(r.SiteKey)||r.SiteKey.Length>64) return ValidationProblem("siteKey","Site key is required.");
+        if(string.IsNullOrWhiteSpace(r.Name)||r.Name.Length>160) return ValidationProblem("name","Name is required and must be at most 160 characters.");
+        if(r.TriggerType is null||!ConversionTriggerTypes.Contains(r.TriggerType,StringComparer.Ordinal))
+            return ValidationProblem("triggerType","Unsupported trigger type.");
+        if(r.PagePaths is null||r.PagePaths.Length==0||r.PagePaths.Length>50)
+            return ValidationProblem("pagePaths","Provide between 1 and 50 page paths.");
+        if(r.PagePaths.Any(p=>string.IsNullOrWhiteSpace(p)||p.Length>512||!p.Trim().StartsWith('/')))
+            return ValidationProblem("pagePaths","Every page path must begin with '/' and be at most 512 characters.");
+        if(r.TriggerType=="time_on_page"&&r.MinimumSeconds is not (>=1 and <=86400))
+            return ValidationProblem("minimumSeconds","Time goals require 1–86400 seconds.");
+        if(r.TriggerType is "link_click" or "button_click" or "form_submitted"&&string.IsNullOrWhiteSpace(r.Selector))
+            return ValidationProblem("selector","This trigger type requires a CSS selector.");
+        if(r.Selector?.Length>512) return ValidationProblem("selector","Selector must be at most 512 characters.");
+        return null;
+    }
+    private static string[] NormalizePaths(IEnumerable<string> paths)=>paths.Select(p=>p.Trim().Length>1?p.Trim().TrimEnd('/'):"/").Distinct(StringComparer.Ordinal).ToArray();
+    private static string? NullIfWhiteSpace(string? value)=>string.IsNullOrWhiteSpace(value)?null:value.Trim();
+    private static ConversionGoalResponse ToConversionGoal(ConversionGoalRecord r)=>new(
+        r.GoalId,r.SiteKey,r.Name,r.TriggerType,JsonSerializer.Deserialize<string[]>(r.PagePathsJson)??[],r.Selector,r.MinimumSeconds,
+        r.IsPrimary,r.SendMarketIq,r.SendMeta,r.SendGoogleAds,r.SendGa4,r.SendTikTok,r.IsActive,r.CreatedUtc,r.UpdatedUtc);
+    private static ConversionGoalRequest ToConversionRequest(ConversionGoalRecord r)=>new(
+        r.GoalId,r.SiteKey,r.Name,r.TriggerType,JsonSerializer.Deserialize<string[]>(r.PagePathsJson)??[],r.Selector,r.MinimumSeconds,
+        r.IsPrimary,r.SendMarketIq,r.SendMeta,r.SendGoogleAds,r.SendGa4,r.SendTikTok,r.IsActive);
+
+    private static async Task<IResult> RecordServerConversionAsync(
+        RecordServerConversionRequest request,IConversionRepository conversions,ISiteRepository sites,
+        IMarketIqOutboxRepository outbox,IConnectionMultiplexer redis,ITenantContext tenant,CancellationToken ct)
+    {
+        var goal=await conversions.GetGoalAsync(request.GoalId,ct);
+        if(goal is null||!goal.IsActive) return ValidationProblem("goalId","Active conversion goal not found.");
+        if(goal.TriggerType!="server") return ValidationProblem("goalId","Only a server-trigger goal accepts trusted server conversions.");
+        if(request.PageToConversionMs is <0 or >86400000) return ValidationProblem("pageToConversionMs","Must be between 0 and 86400000.");
+        if(request.Currency is { Length:>0 } currency&&(currency.Length!=3||!currency.All(char.IsAsciiLetter)))
+            return ValidationProblem("currency","Currency must be a three-letter ISO code.");
+        var eventId=request.EventId is { } supplied&&supplied!=Guid.Empty?supplied:Guid.NewGuid();
+        var occurred=(request.OccurredAt??DateTime.UtcNow).ToUniversalTime();
+        var created=await conversions.InsertEventAsync(new ConversionEventRecord(
+            tenant.TenantId.Value,eventId,goal.GoalId,goal.SiteKey,NullIfWhiteSpace(request.SessionId),
+            NullIfWhiteSpace(request.VisitId),NullIfWhiteSpace(request.PageUrl),occurred,request.PageToConversionMs,
+            true,"server",request.Value,request.Currency?.ToUpperInvariant()),ct);
+        if(!created||!goal.SendMarketIq) return Results.Ok(new RecordServerConversionResponse(eventId,created));
+        var site=await sites.GetBySiteKeyAsync(goal.SiteKey,ct);
+        if(site is not { MarketIqEnabled:true,MarketIqCompanyId:>0 }||string.IsNullOrWhiteSpace(site.MarketIqCollectUrl))
+            return Results.Ok(new RecordServerConversionResponse(eventId,true));
+        var miqEventId=$"conversion-{eventId:D}";
+        var payload=JsonSerializer.Serialize(new Dictionary<string,object?>
+        {
+            ["companyId"]=site.MarketIqCompanyId,["event_id"]=miqEventId,["session_id"]=NullIfWhiteSpace(request.SessionId),
+            ["occurred_at"]=occurred.ToString("O"),["ip"]=NullIfWhiteSpace(request.Ip),
+            ["page_to_conversion_ms"]=request.PageToConversionMs,["verified_conversion"]=true,
+            ["conversion_goal_id"]=goal.GoalId,["conversion_goal_name"]=goal.Name,
+            ["conversion_value"]=request.Value,["conversion_currency"]=request.Currency?.ToUpperInvariant(),
+            ["tg_export_mode"]="live_conversion"
+        }.Where(x=>x.Value is not null).ToDictionary());
+        var deliveryId=new Guid(SHA256.HashData(Encoding.UTF8.GetBytes(
+            $"{tenant.TenantId.Value:D}|{goal.SiteKey}|{miqEventId}")).AsSpan(0,16));
+        if(await outbox.EnqueueAsync(new(deliveryId,goal.SiteKey,miqEventId,site.MarketIqCollectUrl,payload,
+            site.MarketIqRelayKeyRef,DateTime.UtcNow),ct))
+            await redis.GetDatabase().StreamAddAsync("tg:marketiq:deliveries",
+                [new NameValueEntry("tenant_id",tenant.TenantId.Value.ToString("D")),new NameValueEntry("delivery_id",deliveryId.ToString("D"))],
+                maxLength:100000,useApproximateMaxLength:true);
+        return Results.Ok(new RecordServerConversionResponse(eventId,true));
     }
 
     private static async Task<IResult> GetDomainTrafficAsync(

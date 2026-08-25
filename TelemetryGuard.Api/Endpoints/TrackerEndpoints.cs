@@ -154,6 +154,8 @@ public static partial class TrackerEndpoints
                 new("header_order", headerOrder),
                 new("site_key", siteKey),
                 new("campaign_id", campaignGuid.ToString("D")),
+                new("utm_source", ctx.Request.Query["utm_source"].ToString()),
+                new("landing_url", campaign.LandingUrl),
                 new("click_id_type", clickIdType ?? ""),
                 new("click_id", clickIdValue ?? ""),
                 new("click_id_invalid", clickIdInvalid ? "1" : "0"),

@@ -129,6 +129,7 @@ public static partial class PixelEndpoints
 
             var db = redis.GetDatabase();
             var now = clock.UtcNow;
+            var attribution = AttributionExtractor.Extract(ctx);
 
             // 4. Click-context hash (same field contract as API-02 step 3.7,
             //    consumed by RSK-04/RSK-07) — non-clobbering: when the tracker
@@ -152,6 +153,8 @@ public static partial class PixelEndpoints
                     new("referrer", referrer ?? ""),
                     new("header_order", headerOrder),
                     new("site_key", siteKey),
+                    new("utm_source", attribution.UtmSource),
+                    new("landing_url", attribution.LandingUrl ?? ""),
                     // INT-05: RSK-04's actual TlsUaMismatch contract field.
                     new("tls_fp", tlsFp ?? ""),
                     // INT-05: forward-compat extras (no current reader; empty = absent).
@@ -188,8 +191,6 @@ public static partial class PixelEndpoints
             // does — and Referer holds that page's full URL because this endpoint is
             // same-origin with it. Cross-origin, the referrer policy trims it to the
             // origin and every utm_* is lost.
-            var attribution = AttributionExtractor.Extract(ctx);
-
             var evt = new ClickEvent
             {
                 TenantId = tenant.TenantId,
