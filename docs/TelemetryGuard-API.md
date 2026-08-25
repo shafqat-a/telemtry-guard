@@ -327,3 +327,112 @@ delivery receipt.
 
 For implementation questions, start with [how-it-works.md](how-it-works.md) for the
 request lifecycle and [conversions.md](conversions.md) for conversion-goal configuration.
+
+## 11. Reading reports and traffic data
+
+TelemetryGuard does not make public traffic data readable through the beacon endpoints.
+Reads use the protected admin API, the portal, or an authorized analytics query.
+
+### Admin API authentication
+
+Every `/admin/*` request requires the tenant's admin API key in the header:
+
+```http
+X-Api-Key: tg_ak_your_admin_key
+```
+
+The portal stores this key in its encrypted session cookie and forwards it server-side;
+the key is never put in a URL. Never place an admin key in browser JavaScript, a dashboard
+URL, or source control.
+
+### Available report endpoints
+
+| Endpoint | Reads | Important limitation |
+|---|---|---|
+| `GET /admin/reports/summary` | Daily verdict totals, scores, allowed/challenged/blocked | Counts scored verdict events, not unique sessions or HTTP requests |
+| `GET /admin/reports/flagged-sources` | Flagged IP/device/fingerprint sources | Only sources with flagged verdicts are returned |
+| `GET /admin/reports/publishers` | Daily placement/publisher rollups | Placement totals are scored events, not session counts |
+| `GET /admin/reports/sites` | Daily per-site rollups | `Events` means scored verdict events |
+| `GET /admin/reports/domain-traffic` | Narrow, redacted traffic lookup | Does not expose cookies or raw headers |
+
+Date-based reports use `from` and `to` in `yyyy-MM-dd` format. For example:
+
+```http
+GET /admin/reports/sites?from=2026-08-23&to=2026-08-25
+X-Api-Key: tg_ak_your_admin_key
+```
+
+### Sessions, requests, and Facebook/TikTok breakdowns
+
+For traffic reporting, use these definitions:
+
+- **Request/page visit:** one distinct `visit_id`, normally one document load.
+- **Session:** one distinct `session_id`, grouping one visitor's related visits.
+- **Facebook request:** a distinct visit whose attribution is `meta_ads` or whose
+  `utm_source`/click ID identifies Facebook/Meta.
+- **Facebook session:** a distinct session containing at least one Facebook-attributed
+  visit.
+- **TikTok request/session:** the same calculation using `tiktok_ads`/TikTok attribution.
+- **Organic:** a visit/session without a paid platform attribution, normally classified as
+  `organic_search`, `referral`, or `direct`.
+
+Do not count `tg_events` rows directly as requests. One visit can generate several rows:
+beacons, fingerprint events, and one final verdict. Counting rows would overstate traffic.
+
+The detailed source for this calculation is the ClickHouse `tg_events` table. An authorized
+analytics service can use a query shaped like this (replace the tenant/site values and
+time range):
+
+```sql
+WITH visits AS
+(
+    SELECT
+        visit_id,
+        any(session_id) AS session_id,
+        argMax(attribution_channel, timestamp) AS channel,
+        argMax(utm_source, timestamp) AS utm_source,
+        argMax(fbclid, timestamp) AS fbclid,
+        argMax(ttclid, timestamp) AS ttclid
+    FROM telemetry_guard.tg_events
+    WHERE tenant_id = toUUID('TENANT_UUID')
+      AND site_key = 'tg_sk_your_public_site_key'
+      AND visit_id != ''
+      AND timestamp >= toDateTime64('2026-08-23 00:00:00', 3, 'UTC')
+      AND timestamp <  toDateTime64('2026-08-26 00:00:00', 3, 'UTC')
+    GROUP BY visit_id
+)
+SELECT
+    count() AS requests,
+    uniqExact(session_id) AS sessions,
+    countIf(channel = 'meta_ads' OR lower(utm_source) IN ('facebook','fb','meta') OR fbclid != '') AS facebook_requests,
+    uniqExactIf(session_id, channel = 'meta_ads' OR lower(utm_source) IN ('facebook','fb','meta') OR fbclid != '') AS facebook_sessions,
+    countIf(channel = 'tiktok_ads' OR lower(utm_source) = 'tiktok' OR ttclid != '') AS tiktok_requests,
+    uniqExactIf(session_id, channel = 'tiktok_ads' OR lower(utm_source) = 'tiktok' OR ttclid != '') AS tiktok_sessions
+FROM visits;
+```
+
+For an hourly or daily chart, add a bucket to the inner query and group by it:
+
+```sql
+toStartOfHour(timestamp) AS utc_hour
+```
+
+The site timezone should be applied when presenting the result; stored event timestamps are
+UTC. For a strict “first attribution wins” report, use the earliest event for each visit
+instead of `argMax`; for a final-state report, use the latest event as shown above.
+
+### Why the portal may show different numbers
+
+The following numbers are intentionally different measures:
+
+1. Raw `tg_events` rows include multiple beacons per visit.
+2. Verdict reports count one scored verdict per finalized visit.
+3. Unique visit reports count `visit_id`.
+4. Unique session reports count `session_id`.
+5. GA4 page views/sessions are a separate vendor's processed measurements and can be
+   lower because of consent, blockers, script timing, or reporting delay.
+
+If a dashboard needs “last 3 days: sessions, visits, Facebook sessions, Facebook visits,
+TikTok sessions, TikTok visits,” it should query a dedicated aggregate built from distinct
+`visit_id`/`session_id` values. It should not reuse `/admin/reports/summary` event totals or
+sum beacon rows.
