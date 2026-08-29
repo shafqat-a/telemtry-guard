@@ -34,8 +34,11 @@ public static class TelemetryGuardClientExtensions
             .ValidateOnStart();
 
         services.TryAddSingleton<ITelemetryGuardSessionStore, RedisTelemetryGuardSessionStore>();
+        services.TryAddSingleton<ITelemetryGuardVisitQueue>(sp =>
+            (ITelemetryGuardVisitQueue)sp.GetRequiredService<ITelemetryGuardSessionStore>());
         services.TryAddSingleton<ITelemetryGuardClientScorer, TelemetryGuardClientScorer>();
         services.TryAddSingleton<ITelemetryGuardRelay, MissingTelemetryGuardRelay>();
+        services.AddHostedService<TelemetryGuardVisitRelayWorker>();
         return services;
     }
 
@@ -87,8 +90,8 @@ public static class TelemetryGuardClientExtensions
         HttpContext context,
         IOptions<TelemetryGuardClientOptions> options,
         ITelemetryGuardSessionStore sessions,
+        ITelemetryGuardVisitQueue visits,
         ITelemetryGuardClientScorer scorer,
-        ITelemetryGuardRelay relay,
         ILoggerFactory loggerFactory,
         CancellationToken ct)
     {
@@ -123,9 +126,10 @@ public static class TelemetryGuardClientExtensions
             var score = scorer.Score(state);
 
             var body = BuildMarketIqBody(root, context, site, eventId, sessionId, state, score, occurredMs);
-            await relay.RelayAsync(new TelemetryGuardSubmission(
-                body, sessionId, site.CompanyId, site.TenantId, siteKey, eventId), ct)
-                .ConfigureAwait(false);
+            await visits.ScheduleAsync(new TelemetryGuardSubmission(
+                    body, sessionId, site.CompanyId, site.TenantId, siteKey, eventId),
+                DateTimeOffset.UtcNow.AddSeconds(options.Value.FinalizeQuietSeconds),
+                TimeSpan.FromMinutes(options.Value.SessionTtlMinutes), ct).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is JsonException or InvalidOperationException)
         {

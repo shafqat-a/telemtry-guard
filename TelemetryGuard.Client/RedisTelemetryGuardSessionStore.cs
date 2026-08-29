@@ -5,7 +5,8 @@ using StackExchange.Redis;
 namespace TelemetryGuard.Client;
 
 /// <summary>Shared session aggregation in the host's Redis deployment.</summary>
-public sealed class RedisTelemetryGuardSessionStore : ITelemetryGuardSessionStore, IAsyncDisposable
+public sealed class RedisTelemetryGuardSessionStore :
+    ITelemetryGuardSessionStore, ITelemetryGuardVisitQueue, IAsyncDisposable
 {
     private readonly IConnectionMultiplexer _redis;
     private readonly string _prefix;
@@ -58,6 +59,63 @@ public sealed class RedisTelemetryGuardSessionStore : ITelemetryGuardSessionStor
         => !string.IsNullOrEmpty(nonce)
            && await _redis.GetDatabase().StringGetAsync(NonceKey(tenantId, sessionId)) == nonce;
 
+    public async Task ScheduleAsync(TelemetryGuardSubmission submission, DateTimeOffset due,
+        TimeSpan ttl, CancellationToken ct = default)
+    {
+        var token = PendingToken(submission);
+        var db = _redis.GetDatabase();
+        var transaction = db.CreateTransaction();
+        _ = transaction.StringSetAsync(PendingPayloadKey(token),
+            JsonSerializer.Serialize(submission), ttl);
+        _ = transaction.SortedSetAddAsync(PendingSetKey(), token, due.ToUnixTimeMilliseconds());
+        if (!await transaction.ExecuteAsync().ConfigureAwait(false))
+            throw new InvalidOperationException("TelemetryGuard visit scheduling failed.");
+    }
+
+    public async Task<IReadOnlyList<TelemetryGuardPendingVisit>> ClaimDueAsync(
+        int max, TimeSpan lease, CancellationToken ct = default)
+    {
+        const string script = """
+            local members=redis.call('ZRANGEBYSCORE',KEYS[1],'-inf',ARGV[1],'LIMIT',0,ARGV[2])
+            for _,member in ipairs(members) do
+              redis.call('ZADD',KEYS[1],ARGV[3],member)
+            end
+            return members
+            """;
+        var now = DateTimeOffset.UtcNow;
+        var result = (RedisResult[]?)await _redis.GetDatabase().ScriptEvaluateAsync(
+            script, [PendingSetKey()],
+            [now.ToUnixTimeMilliseconds(), max, now.Add(lease).ToUnixTimeMilliseconds()])
+            .ConfigureAwait(false) ?? [];
+        if (result.Length == 0) return [];
+
+        var tokens = result.Select(x => x.ToString()).Where(x => x.Length > 0).ToArray();
+        var values = await _redis.GetDatabase().StringGetAsync(
+            tokens.Select(PendingPayloadKey).ToArray()).ConfigureAwait(false);
+        var visits = new List<TelemetryGuardPendingVisit>(tokens.Length);
+        for (var i = 0; i < tokens.Length; i++)
+        {
+            if (!values[i].HasValue) continue;
+            var submission = JsonSerializer.Deserialize<TelemetryGuardSubmission>((string)values[i]!);
+            visits.Add(new(tokens[i], submission));
+        }
+        return visits;
+    }
+
+    public async Task CompleteAsync(TelemetryGuardPendingVisit visit, CancellationToken ct = default)
+    {
+        var db = _redis.GetDatabase();
+        var transaction = db.CreateTransaction();
+        _ = transaction.SortedSetRemoveAsync(PendingSetKey(), visit.Token);
+        _ = transaction.KeyDeleteAsync(PendingPayloadKey(visit.Token));
+        await transaction.ExecuteAsync().ConfigureAwait(false);
+    }
+
+    public Task RetryAsync(TelemetryGuardPendingVisit visit, DateTimeOffset due,
+        CancellationToken ct = default)
+        => _redis.GetDatabase().SortedSetAddAsync(
+            PendingSetKey(), visit.Token, due.ToUnixTimeMilliseconds());
+
     private static TelemetryGuardSessionState Merge(
         TelemetryGuardSessionState? s, TelemetryGuardObservation o) => new()
     {
@@ -78,6 +136,15 @@ public sealed class RedisTelemetryGuardSessionStore : ITelemetryGuardSessionStor
 
     private RedisKey SessionKey(Guid tenantId, string sid) => $"{_prefix}{tenantId:D}:session:{sid}";
     private RedisKey NonceKey(Guid tenantId, string sid) => $"{_prefix}{tenantId:D}:nonce:{sid}";
+    private RedisKey PendingSetKey() => $"{_prefix}pending-visits";
+    private RedisKey PendingPayloadKey(string token) => $"{_prefix}pending:{token}";
+    private static string PendingToken(TelemetryGuardSubmission submission)
+    {
+        var bytes = System.Security.Cryptography.SHA256.HashData(
+            System.Text.Encoding.UTF8.GetBytes(
+                $"{submission.TenantId:D}|{submission.SiteKey}|{submission.EventId}"));
+        return Convert.ToHexString(bytes).ToLowerInvariant();
+    }
 
     public async ValueTask DisposeAsync() => await _redis.DisposeAsync().ConfigureAwait(false);
 }

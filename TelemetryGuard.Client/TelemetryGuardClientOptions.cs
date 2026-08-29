@@ -8,6 +8,7 @@ public sealed class TelemetryGuardClientOptions
     public bool Enabled { get; set; }
     public string PathBase { get; set; } = "/tg";
     public int SessionTtlMinutes { get; set; } = 30;
+    public int FinalizeQuietSeconds { get; set; } = 10;
     public RedisOptions Redis { get; set; } = new();
     public Dictionary<string, TelemetryGuardSiteOptions> Sites { get; set; }
         = new(StringComparer.Ordinal);

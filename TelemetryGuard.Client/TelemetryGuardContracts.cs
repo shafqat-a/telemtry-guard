@@ -57,6 +57,23 @@ public interface ITelemetryGuardSessionStore
         CancellationToken ct = default);
 }
 
+/// <summary>
+/// Debounces the SDK's many beacon envelopes into one MarketIQ event per page visit.
+/// Implementations must be shared across replicas and give claimed rows a visibility lease.
+/// </summary>
+public interface ITelemetryGuardVisitQueue
+{
+    Task ScheduleAsync(TelemetryGuardSubmission submission, DateTimeOffset due,
+        TimeSpan ttl, CancellationToken ct = default);
+    Task<IReadOnlyList<TelemetryGuardPendingVisit>> ClaimDueAsync(
+        int max, TimeSpan lease, CancellationToken ct = default);
+    Task CompleteAsync(TelemetryGuardPendingVisit visit, CancellationToken ct = default);
+    Task RetryAsync(TelemetryGuardPendingVisit visit, DateTimeOffset due,
+        CancellationToken ct = default);
+}
+
+public sealed record TelemetryGuardPendingVisit(string Token, TelemetryGuardSubmission Submission);
+
 public sealed record TelemetryGuardObservation(
     long SeenUnixMs,
     long MouseEvents,
