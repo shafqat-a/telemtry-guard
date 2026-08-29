@@ -153,10 +153,11 @@ public static class TelemetryGuardClientExtensions
         {
             var sid = ValidId(context.Request.Query["sid"])
                 ? context.Request.Query["sid"].ToString() : Guid.NewGuid().ToString("N");
+            var eventId = Guid.NewGuid().ToString("N");
             var payload = JsonSerializer.Serialize(new Dictionary<string, object?>
             {
                 ["companyId"] = site.CompanyId,
-                ["event_id"] = Guid.NewGuid().ToString("N"),
+                ["event_id"] = eventId,
                 ["session_id"] = sid,
                 ["occurred_at"] = DateTimeOffset.UtcNow,
                 ["ip"] = ClientIp(context),
@@ -168,7 +169,7 @@ public static class TelemetryGuardClientExtensions
                 ["tg_feature_version"] = "tg-native-1",
             });
             await relay.RelayAsync(new(payload, sid, site.CompanyId, site.TenantId,
-                siteKey, Guid.NewGuid().ToString("N")), ct).ConfigureAwait(false);
+                siteKey, eventId), ct).ConfigureAwait(false);
         }
         return Results.File(Pixel, "image/gif");
     }
