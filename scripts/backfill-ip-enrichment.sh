@@ -1,31 +1,35 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Resumable historical city backfill. Requires curl and ClickHouse HTTP access.
-# Usage: CLICKHOUSE_PASSWORD=... ./scripts/backfill-ip-enrichment.sh
+# Mutation-free and idempotent: aggregate states safely merge repeat executions.
+ch_url="${CLICKHOUSE_URL:-http://localhost:8123}"
+ch_db="${CLICKHOUSE_DB:-telemetry_guard}"
+ch_user="${CLICKHOUSE_USER:-tg}"
+ch_password="${CLICKHOUSE_PASSWORD:?Set CLICKHOUSE_PASSWORD}"
+query() { curl -fsS "$ch_url/?database=$ch_db" --user "$ch_user:$ch_password" --data-binary "$1"; }
 
-CH_URL="${CLICKHOUSE_URL:-http://localhost:8123}"
-CH_DB="${CLICKHOUSE_DB:-telemetry_guard}"
-CH_USER="${CLICKHOUSE_USER:-tg}"
-CH_PASSWORD="${CLICKHOUSE_PASSWORD:?Set CLICKHOUSE_PASSWORD}"
-BATCH_SIZE="${BATCH_SIZE:-250}"
+city_expr="city"
+if [[ "$(query "EXISTS TABLE tg_ip_city_join FORMAT TabSeparated")" == "1" ]]; then
+  city_expr="coalesce(city,joinGet('${ch_db}.tg_ip_city_join','city',ip))"
+fi
 
-query() {
-  curl -fsS "$CH_URL/?database=$CH_DB" --user "$CH_USER:$CH_PASSWORD" --data-binary "$1"
-}
+query "INSERT INTO tg_visit_ip_states SELECT tenant_id,visit_id,
+ argMinState(ip,timestamp),argMinState(asn,timestamp),argMinState(asn_type,timestamp),
+ argMinState($city_expr,timestamp),argMinState(country,timestamp),
+ argMinState(is_datacenter,timestamp),argMinState(is_proxy,timestamp),argMinState(is_vpn,timestamp),
+ argMinState(is_tor,timestamp),argMinState(is_private_relay,timestamp)
+ FROM tg_events WHERE visit_id!='' GROUP BY tenant_id,visit_id"
 
-offset=0
-while :; do
-  ips=$(query "SELECT IPv6NumToString(ip) FROM tg_ip_city WHERE city IS NOT NULL ORDER BY ip LIMIT $BATCH_SIZE OFFSET $offset FORMAT TabSeparated")
-  [[ -z "$ips" ]] && break
-  while IFS= read -r ip; do
-    [[ -z "$ip" ]] && continue
-    escaped=${ip//\\/\\\\}; escaped=${escaped//\'/\'\'}
-    query "ALTER TABLE tg_events UPDATE city = joinGet('telemetry_guard.tg_ip_city_join', 'city', ip) WHERE ip = toIPv6('$escaped')" >/dev/null
-  done <<< "$ips"
-  offset=$((offset + BATCH_SIZE))
-  echo "queued $offset historical IPs" >&2
-  # Keep mutation pressure low; ClickHouse applies these asynchronously.
-  sleep 1
-done
-echo "Backfill mutations queued for $offset IPs" >&2
+query "INSERT INTO tg_session_ip_states SELECT tenant_id,session_id,
+ argMinState(ip,timestamp),argMinState(asn,timestamp),argMinState(asn_type,timestamp),
+ argMinState($city_expr,timestamp),argMinState(country,timestamp),
+ argMinState(is_datacenter,timestamp),argMinState(is_proxy,timestamp),argMinState(is_vpn,timestamp),
+ argMinState(is_tor,timestamp),argMinState(is_private_relay,timestamp),
+ argMaxState(ip,timestamp),argMaxState(asn,timestamp),argMaxState(asn_type,timestamp),
+ argMaxState($city_expr,timestamp),argMaxState(country,timestamp),
+ argMaxState(is_datacenter,timestamp),argMaxState(is_proxy,timestamp),argMaxState(is_vpn,timestamp),
+ argMaxState(is_tor,timestamp),argMaxState(is_private_relay,timestamp)
+ FROM tg_events WHERE session_id!='' GROUP BY tenant_id,session_id"
+
+query "SELECT 'visits',count(),countIf(city!='') FROM tg_visits
+ UNION ALL SELECT 'sessions',count(),countIf(first_city!='') FROM tg_sessions FORMAT TabSeparated"
