@@ -17,6 +17,7 @@ using TelemetryGuard.Core.Time;
 using TelemetryGuard.Data.Repositories;
 using TelemetryGuard.Data.Tenancy;
 using TelemetryGuard.RiskEngine.Velocity;
+using TelemetryGuard.RiskEngine.Enrichment;
 
 namespace TelemetryGuard.Api.Endpoints;
 
@@ -390,6 +391,7 @@ public static partial class BeaconEndpoints
                     tenantContext.TenantId, k, canonicalSessionId, visitId, hash, ip, ua,
                     ctx.Request.Headers.Select(h => h.Key).ToArray(),
                     retentionDays, now.UtcDateTime, edge);
+                evt = evt with { City = ctx.RequestServices.GetRequiredService<IIpEnrichmentService>().Enrich(ip).City };
                 evt = evt.WithAttributionAndClickIds(attribution);
                 await sink.WriteBatchAsync(new[] { evt }, ct);
             }

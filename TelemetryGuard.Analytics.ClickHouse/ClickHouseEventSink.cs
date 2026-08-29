@@ -56,7 +56,8 @@ public sealed class ClickHouseEventSink : IEventSink, IHostedService
         // 0006_visit_id.sql
         "visit_id",
         // 0009_ga_status.sql
-        "ga_status"
+        "ga_status",
+        "city"
     };
 
     private static readonly Meter Meter = new("TelemetryGuard.Analytics.ClickHouse");
@@ -159,7 +160,10 @@ public sealed class ClickHouseEventSink : IEventSink, IHostedService
     private async Task FlushBatchAsync(List<ClickEvent> batch)
     {
         var rows = new object?[batch.Count][];
-        for (var i = 0; i < batch.Count; i++) rows[i] = MapRow(batch[i]);
+        for (var i = 0; i < batch.Count; i++)
+        {
+            rows[i] = MapRow(batch[i]);
+        }
 
         for (var attempt = 1; ; attempt++)
         {
@@ -234,7 +238,8 @@ public sealed class ClickHouseEventSink : IEventSink, IHostedService
         e.Cookies as Dictionary<string, string> ?? new Dictionary<string, string>(e.Cookies),
         e.DocumentReferrer,
         e.VisitId,
-        e.GaStatus
+        e.GaStatus,
+        e.City
     ];
 
     private static byte? B(bool? v) => v is null ? null : (byte)(v.Value ? 1 : 0);

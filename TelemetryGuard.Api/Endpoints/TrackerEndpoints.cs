@@ -15,6 +15,7 @@ using TelemetryGuard.Core.Time;
 using TelemetryGuard.Data.Models;
 using TelemetryGuard.Data.Repositories;
 using TelemetryGuard.RiskEngine.Velocity;
+using TelemetryGuard.RiskEngine.Enrichment;
 
 namespace TelemetryGuard.Api.Endpoints;
 
@@ -214,6 +215,7 @@ public static partial class TrackerEndpoints
                 Ttclid = clickIdType == "ttclid" ? clickIdValue! : "",
                 ClickIdInvalid = clickIdInvalid,
                 Ip = ip,
+                City = ctx.RequestServices.GetRequiredService<IIpEnrichmentService>().Enrich(ip).City,
                 HeaderNames = headerNames,
                 UserAgent = ua,
                 SecChUa = chUa,

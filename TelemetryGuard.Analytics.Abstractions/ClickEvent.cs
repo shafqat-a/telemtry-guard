@@ -90,6 +90,7 @@ public sealed record ClickEvent
 
     // ---- enrichment snapshot (null = lookup unavailable/failed) ----
     public string? Country { get; init; }              // ISO 3166-1 alpha-2
+    public string? City { get; init; }
     public uint? Asn { get; init; }
     public string? AsnOrg { get; init; }
     public string? AsnType { get; init; }              // e.g. "hosting"|"isp"|"business"|"education"|"unknown"
