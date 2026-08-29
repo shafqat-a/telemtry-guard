@@ -18,6 +18,13 @@ public interface ITelemetryGuardRelay
     Task RelayAsync(TelemetryGuardSubmission submission, CancellationToken ct = default);
 }
 
+/// <summary>Host seam for site/tenant management. MarketIQ resolves this from tgm_Sites.</summary>
+public interface ITelemetryGuardSiteResolver
+{
+    Task<TelemetryGuardSiteOptions?> ResolveAsync(string siteKey,
+        CancellationToken ct = default);
+}
+
 public readonly record struct TelemetryGuardScore(
     int Score,
     string Band,

@@ -37,6 +37,7 @@ public static class TelemetryGuardClientExtensions
         services.TryAddSingleton<ITelemetryGuardVisitQueue>(sp =>
             (ITelemetryGuardVisitQueue)sp.GetRequiredService<ITelemetryGuardSessionStore>());
         services.TryAddSingleton<ITelemetryGuardClientScorer, TelemetryGuardClientScorer>();
+        services.TryAddSingleton<ITelemetryGuardSiteResolver, ConfigurationTelemetryGuardSiteResolver>();
         services.TryAddSingleton<ITelemetryGuardRelay, MissingTelemetryGuardRelay>();
         services.AddHostedService<TelemetryGuardVisitRelayWorker>();
         return services;
@@ -64,12 +65,14 @@ public static class TelemetryGuardClientExtensions
     private static async Task<IResult> InitAsync(
         HttpContext context,
         IOptions<TelemetryGuardClientOptions> options,
+        ITelemetryGuardSiteResolver sites,
         ITelemetryGuardSessionStore sessions,
         CancellationToken ct)
     {
         PublicHeaders(context);
-        if (!TrySite(context.Request.Query["k"], options.Value, out _, out var site)
-            || !ValidId(context.Request.Query["sid"]))
+        var siteKey = context.Request.Query["k"].ToString().Trim();
+        var site = siteKey.Length == 0 ? null : await sites.ResolveAsync(siteKey, ct).ConfigureAwait(false);
+        if (site is null || !ValidId(context.Request.Query["sid"]))
             return Results.NoContent();
 
         var sid = context.Request.Query["sid"].ToString();
@@ -89,6 +92,7 @@ public static class TelemetryGuardClientExtensions
     private static async Task<IResult> CollectAsync(
         HttpContext context,
         IOptions<TelemetryGuardClientOptions> options,
+        ITelemetryGuardSiteResolver sites,
         ITelemetryGuardSessionStore sessions,
         ITelemetryGuardVisitQueue visits,
         ITelemetryGuardClientScorer scorer,
@@ -111,10 +115,11 @@ public static class TelemetryGuardClientExtensions
             var root = document.RootElement;
             if (root.ValueKind != JsonValueKind.Object
                 || !String(root, "k", out var siteKey)
-                || !TrySite(siteKey, options.Value, out siteKey, out var site)
                 || !String(root, "session_id", out var sessionId)
                 || !ValidId(sessionId))
                 return Results.NoContent();
+            var site = await sites.ResolveAsync(siteKey, ct).ConfigureAwait(false);
+            if (site is null) return Results.NoContent();
 
             var eventId = String(root, "visit_id", out var visitId) && ValidId(visitId)
                 ? visitId
@@ -144,12 +149,15 @@ public static class TelemetryGuardClientExtensions
     private static async Task<IResult> PixelAsync(
         HttpContext context,
         IOptions<TelemetryGuardClientOptions> options,
+        ITelemetryGuardSiteResolver sites,
         ITelemetryGuardRelay relay,
         CancellationToken ct)
     {
         PublicHeaders(context);
         context.Response.Headers.CacheControl = "no-store";
-        if (TrySite(context.Request.Query["k"], options.Value, out var siteKey, out var site))
+        var siteKey = context.Request.Query["k"].ToString().Trim();
+        var site = siteKey.Length == 0 ? null : await sites.ResolveAsync(siteKey, ct).ConfigureAwait(false);
+        if (site is not null)
         {
             var sid = ValidId(context.Request.Query["sid"])
                 ? context.Request.Query["sid"].ToString() : Guid.NewGuid().ToString("N");
@@ -174,11 +182,12 @@ public static class TelemetryGuardClientExtensions
         return Results.File(Pixel, "image/gif");
     }
 
-    private static IResult TrackerAsync(
-        HttpContext context, IOptions<TelemetryGuardClientOptions> options)
+    private static async Task<IResult> TrackerAsync(
+        HttpContext context, ITelemetryGuardSiteResolver sites, CancellationToken ct)
     {
-        if (!TrySite(context.Request.Query["k"], options.Value, out _, out var site)
-            || string.IsNullOrWhiteSpace(site.LandingUrl)
+        var siteKey = context.Request.Query["k"].ToString().Trim();
+        var site = siteKey.Length == 0 ? null : await sites.ResolveAsync(siteKey, ct).ConfigureAwait(false);
+        if (site is null || string.IsNullOrWhiteSpace(site.LandingUrl)
             || !Uri.TryCreate(site.LandingUrl, UriKind.Absolute, out var landing)
             || !string.Equals(landing.IdnHost, site.Domain, StringComparison.OrdinalIgnoreCase))
             return Results.NoContent();
@@ -317,16 +326,6 @@ public static class TelemetryGuardClientExtensions
         return context.Connection.RemoteIpAddress?.ToString() ?? "";
     }
 
-    private static bool TrySite(string? key, TelemetryGuardClientOptions options,
-        out string siteKey, out TelemetryGuardSiteOptions site)
-    {
-        siteKey = key?.Trim() ?? "";
-        site = null!;
-        if (siteKey.Length == 0 || !options.Sites.TryGetValue(siteKey, out var resolved)
-            || !resolved.Enabled) return false;
-        site = resolved;
-        return true;
-    }
 
     private static bool ValidId(string? value)
         => value is { Length: >= 8 and <= 64 }
