@@ -24,8 +24,6 @@ public static class TelemetryGuardClientExtensions
     {
         services.AddOptions<TelemetryGuardClientOptions>()
             .Bind(configuration.GetSection(TelemetryGuardClientOptions.SectionName))
-            .Validate(o => !o.Enabled || o.Sites.Count > 0,
-                "TelemetryGuard:Sites must contain at least one explicit mapping.")
             .Validate(o => !o.Enabled || !string.IsNullOrWhiteSpace(o.Redis.ConnectionString),
                 "TelemetryGuard:Redis:ConnectionString is required.")
             .Validate(o => o.Sites.Values.All(s => !s.Enabled
