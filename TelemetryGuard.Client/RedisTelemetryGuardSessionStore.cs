@@ -24,40 +24,52 @@ public sealed class RedisTelemetryGuardSessionStore :
         _prefix = value.Redis.KeyPrefix;
     }
 
-    public async Task<TelemetryGuardSessionState> UpdateAsync(
-        Guid tenantId, string sessionId, TelemetryGuardObservation o, TimeSpan ttl,
+    public async Task<TelemetryGuardAggregateState> UpdateAsync(
+        Guid tenantId, string sessionId, string visitId, TelemetryGuardObservation o, TimeSpan ttl,
         CancellationToken ct = default)
     {
         var db = _redis.GetDatabase();
-        var key = SessionKey(tenantId, sessionId);
+        var sessionKey = SessionKey(tenantId, sessionId);
+        var visitKey = VisitKey(tenantId, visitId);
 
-        // One short optimistic transaction keeps replicas from replacing each other's counts.
+        // One optimistic transaction updates both scopes. A new visit increments the session's
+        // page count exactly once, even when different App Service replicas receive its first
+        // beacons concurrently.
         for (var attempt = 0; attempt < 5; attempt++)
         {
-            var oldValue = await db.StringGetAsync(key).ConfigureAwait(false);
-            var old = oldValue.HasValue
-                ? JsonSerializer.Deserialize<TelemetryGuardSessionState>((string)oldValue!)
+            var values = await db.StringGetAsync([sessionKey, visitKey]).ConfigureAwait(false);
+            var oldSession = values[0].HasValue
+                ? JsonSerializer.Deserialize<TelemetryGuardSessionState>((string)values[0]!)
                 : null;
-            var next = Merge(old, o);
+            var oldVisit = values[1].HasValue
+                ? JsonSerializer.Deserialize<TelemetryGuardVisitState>((string)values[1]!)
+                : null;
+            var nextVisit = MergeVisit(oldVisit, o);
+            var nextSession = MergeSession(oldSession, o, isNewVisit: oldVisit is null);
             var transaction = db.CreateTransaction();
-            transaction.AddCondition(oldValue.HasValue
-                ? Condition.StringEqual(key, oldValue)
-                : Condition.KeyNotExists(key));
-            _ = transaction.StringSetAsync(key, JsonSerializer.Serialize(next), ttl);
-            if (await transaction.ExecuteAsync().ConfigureAwait(false)) return next;
+            transaction.AddCondition(values[0].HasValue
+                ? Condition.StringEqual(sessionKey, values[0])
+                : Condition.KeyNotExists(sessionKey));
+            transaction.AddCondition(values[1].HasValue
+                ? Condition.StringEqual(visitKey, values[1])
+                : Condition.KeyNotExists(visitKey));
+            _ = transaction.StringSetAsync(sessionKey, JsonSerializer.Serialize(nextSession), ttl);
+            _ = transaction.StringSetAsync(visitKey, JsonSerializer.Serialize(nextVisit), ttl);
+            if (await transaction.ExecuteAsync().ConfigureAwait(false))
+                return new(nextVisit, nextSession);
         }
 
-        throw new InvalidOperationException("TelemetryGuard Redis session update was contended.");
+        throw new InvalidOperationException("TelemetryGuard Redis visit/session update was contended.");
     }
 
-    public Task StoreNonceAsync(Guid tenantId, string sessionId, string nonce, TimeSpan ttl,
+    public Task StoreNonceAsync(Guid tenantId, string visitId, string nonce, TimeSpan ttl,
         CancellationToken ct = default)
-        => _redis.GetDatabase().StringSetAsync(NonceKey(tenantId, sessionId), nonce, ttl);
+        => _redis.GetDatabase().StringSetAsync(NonceKey(tenantId, visitId), nonce, ttl);
 
-    public async Task<bool> ValidateNonceAsync(Guid tenantId, string sessionId, string nonce,
+    public async Task<bool> ValidateNonceAsync(Guid tenantId, string visitId, string nonce,
         CancellationToken ct = default)
         => !string.IsNullOrEmpty(nonce)
-           && await _redis.GetDatabase().StringGetAsync(NonceKey(tenantId, sessionId)) == nonce;
+           && await _redis.GetDatabase().StringGetAsync(NonceKey(tenantId, visitId)) == nonce;
 
     public async Task ScheduleAsync(TelemetryGuardSubmission submission, DateTimeOffset due,
         TimeSpan ttl, CancellationToken ct = default)
@@ -116,8 +128,8 @@ public sealed class RedisTelemetryGuardSessionStore :
         => _redis.GetDatabase().SortedSetAddAsync(
             PendingSetKey(), visit.Token, due.ToUnixTimeMilliseconds());
 
-    private static TelemetryGuardSessionState Merge(
-        TelemetryGuardSessionState? s, TelemetryGuardObservation o) => new()
+    private static TelemetryGuardSessionState MergeSession(
+        TelemetryGuardSessionState? s, TelemetryGuardObservation o, bool isNewVisit) => new()
     {
         FirstSeenUnixMs = s?.FirstSeenUnixMs is > 0 ? s.FirstSeenUnixMs : o.SeenUnixMs,
         LastSeenUnixMs = Math.Max(s?.LastSeenUnixMs ?? 0, o.SeenUnixMs),
@@ -125,7 +137,7 @@ public sealed class RedisTelemetryGuardSessionStore :
         TouchEvents = (s?.TouchEvents ?? 0) + o.TouchEvents,
         ScrollEvents = (s?.ScrollEvents ?? 0) + o.ScrollEvents,
         Keystrokes = (s?.Keystrokes ?? 0) + o.Keystrokes,
-        PagesViewed = Math.Max(1, s?.PagesViewed ?? 0),
+        PagesViewed = Math.Max(1, (s?.PagesViewed ?? 0) + (isNewVisit ? 1 : 0)),
         WebDriver = (s?.WebDriver ?? false) || o.WebDriver,
         Headless = (s?.Headless ?? false) || o.Headless,
         HoneypotFieldFilled = (s?.HoneypotFieldFilled ?? false) || o.HoneypotFieldFilled,
@@ -134,8 +146,47 @@ public sealed class RedisTelemetryGuardSessionStore :
         PasteInIdentityField = (s?.PasteInIdentityField ?? false) || o.PasteInIdentityField,
     };
 
+    private static TelemetryGuardVisitState MergeVisit(
+        TelemetryGuardVisitState? s, TelemetryGuardObservation o) => new()
+    {
+        FirstSeenUnixMs = s?.FirstSeenUnixMs is > 0 ? s.FirstSeenUnixMs : o.SeenUnixMs,
+        LastSeenUnixMs = Math.Max(s?.LastSeenUnixMs ?? 0, o.SeenUnixMs),
+        MouseEvents = (s?.MouseEvents ?? 0) + o.MouseEvents,
+        TouchEvents = (s?.TouchEvents ?? 0) + o.TouchEvents,
+        ScrollEvents = (s?.ScrollEvents ?? 0) + o.ScrollEvents,
+        Keystrokes = (s?.Keystrokes ?? 0) + o.Keystrokes,
+        WebDriver = (s?.WebDriver ?? false) || o.WebDriver,
+        Headless = (s?.Headless ?? false) || o.Headless,
+        HoneypotFieldFilled = (s?.HoneypotFieldFilled ?? false) || o.HoneypotFieldFilled,
+        HoneypotLinkClicked = (s?.HoneypotLinkClicked ?? false) || o.HoneypotLinkClicked,
+        HoneyIdentifierSeen = (s?.HoneyIdentifierSeen ?? false) || o.HoneyIdentifierSeen,
+        DecoyPage = (s?.DecoyPage ?? false) || o.DecoyPage,
+        FormSubmitted = (s?.FormSubmitted ?? false) || o.FormSubmitted,
+        PasteInIdentityField = (s?.PasteInIdentityField ?? false) || o.PasteInIdentityField,
+        VerifiedConversion = (s?.VerifiedConversion ?? false) || o.VerifiedConversion,
+        PageToConversionMs = MinPositive(s?.PageToConversionMs, o.PageToConversionMs),
+        ConversionGoalIds = MergeGoalIds(s?.ConversionGoalIds, o.ConversionGoalId),
+        IntegrityFailed = (s?.IntegrityFailed ?? false) || o.IntegrityFailed,
+    };
+
+    private static IReadOnlyList<string> MergeGoalIds(
+        IReadOnlyList<string>? existing, string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return existing ?? Array.Empty<string>();
+        if (existing?.Contains(value, StringComparer.Ordinal) == true) return existing;
+        return [.. existing ?? Array.Empty<string>(), value];
+    }
+
+    private static long? MinPositive(long? left, long? right)
+    {
+        if (left is null || left < 0) return right is >= 0 ? right : null;
+        if (right is null || right < 0) return left;
+        return Math.Min(left.Value, right.Value);
+    }
+
     private RedisKey SessionKey(Guid tenantId, string sid) => $"{_prefix}{tenantId:D}:session:{sid}";
-    private RedisKey NonceKey(Guid tenantId, string sid) => $"{_prefix}{tenantId:D}:nonce:{sid}";
+    private RedisKey VisitKey(Guid tenantId, string visitId) => $"{_prefix}{tenantId:D}:visit:{visitId}";
+    private RedisKey NonceKey(Guid tenantId, string visitId) => $"{_prefix}{tenantId:D}:nonce:{visitId}";
     private RedisKey PendingSetKey() => $"{_prefix}pending-visits";
     private RedisKey PendingPayloadKey(string token) => $"{_prefix}pending:{token}";
     private static string PendingToken(TelemetryGuardSubmission submission)

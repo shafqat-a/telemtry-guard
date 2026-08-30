@@ -9,7 +9,7 @@ public sealed class TelemetryGuardClientScorerTests
     [Fact]
     public void Clean_interactive_session_is_allowed()
     {
-        var result = _scorer.Score(new TelemetryGuardSessionState
+        var result = _scorer.Score(new TelemetryGuardVisitState
         {
             FirstSeenUnixMs = 1_000,
             LastSeenUnixMs = 50_000,
@@ -25,7 +25,7 @@ public sealed class TelemetryGuardClientScorerTests
     [Fact]
     public void Honeypot_evidence_caps_score_and_never_returns_an_action()
     {
-        var result = _scorer.Score(new TelemetryGuardSessionState
+        var result = _scorer.Score(new TelemetryGuardVisitState
         {
             FirstSeenUnixMs = 1_000,
             LastSeenUnixMs = 50_000,

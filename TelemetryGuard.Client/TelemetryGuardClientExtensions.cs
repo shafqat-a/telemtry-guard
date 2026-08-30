@@ -26,6 +26,8 @@ public static class TelemetryGuardClientExtensions
             .Bind(configuration.GetSection(TelemetryGuardClientOptions.SectionName))
             .Validate(o => !o.Enabled || !string.IsNullOrWhiteSpace(o.Redis.ConnectionString),
                 "TelemetryGuard:Redis:ConnectionString is required.")
+            .Validate(o => !o.Enabled || o.IntegrityHmacSecret.Length >= 32,
+                "TelemetryGuard:IntegrityHmacSecret must be at least 32 characters.")
             .Validate(o => o.Sites.Values.All(s => !s.Enabled
                 || (s.TenantId != Guid.Empty && s.CompanyId > 0 && !string.IsNullOrWhiteSpace(s.Domain))),
                 "Every enabled TelemetryGuard site needs TenantId, positive CompanyId, and Domain.")
@@ -54,6 +56,7 @@ public static class TelemetryGuardClientExtensions
         var group = endpoints.MapGroup(NormalizeBase(options.PathBase));
         group.MapGet("/i/init", InitAsync);
         group.MapPost("/i", CollectAsync);
+        group.MapPost("/i/conversion", CollectConversionAsync);
         group.MapGet("/p.gif", PixelAsync);
         group.MapGet("/c", TrackerAsync);
         group.MapGet("/sdk/tg.js", SdkAsync);
@@ -75,15 +78,24 @@ public static class TelemetryGuardClientExtensions
 
         var sid = context.Request.Query["sid"].ToString();
         var nonce = Convert.ToHexString(RandomNumberGenerator.GetBytes(16)).ToLowerInvariant();
+        var storageTs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         await sessions.StoreNonceAsync(site.TenantId, sid, nonce,
             TimeSpan.FromMinutes(options.Value.SessionTtlMinutes), ct).ConfigureAwait(false);
         return Results.Json(new
         {
             nonce,
-            storageTs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-            storageSig = "host-managed",
-            decoyPaths = Array.Empty<string>(),
-            conversionGoals = Array.Empty<object>(),
+            storageTs,
+            storageSig = StorageSignature(options.Value.IntegrityHmacSecret, site.TenantId, storageTs),
+            decoyPaths = site.DecoyPaths,
+            conversionGoals = site.ConversionGoals.Select(g => new
+            {
+                goalId = g.GoalId,
+                name = g.Name,
+                triggerType = g.TriggerType,
+                pagePaths = g.PagePaths,
+                selector = g.Selector,
+                minimumSeconds = g.MinimumSeconds,
+            }),
         });
     }
 
@@ -123,10 +135,13 @@ public static class TelemetryGuardClientExtensions
                 ? visitId
                 : String(root, "sid", out var sid) && ValidId(sid) ? sid : Guid.NewGuid().ToString("N");
             var occurredMs = Long(root, "sent_at") ?? DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-            var observation = Observe(root, occurredMs);
-            var state = await sessions.UpdateAsync(site.TenantId, sessionId, observation,
+            var nonceOk = String(root, "nonce", out var nonce)
+                && await sessions.ValidateNonceAsync(site.TenantId, eventId, nonce, ct).ConfigureAwait(false);
+            var checksumOk = ChecksumValid(raw);
+            var observation = Observe(root, site, occurredMs, integrityFailed: !nonceOk || !checksumOk);
+            var state = await sessions.UpdateAsync(site.TenantId, sessionId, eventId, observation,
                 TimeSpan.FromMinutes(options.Value.SessionTtlMinutes), ct).ConfigureAwait(false);
-            var score = scorer.Score(state);
+            var score = scorer.Score(state.Visit);
 
             var body = BuildMarketIqBody(root, context, site, eventId, sessionId, state, score, occurredMs);
             await visits.ScheduleAsync(new TelemetryGuardSubmission(
@@ -139,6 +154,78 @@ public static class TelemetryGuardClientExtensions
             // The public SDK gets no parsing, scoring, storage, or delivery oracle.
             loggerFactory.CreateLogger("TelemetryGuard.Native")
                 .LogWarning(ex, "Native TelemetryGuard collection dropped an event.");
+        }
+
+        return Results.NoContent();
+    }
+
+    private static async Task<IResult> CollectConversionAsync(
+        HttpContext context,
+        IOptions<TelemetryGuardClientOptions> options,
+        ITelemetryGuardSiteResolver sites,
+        ITelemetryGuardSessionStore sessions,
+        ITelemetryGuardVisitQueue visits,
+        ITelemetryGuardClientScorer scorer,
+        CancellationToken ct)
+    {
+        PublicHeaders(context);
+        if (context.Request.ContentLength > MaxBodyBytes)
+            return Results.StatusCode(StatusCodes.Status413PayloadTooLarge);
+
+        string raw;
+        using (var reader = new StreamReader(context.Request.Body, Encoding.UTF8))
+            raw = await reader.ReadToEndAsync(ct).ConfigureAwait(false);
+        if (Encoding.UTF8.GetByteCount(raw) > MaxBodyBytes)
+            return Results.StatusCode(StatusCodes.Status413PayloadTooLarge);
+
+        try
+        {
+            using var document = JsonDocument.Parse(raw);
+            var root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object
+                || !String(root, "k", out var siteKey)
+                || !String(root, "sessionId", out var sessionId) || !ValidId(sessionId)
+                || !String(root, "visitId", out var visitId) || !ValidId(visitId)
+                || !String(root, "goalId", out var goalId))
+                return Results.NoContent();
+
+            var site = await sites.ResolveAsync(siteKey, ct).ConfigureAwait(false);
+            var goal = site?.ConversionGoals.FirstOrDefault(g =>
+                string.Equals(g.GoalId, goalId, StringComparison.Ordinal));
+            if (site is null || goal is null) return Results.NoContent();
+
+            var pageUrl = String(root, "pageUrl", out var suppliedPage) ? suppliedPage : "";
+            if (!PageMatches(pageUrl, goal.PagePaths)) return Results.NoContent();
+
+            var occurredMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            if (String(root, "occurredAt", out var occurred)
+                && DateTimeOffset.TryParse(occurred, out var parsed))
+                occurredMs = parsed.ToUnixTimeMilliseconds();
+            var pageToConversionMs = Long(root, "pageToConversionMs");
+            var observation = new TelemetryGuardObservation(
+                occurredMs, 0, 0, 0, 0, false, false, false, false, false,
+                IsDecoyPage(pageUrl, site.DecoyPaths), false, false, true,
+                pageToConversionMs, goalId, false);
+            var state = await sessions.UpdateAsync(site.TenantId, sessionId, visitId, observation,
+                TimeSpan.FromMinutes(options.Value.SessionTtlMinutes), ct).ConfigureAwait(false);
+            var score = scorer.Score(state.Visit);
+
+            using var normalized = JsonDocument.Parse(JsonSerializer.Serialize(new
+            {
+                u = pageUrl,
+                r = "",
+                device_id = (string?)null,
+            }));
+            var body = BuildMarketIqBody(normalized.RootElement, context, site, visitId,
+                sessionId, state, score, occurredMs);
+            await visits.ScheduleAsync(new TelemetryGuardSubmission(
+                    body, sessionId, site.CompanyId, site.TenantId, siteKey, visitId),
+                DateTimeOffset.UtcNow.AddSeconds(options.Value.FinalizeQuietSeconds),
+                TimeSpan.FromMinutes(options.Value.SessionTtlMinutes), ct).ConfigureAwait(false);
+        }
+        catch (JsonException)
+        {
+            // Public conversion collection has the same success-shaped failure contract as /i.
         }
 
         return Results.NoContent();
@@ -207,7 +294,8 @@ public static class TelemetryGuardClientExtensions
                 lastModified: null, entityTag: null, enableRangeProcessing: false);
     }
 
-    private static TelemetryGuardObservation Observe(JsonElement root, long occurredMs)
+    private static TelemetryGuardObservation Observe(
+        JsonElement root, TelemetryGuardSiteOptions site, long occurredMs, bool integrityFailed)
     {
         long mouse = 0, touch = 0, scroll = 0, keys = 0;
         var webdriver = false;
@@ -216,6 +304,7 @@ public static class TelemetryGuardClientExtensions
         var hpLink = false;
         var submitted = false;
         var pasted = false;
+        var honeyIdentifierSeen = false;
 
         if (root.TryGetProperty("events", out var events) && events.ValueKind == JsonValueKind.Array)
         {
@@ -250,13 +339,20 @@ public static class TelemetryGuardClientExtensions
             }
         }
 
+        var pageUrl = String(root, "u", out var url) ? url : "";
+        if (Uri.TryCreate(pageUrl, UriKind.Absolute, out var uri))
+            honeyIdentifierSeen = Microsoft.AspNetCore.WebUtilities.QueryHelpers
+                .ParseQuery(uri.Query).ContainsKey("tg_honey");
+
         return new TelemetryGuardObservation(occurredMs, mouse, touch, scroll, keys,
-            webdriver, headless, hpField, hpLink, submitted, pasted);
+            webdriver, headless, hpField, hpLink, honeyIdentifierSeen,
+            IsDecoyPage(pageUrl, site.DecoyPaths), submitted, pasted, false, null, null,
+            integrityFailed);
     }
 
     private static string BuildMarketIqBody(
         JsonElement root, HttpContext context, TelemetryGuardSiteOptions site,
-        string eventId, string sessionId, TelemetryGuardSessionState state,
+        string eventId, string sessionId, TelemetryGuardAggregateState state,
         TelemetryGuardScore score, long occurredMs)
     {
         var pageUrl = String(root, "u", out var u) ? u : null;
@@ -267,32 +363,49 @@ public static class TelemetryGuardClientExtensions
             => names.Select(n => query is not null && query.TryGetValue(n, out var v)
                 ? v.FirstOrDefault() : null).FirstOrDefault(v => !string.IsNullOrWhiteSpace(v));
 
-        var seconds = Math.Max(0, (state.LastSeenUnixMs - state.FirstSeenUnixMs) / 1000d);
+        var visit = state.Visit;
+        var session = state.Session;
+        var seconds = Math.Max(0, (visit.LastSeenUnixMs - visit.FirstSeenUnixMs) / 1000d);
         var values = new Dictionary<string, object?>
         {
+            ["schema_version"] = 1,
+            ["source"] = "telemetry_guard",
             ["companyId"] = site.CompanyId,
+            ["tg_tenant_id"] = site.TenantId,
+            ["site_domain"] = site.Domain,
             ["event_id"] = eventId,
             ["session_id"] = sessionId,
+            ["visit_id"] = eventId,
             ["device_id"] = String(root, "device_id", out var device) ? device : null,
-            ["occurred_at"] = DateTimeOffset.FromUnixTimeMilliseconds(occurredMs),
+            ["occurred_at"] = DateTimeOffset.FromUnixTimeMilliseconds(
+                visit.FirstSeenUnixMs > 0 ? visit.FirstSeenUnixMs : occurredMs),
             ["user_agent"] = context.Request.Headers.UserAgent.ToString(),
             ["ip"] = ClientIp(context),
+            ["page_url"] = pageUrl,
+            ["referrer"] = String(root, "r", out var documentReferrer) ? documentReferrer : null,
             ["utm_platform"] = Platform(Query("utm_platform", "utm_source")),
             ["utm_publisher_id"] = Query("utm_publisher_id", "utm_content"),
             ["utm_campaign_id"] = Query("utm_campaign_id", "utm_id"),
-            ["mouse_events"] = state.MouseEvents,
-            ["touch_events"] = state.TouchEvents,
-            ["scroll_events"] = state.ScrollEvents,
-            ["keystrokes"] = state.Keystrokes,
+            ["mouse_events"] = visit.MouseEvents,
+            ["touch_events"] = visit.TouchEvents,
+            ["scroll_events"] = visit.ScrollEvents,
+            ["keystrokes"] = visit.Keystrokes,
             ["time_on_page_sec"] = seconds,
-            ["pages_viewed"] = state.PagesViewed,
-            ["webdriver_flag"] = state.WebDriver,
-            ["headless_browser"] = state.Headless,
-            ["form_submitted"] = state.FormSubmitted,
-            ["paste_in_identity_fields"] = state.PasteInIdentityField,
-            ["honeypot_touched"] = state.HoneypotFieldFilled || state.HoneypotLinkClicked,
-            ["honeypot_field_filled"] = state.HoneypotFieldFilled,
-            ["honeypot_link_clicked"] = state.HoneypotLinkClicked,
+            ["pages_viewed"] = session.PagesViewed,
+            ["webdriver_flag"] = visit.WebDriver,
+            ["headless_browser"] = visit.Headless,
+            ["form_submitted"] = visit.FormSubmitted,
+            ["paste_in_identity_fields"] = visit.PasteInIdentityField,
+            ["honeypot_touched"] = visit.HoneypotFieldFilled || visit.HoneypotLinkClicked,
+            ["honeypot_field_filled"] = visit.HoneypotFieldFilled,
+            ["honeypot_link_clicked"] = visit.HoneypotLinkClicked,
+            ["honey_identifier_seen"] = visit.HoneyIdentifierSeen,
+            ["decoy_page"] = visit.DecoyPage,
+            ["beacon_integrity_ok"] = !visit.IntegrityFailed,
+            ["verified_conversion"] = visit.VerifiedConversion,
+            ["page_to_conversion_ms"] = visit.PageToConversionMs,
+            ["conversion_goal_ids"] = visit.ConversionGoalIds.Count == 0
+                ? null : visit.ConversionGoalIds,
             ["referrer_missing"] = !String(root, "r", out var referrer) || string.IsNullOrEmpty(referrer),
             ["tg_score"] = score.Score,
             ["tg_band"] = score.Band,
@@ -312,6 +425,53 @@ public static class TelemetryGuardClientExtensions
         { Length: > 0 } v => v,
         _ => null,
     };
+
+    private static string StorageSignature(string secret, Guid tenantId, long timestamp)
+        => Convert.ToHexString(HMACSHA256.HashData(
+                Encoding.UTF8.GetBytes(secret),
+                Encoding.UTF8.GetBytes($"{tenantId:D}:{timestamp}")))
+            .ToLowerInvariant();
+
+    private static bool ChecksumValid(string raw)
+    {
+        var marker = raw.LastIndexOf(",\"c\":\"", StringComparison.Ordinal);
+        if (marker < 0) return true; // legacy bundle: integrity is unknown, not failed
+        var start = marker + 6;
+        var end = raw.IndexOf('"', start);
+        if (end <= start) return false;
+        return string.Equals(raw[start..end], Fnv1aHex(raw[..marker] + "}"),
+            StringComparison.Ordinal);
+    }
+
+    private static string Fnv1aHex(string value)
+    {
+        var hash = 0x811c9dc5u;
+        foreach (var b in Encoding.UTF8.GetBytes(value))
+        {
+            hash ^= b;
+            hash *= 0x01000193u;
+        }
+        return hash.ToString("x8", System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    private static bool PageMatches(string pageUrl, IReadOnlyList<string> paths)
+    {
+        if (!Uri.TryCreate(pageUrl, UriKind.Absolute, out var uri)) return false;
+        if (paths.Count == 0) return true;
+        var actual = NormalizePath(uri.AbsolutePath);
+        return paths.Any(path => string.Equals(actual, NormalizePath(path),
+            StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static bool IsDecoyPage(string pageUrl, IReadOnlyList<string> paths)
+        => paths.Count > 0 && PageMatches(pageUrl, paths);
+
+    private static string NormalizePath(string path)
+    {
+        path = string.IsNullOrWhiteSpace(path) ? "/" : path.Trim();
+        if (!path.StartsWith('/')) path = "/" + path;
+        return path.Length > 1 ? path.TrimEnd('/') : path;
+    }
 
     private static string ClientIp(HttpContext context)
     {

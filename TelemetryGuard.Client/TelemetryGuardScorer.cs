@@ -6,7 +6,7 @@ namespace TelemetryGuard.Client;
 /// </summary>
 public sealed class TelemetryGuardClientScorer : ITelemetryGuardClientScorer
 {
-    public TelemetryGuardScore Score(TelemetryGuardSessionState s)
+    public TelemetryGuardScore Score(TelemetryGuardVisitState s)
     {
         var score = 0;
         var hits = new List<string>();
@@ -15,6 +15,9 @@ public sealed class TelemetryGuardClientScorer : ITelemetryGuardClientScorer
         Add(s.Headless, 40, "headless");
         Add(s.HoneypotFieldFilled, 70, "honeypot_field_filled");
         Add(s.HoneypotLinkClicked, 70, "honeypot_link_clicked");
+        Add(s.HoneyIdentifierSeen, 70, "honey_identifier_seen");
+        Add(s.DecoyPage, 70, "decoy_page");
+        Add(s.IntegrityFailed, 55, "beacon_integrity_failed");
 
         var seconds = Math.Max(0, (s.LastSeenUnixMs - s.FirstSeenUnixMs) / 1000d);
         if (seconds >= 30 && s.MouseEvents + s.TouchEvents + s.ScrollEvents + s.Keystrokes == 0)
