@@ -111,7 +111,8 @@
     document_referrer: string,
     // One document/page load; empty for legacy SDK rows during rolling upgrades.
     visit_id: string,
-    ga_status: string
+    ga_status: string,
+    city: string
 )
 
 // tg_labels: training labels (D18/D19). ClickHouse gives `weight` a DEFAULT of 1;
@@ -230,7 +231,8 @@
 '  {"Column":"cookies","Properties":{"Path":"$.cookies"}},'
 '  {"Column":"document_referrer","Properties":{"Path":"$.document_referrer"}},'
 '  {"Column":"visit_id","Properties":{"Path":"$.visit_id"}},'
-'  {"Column":"ga_status","Properties":{"Path":"$.ga_status"}}'
+'  {"Column":"ga_status","Properties":{"Path":"$.ga_status"}},'
+'  {"Column":"city","Properties":{"Path":"$.city"}}'
 ']'
 
 .create-or-alter table tg_labels ingestion json mapping "tg_labels_json_mapping"
